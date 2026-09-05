@@ -6,7 +6,12 @@ This module parses Schema 1 YAML into typed, immutable pydantic models.
 
 from __future__ import annotations
 
-from legio.patterns.loader import load_patterns, resolve_branch, resolve_composite_branches
+from legio.patterns.loader import (
+    load_pattern_dirs,
+    load_patterns,
+    resolve_branch,
+    resolve_composite_branches,
+)
 from legio.patterns.schema1 import (
     AgentKind,
     AgentSpec,
@@ -26,6 +31,7 @@ __all__ = [
     "IOType",
     "InputContract",
     "OutputContract",
+    "load_pattern_dirs",
     "load_patterns",
     "resolve_branch",
     "resolve_composite_branches",

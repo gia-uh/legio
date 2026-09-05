@@ -37,8 +37,107 @@ hosts domain logic (rule: domain-free library).
 - Config YAML shape exactly per LEG-017 (`node`, `federation_token`,
   `api.clients[]`, `peers[]`).
 
+## Config schema & environment (agreed baseline — Session 58)
+
+Precedence (highest wins): built-in pydantic defaults < config file (argument /
+`LEGIO_CONFIG` env / default `./legio.yaml`) < CLI overrides
+(`--node`, `--db-path`, `--host/--port`, `--log-level`,
+`--tool-dir/--linguistic-dir/--composite-dir`, `--tools`). Invalid values fail
+loudly (`ConfigError`, unrecoverable) — the node never boots on a broken
+config and secrets never travel through YAML (LEG-017 §2).
+
+General config (`legio.yaml`, public part; secrets never in YAML — LEG-017 §2):
+
+```yaml
+node:
+  id: "local@hostname"                 # LEG-016: <name>@<host>
+database:
+  db_path: "./data/legio.db"
+patterns:                              # one dir per S1 pattern type; recursive *.yaml scan
+  tool:       "./patterns/tool/"
+  linguistic: "./patterns/linguistic/"
+  composite:  "./patterns/composite/"
+services:
+  llm:                                 # lingo.LLM — model/api_key/base_url
+    base_url: "http://127.0.0.1:1234/v1/"
+    model: "qwen/qwen3-4b-2507"
+  embedding:                           # lingo.Embedder — sibling service
+    base_url: "http://127.0.0.1:1234/v1/"
+    model: "text-embedding-3-small"
+    max_tokens_per_batch: 8000         # OPTIONAL — absent → lingo default (8000)
+api:
+  host: "0.0.0.0"
+  port: 8000
+  clients:                             # LEG-017 §4 registry; tokens via env
+    consumer-a: { agents: [flow_a] }   #   restricted; no agents → all starting agents
+logging:
+  level: "INFO"
+  file: "./data/legio.log"             # empty → stream
+tools:
+  config: "./tools.yaml"               # pointer to the independent Schema 3 config
+federation:                            # known peers of THIS node (outbound); admission = shared token only (LEG-017 §5)
+  peers:
+    - id: "prod-b@host-02"             # peer's node.id — whom this node knows / delegates to
+      url: "http://host-02:8000"
+    - id: "prod-c@host-03"
+      url: "http://host-03:8000"
+    - id: "prod-d@host-04"
+      url: "http://host-04:8000"
+```
+
+Independent Schema 3 config (`tools.yaml`), validated with its own schema
+(LEG-013); CLI override `--tools PATH`:
+
+```yaml
+available_tools:
+  simple_transcription_tool:
+    implementation: "consumer.tools.simple_transcription_tool"
+    policy: { timeout: 120, retries: 3 }
+```
+
+Environment variables (secrets — LEG-017 §2, never logged):
+
+| Variable | Role |
+|---|---|
+| `LEGIO_CONFIG` | path to the general config (default `./legio.yaml`; CLI `--config` wins) |
+| `LEGIO_LLM_API_KEY` | api key for `services.llm` |
+| `LEGIO_EMBEDDING_API_KEY` | api key for `services.embedding` |
+| `LEGIO_FEDERATION_TOKEN` | shared node-to-node secret (LEG-017 §2/§5) |
+| `LEGIO_CLIENT_TOKEN_<NAME>` | per-system client token; `<NAME>` = a key of `api.clients` |
+
 ## Interface
-- Two typer commands; config schema per LEG-017.
+- Two typer commands; config schema per LEG-017 (extended by the sections above).
+
+## Runtime — Materializer & node boot (implemented — Session 59)
+
+Outside the typer CLI (which awaits dependency approval), the node boot is
+already wired from `LoadConfig` — this is the engine piece that turns a
+documented config into a running, observable node:
+
+1. `legio.config.load()` resolves the file + env + CLI overrides (Session 58).
+2. `boot_node(loaded, *, db=None, lingo_factory=None, composite_classes=None,
+   on_built=None)`:
+   - connects `manager.connect_manager(db_path=..., node_id=cfg.node.id)` so
+     every scheduled task carries the configured node id as its origin;
+   - loads the three pattern dirs (`load_pattern_dirs`, recursive `*.yaml`)
+     into one Catalog and **validates before anything binds**: a missing dir
+     or an invalid pattern refuses the boot (rule 9);
+   - loads the independent Schema 3 `tools.yaml` into the tool registry;
+   - materializes the standing agent map in DAG order — tool/linguistic atoms
+     first, composites after, from the resolved LEG-070 branches (tooling uses
+     `legio.patterns.compile.compile_schema` for the linguistic `output_model`);
+   - builds the client store from `LEGIO_CLIENT_TOKEN_<NAME>` only
+     (token-less clients are skipped with a warning — LEG-017 §2);
+   - returns a `NodeRuntime` exposing `config`, `agents`, `catalog`, `db`,
+     `client_store`, `app` (`create_app(clients=..., pattern_catalog=...)`)
+     and `starting_agents` (the `main: true` specs the supervisor polls).
+   - Resource seams are injected (rule 7): `db`, the tool registry,
+     `lingo_factory` (default = legio builds `lingo.LLM(model, base_url, api_key)`
+     from `services.llm` + env), and concrete composite classes. Unmaterializable
+     specs — undeclared tool, linguistic agent without an LLM service/factory,
+     composite without a concrete class — fail the boot loudly, naming the
+     agent. Nothing sleeps and nothing is pushed: the supervisor (pending
+     slice) polls `next_run_at`.
 
 ## Acceptance criteria
 From `docs/PLAN.md` (LEG-081), verbatim:
