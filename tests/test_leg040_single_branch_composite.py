@@ -51,6 +51,23 @@ async def pop_one(db: AsyncBeaverDB, agent_id: str) -> dict | None:
     return item.data
 
 
+class GatherComposite(CompositeAgent):
+    """A concrete composite pattern: transcribes each branch's built payload
+    (slot order) into its own ``output_as``.
+
+    The engine's ``CompositeAgent`` has **no** generic default build — output
+    construction is the pattern's model (it must satisfy the pattern's declared
+    ``output_schema``). This fictitious-domain pattern picks the gather/
+    transcription composition for its declared shape.
+    """
+
+    async def build_output_as(self, info):
+        gathered: dict = {}
+        for payload in info.values():
+            gathered.update(payload)
+        return build_payload(gathered, output_as=self._output_as)
+
+
 def build_composite(
     *,
     db: AsyncBeaverDB,
@@ -60,7 +77,7 @@ def build_composite(
     output_as: str = "seq",
 ) -> CompositeAgent:
     # A single-branch composite whose one branch is the sequence route.
-    return CompositeAgent(
+    return GatherComposite(
         agent_id=agent_id,
         db=db,
         branches=[list(sequence_route)],
@@ -188,9 +205,7 @@ async def test_composite_runs_steps_in_order_and_builds_payload(
         input_as="seq",
         output_as="o2",
     )
-    step1 = BuildStep(
-        agent_id="step1", db=beaver_db, key="s1", input_as="step1", output_as="o1"
-    )
+    step1 = BuildStep(agent_id="step1", db=beaver_db, key="s1", input_as="step1", output_as="o1")
     step2 = BuildStep(agent_id="step2", db=beaver_db, key="s2", input_as="o1", output_as="o2")
     request = step_request(
         task_id="T-2",
@@ -210,7 +225,9 @@ async def test_composite_runs_steps_in_order_and_builds_payload(
     assert first_request.level_route == (("step1", "step1"), ("step2", "o1"))
     assert first_request.current_index == 0
     assert first_request.payload == {"step1": {"value": 3}}
-    await beaver_db.queue(queue_key("step1")).put(first_request.model_dump(mode="json"), priority=0.0)
+    await beaver_db.queue(queue_key("step1")).put(
+        first_request.model_dump(mode="json"), priority=0.0
+    )
     assert await step1.process_next() is True
 
     second = await pop_one(beaver_db, "step2")
@@ -218,7 +235,9 @@ async def test_composite_runs_steps_in_order_and_builds_payload(
     second_request = ExecutionRequestMessage.model_validate(second)
     assert second_request.current_index == 1
     assert second_request.payload == {"o1": {"s1": 3, "value": 3}}
-    await beaver_db.queue(queue_key("step2")).put(second_request.model_dump(mode="json"), priority=0.0)
+    await beaver_db.queue(queue_key("step2")).put(
+        second_request.model_dump(mode="json"), priority=0.0
+    )
     assert await step2.process_next() is True
 
     # The branch closes to the composite's gathering queue (collapsed onto its

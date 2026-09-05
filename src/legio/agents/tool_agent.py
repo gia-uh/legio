@@ -7,7 +7,10 @@ terse `parameters` (`{arg: dotted.path | literal}`) against it, loads the bound
 kwargs, validates the call against the tool's signature at execution time,
 and builds the new payload with `build_payload` (AGENT_LIFECYCLE §12.1: the
 state travels in the messages — nothing staged out-of-message). The base routes
-by position.
+by position. How the tool's raw output becomes the agent's `output_as` value is
+the agent's own model: the runner hands the raw output to the re-implementable
+seam `build_output_as`, whose basic tool model wraps it as-is — a pattern may
+inherit `ToolAgent` and re-implement it for a custom output shape.
 
 Schema/signature failures on either edge are never silent: an error result is
 deposited instead (see AGENTS.md rule 9).
@@ -39,11 +42,15 @@ class ToolAgent(AgentBase):
         parameters: Mapping[str, Any],
         input_as: str = "",
         output_as: str = "",
+        input_schema: Mapping[str, Any] | None = None,
+        output_schema: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
             db=db,
             output_as=output_as,
+            input_schema=input_schema,
+            output_schema=output_schema,
         )
         self._available_tools = available_tools
         self._tool_name = tool_name
@@ -68,8 +75,9 @@ class ToolAgent(AgentBase):
                 request.task_id,
                 self._tool_name,
             )
-            # Build the new payload (construction under output_as; re-keying at handoff)
-            return build_payload(raw_output, output_as=self._output_as)
+            # Build via the re-implementable output seam (construction under
+            # output_as; re-keying at handoff).
+            return await self.build_output_as(raw_output)
         except Exception as exc:  # noqa: BLE001 - surfaced, never swallowed
             logger.warning(
                 "tool execution failure agent=%s task=%s tool=%s error=%s",
@@ -85,6 +93,15 @@ class ToolAgent(AgentBase):
 
         # Should not reach here
         return {"error": "tool produced no output"}
+
+    async def build_output_as(self, info: Any) -> dict[str, Any]:
+        """Basic tool-output model: the tool's raw output is the value.
+
+        ``info`` is what the tool call returned. Override this seam (inherit
+        ``ToolAgent``) to transform the raw output into the pattern's own
+        declared value before it is wrapped under ``output_as`` (§12.1).
+        """
+        return build_payload(info, output_as=self._output_as)
 
 
 __all__ = ["ToolAgent"]

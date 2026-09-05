@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from legio import manager
+from legio.errors import UnrecoverableError
 from legio.flow import FlowToken
 from legio.manager import TaskEntry, TaskState
 from legio.patterns import Catalog, starting_route
@@ -97,12 +98,18 @@ def _resolve_route(agent_name: str, catalog: Catalog | None) -> tuple[tuple[str,
     """Resolve the starting route for an agent.
 
     If a pattern catalog is provided, look up the agent as a starting pattern
-    and derive the route via ``starting_route``. Otherwise, return the agent
-    name as a single-agent route with its ``input_as`` defaulted to the agent
-    name (no catalog means no declared input contract to read the real alias).
+    and derive the route via ``starting_route``. An agent the catalog knows but
+    has invalidated is **not served** (LEG-070): routing to it is a visible
+    error, never a silent fallback. Otherwise, return the agent name as a
+    single-agent route with its ``input_as`` defaulted to the agent name (no
+    catalog means no declared input contract to read the real alias).
     """
     if catalog is not None and agent_name in catalog.specs:
         spec = catalog.specs[agent_name]
+        if not catalog.is_served(agent_name):
+            raise UnrecoverableError(
+                f"agent not served by catalog: {agent_name!r} (invalid/disabled)"
+            )
         if spec.main:
             return starting_route(spec)
     return ((agent_name, agent_name),)

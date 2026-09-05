@@ -28,6 +28,7 @@ from legio.agents.composite_agent import CompositeAgent
 from legio.agents.linguistic_agent import LinguisticAgent
 from legio.agents.tool_agent import ToolAgent
 from legio.api import create_app
+from legio.flow import build_payload
 from legio.naming import result_queue_key
 from legio.patterns import load_patterns, resolve_composite_branches
 from legio.security import ClientTokenStore
@@ -80,7 +81,9 @@ parameters:
   summary: "{extract.summary}"
 """
 
-EXTRACT_AND_SUMMARIZE_YAML = FULL_EXTRACT_YAML + """
+EXTRACT_AND_SUMMARIZE_YAML = (
+    FULL_EXTRACT_YAML
+    + """
 ---
 name: extract_and_summarize
 type: composite
@@ -99,11 +102,15 @@ output:
   output_schema:
     type: object
     properties:
-      result: {type: string}
+      result:
+        type: object
+        properties:
+          result: {type: string}
 branches:
   - - extract
     - assess
 """
+)
 
 DISTRIBUTE_SUMMARY_YAML = """
 name: summ
@@ -160,8 +167,14 @@ output:
   output_schema:
     type: object
     properties:
-      summ: {type: string}
-      cata: {type: string}
+      summ:
+        type: object
+        properties:
+          summ: {type: string}
+      cata:
+        type: object
+        properties:
+          cata: {type: string}
 branches:
   - - summ
   - - cata
@@ -180,6 +193,22 @@ class SummOutput(BaseModel):
 
 class CataOutput(BaseModel):
     cata: str = ""
+
+
+class GatherComposite(CompositeAgent):
+    """A concrete composite pattern (fictitious domain): transcribes each
+    branch's built payload (slot order) into its own ``output_as``.
+
+    The engine's ``CompositeAgent`` has **no** generic default build — output
+    construction is the pattern's model (it must satisfy the pattern's declared
+    ``output_schema``); each concrete composite inherits and implements it.
+    """
+
+    async def build_output_as(self, info):
+        gathered: dict = {}
+        for payload in info.values():
+            gathered.update(payload)
+        return build_payload(gathered, output_as=self._output_as)
 
 
 def fake_assess(title: str, summary: str) -> dict:
@@ -210,14 +239,21 @@ def build_single_branch_agents(
     )
     registry = build_tool_registry()
 
+    catalog = load_patterns(EXTRACT_AND_SUMMARIZE_YAML)
+    extract_spec = catalog.specs["extract"]
+    assess_spec = catalog.specs["assess"]
+    composite_spec = catalog.specs["extract_and_summarize"]
+
     extract = LinguisticAgent(
         agent_id="extract",
         db=db,
         lingo_client=lingo_client,
         prompt_template="Extract the key points of {text} in {lang}.",
         output_model=ExtractOutput,
-        input_as="payload",
-        output_as="extract",
+        input_as=extract_spec.input.input_as,
+        output_as=extract_spec.output.output_as,
+        input_schema=extract_spec.input.input_schema,
+        output_schema=extract_spec.output.output_schema,
     )
     assess = ToolAgent(
         agent_id="assess",
@@ -225,18 +261,21 @@ def build_single_branch_agents(
         available_tools=registry,
         tool_name="assess",
         parameters={"title": "{extract.title}", "summary": "{extract.summary}"},
-        input_as="extract",
-        output_as="result",
+        input_as=assess_spec.input.input_as,
+        output_as=assess_spec.output.output_as,
+        input_schema=assess_spec.input.input_schema,
+        output_schema=assess_spec.output.output_schema,
     )
 
-    catalog = load_patterns(EXTRACT_AND_SUMMARIZE_YAML)
-    branches = resolve_composite_branches(catalog.specs["extract_and_summarize"], catalog)
-    comp = CompositeAgent(
+    branches = resolve_composite_branches(composite_spec, catalog)
+    comp = GatherComposite(
         agent_id="extract_and_summarize",
         db=db,
         branches=branches,
-        input_as="payload",
-        output_as="result",
+        input_as=composite_spec.input.input_as,
+        output_as=composite_spec.output.output_as,
+        input_schema=composite_spec.input.input_schema,
+        output_schema=composite_spec.output.output_schema,
     )
     return comp, extract, assess
 
@@ -245,14 +284,20 @@ def build_multi_branch_agents(
     db: AsyncBeaverDB,
 ) -> tuple[CompositeAgent, LinguisticAgent, LinguisticAgent]:
     """Boot the unified composite (two branches) + its standing atomic agents."""
+    catalog = load_patterns(DISTRIBUTE_SUMMARY_YAML)
+    summ_spec = catalog.specs["summ"]
+    cata_spec = catalog.specs["cata"]
+    composite_spec = catalog.specs["distribute_summary"]
     summ = LinguisticAgent(
         agent_id="summ",
         db=db,
         lingo_client=MockLLM(responses=[SummOutput(summ="a summary")]),
         prompt_template="Summarize: {text}",
         output_model=SummOutput,
-        input_as="text",
-        output_as="summ",
+        input_as=summ_spec.input.input_as,
+        output_as=summ_spec.output.output_as,
+        input_schema=summ_spec.input.input_schema,
+        output_schema=summ_spec.output.output_schema,
     )
     cata = LinguisticAgent(
         agent_id="cata",
@@ -260,20 +305,21 @@ def build_multi_branch_agents(
         lingo_client=MockLLM(responses=[CataOutput(cata="a category")]),
         prompt_template="Categorize: {text}",
         output_model=CataOutput,
-        input_as="text",
-        output_as="cata",
+        input_as=cata_spec.input.input_as,
+        output_as=cata_spec.output.output_as,
+        input_schema=cata_spec.input.input_schema,
+        output_schema=cata_spec.output.output_schema,
     )
 
-    catalog = load_patterns(DISTRIBUTE_SUMMARY_YAML)
-    branches = resolve_composite_branches(
-        catalog.specs["distribute_summary"], catalog
-    )
-    comp = CompositeAgent(
+    branches = resolve_composite_branches(composite_spec, catalog)
+    comp = GatherComposite(
         agent_id="distribute_summary",
         db=db,
         branches=branches,
-        input_as="payload",
-        output_as="result",
+        input_as=composite_spec.input.input_as,
+        output_as=composite_spec.output.output_as,
+        input_schema=composite_spec.input.input_schema,
+        output_schema=composite_spec.output.output_schema,
     )
     return comp, summ, cata
 

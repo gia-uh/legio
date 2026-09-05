@@ -1,7 +1,12 @@
-"""`legio.patterns.compile` — compile ``output_schema`` to pydantic (H4 / LEG-072).
+"""`legio.patterns.compile` — compile declared schemas to strict pydantic contracts.
 
-Compiles a JSON-schema-style v1 ``output_schema`` into a validating pydantic
-model: unions, arrays, nested objects and recursive ``$ref`` definitions.
+Compiles a JSON-schema-style v1 ``input_schema``/``output_schema`` into a
+validating pydantic model used for the runtime **superset** contract check:
+every declared property is required and strictly typed (a schema ``integer``
+never accepts ``"3"``), while anything **not** declared passes through
+untouched (extras are allowed — the payload "contains" the contract and may
+carry more). Unions, arrays, nested objects and recursive ``$ref`` definitions
+compile as before.
 """
 
 from __future__ import annotations
@@ -9,7 +14,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, ConfigDict, create_model
+
+_STRICT_CONFIG = ConfigDict(strict=True, extra="ignore")
 
 
 def _pytype(schema: Any, defs: Mapping[str, Any], memo: dict[str, Any]) -> Any:
@@ -25,7 +32,7 @@ def _pytype(schema: Any, defs: Mapping[str, Any], memo: dict[str, Any]) -> Any:
     if ref:
         name = ref.split("/")[-1]
         if name not in memo:
-            memo[name] = create_model(f"Ref_{name}", __base__=BaseModel)
+            memo[name] = create_model(f"Ref_{name}", __base__=BaseModel, __config__=_STRICT_CONFIG)
             memo[name] = _compile_submodel(defs[name], defs, memo)
         return memo[name]
 
@@ -60,14 +67,25 @@ def _compile_submodel(
     fields: dict[str, Any] = {}
     for name, subschema in props.items():
         fields[name] = (_pytype(subschema, defs, memo), ...)
-    return create_model("OutputModel", __base__=BaseModel, **fields)
+    return create_model("ContractModel", __base__=BaseModel, __config__=_STRICT_CONFIG, **fields)
 
 
-def compile_output_schema(schema: dict[str, Any]) -> type[BaseModel]:
-    """Return a pydantic model validating the given ``output_schema``."""
+def compile_schema(schema: Mapping[str, Any]) -> type[BaseModel]:
+    """Return a strict pydantic model validating the given v1 schema.
+
+    Every declared property is required and strictly typed; undeclared fields
+    are ignored, so a payload that *contains* the declared data (superset)
+    validates even when it carries extras. Used for both ``input_schema`` and
+    ``output_schema`` at the agent's two edges.
+    """
     defs: dict[str, Any] = dict(schema.get("$defs") or {})
     memo: dict[str, Any] = {}
     return _compile_submodel(schema, defs, memo)
 
 
-__all__ = ["compile_output_schema"]
+def compile_output_schema(schema: dict[str, Any]) -> type[BaseModel]:
+    """Backward-compatible alias: compile an ``output_schema`` to a model."""
+    return compile_schema(schema)
+
+
+__all__ = ["compile_output_schema", "compile_schema"]

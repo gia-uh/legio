@@ -3,10 +3,12 @@
 Runs a linguistic step of a route: resolves its prompt template against the
 payload (LEG-010 H2 dotted paths + system vars), asks an injected lingo client
 (an ``LLM``/``MockLLM`` fake) for a structured pydantic record validated
-against the pattern's compiled ``output_schema``, and builds the new payload,
-which the base routes by position (finality by position + ``level``, Schema 2).
-The step's state travels in the messages (AGENT_LIFECYCLE §12.1): nothing is
-staged out-of-message.
+against the pattern's compiled ``output_schema``, and builds the new payload
+via the re-implementable seam ``build_output_as`` (whose basic linguistic model
+wraps the record's dump under ``output_as``; a pattern may inherit
+``LinguisticAgent`` and re-implement it). The base routes by position
+(finality by position + ``level``, Schema 2). The step's state travels in the
+messages (AGENT_LIFECYCLE §12.1): nothing is staged out-of-message.
 
 The call is a single ``create(model, [system prompt])`` round-trip (LEG-030 v1
 call contract). Failures from lingo are never silent (AGENTS.md rule 9): a
@@ -44,11 +46,15 @@ class LinguisticAgent(AgentBase):
         system_vars: Mapping[str, Any] | None = None,
         input_as: str = "",
         output_as: str = "",
+        input_schema: Mapping[str, Any] | None = None,
+        output_schema: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
             db=db,
             output_as=output_as,
+            input_schema=input_schema,
+            output_schema=output_schema,
         )
         self._lingo = lingo_client
         self._prompt = prompt_template
@@ -78,13 +84,22 @@ class LinguisticAgent(AgentBase):
         )
         messages = [Message.system(prompt)]
         result = await self._lingo.create(self._output_model, messages)
-        output = result.model_dump()
         logger.info(
             "linguistic result agent=%s task=%s",
             self._agent_id,
             request.task_id,
         )
-        return build_payload(output, output_as=self._output_as)
+        return await self.build_output_as(result.model_dump())
+
+    async def build_output_as(self, info: Any) -> dict[str, Any]:
+        """Basic linguistic-output model: the record's dump is the value.
+
+        ``info`` is the structured record's ``model_dump()`` — already validated
+        against the pattern's compiled ``output_schema`` by lingo. Override this
+        seam (inherit ``LinguisticAgent``) to shape the value otherwise before it
+        is wrapped under ``output_as`` (§12.1).
+        """
+        return build_payload(info, output_as=self._output_as)
 
 
 __all__ = ["LinguisticAgent"]

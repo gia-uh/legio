@@ -30,6 +30,7 @@ from legio.agents.composite_agent import CompositeAgent
 from legio.agents.linguistic_agent import LinguisticAgent
 from legio.agents.tool_agent import ToolAgent
 from legio.api import create_app
+from legio.flow import build_payload
 from legio.naming import result_queue_key
 from legio.patterns import load_patterns, resolve_composite_branches
 from legio.security import ClientTokenStore
@@ -98,7 +99,10 @@ output:
   output_schema:
     type: object
     properties:
-      result: {type: string}
+      result:
+        type: object
+        properties:
+          result: {type: string}
 branches:
   - - extract
     - assess
@@ -157,6 +161,22 @@ class CataOutput(BaseModel):
     cata: str = ""
 
 
+class GatherComposite(CompositeAgent):
+    """A concrete composite pattern (fictitious domain): transcribes each
+    branch's built payload (slot order) into its own ``output_as``.
+
+    The engine's ``CompositeAgent`` has **no** generic default build — output
+    construction is the pattern's model (it must satisfy the pattern's declared
+    ``output_schema``); each concrete composite inherits and implements it.
+    """
+
+    async def build_output_as(self, info):
+        gathered: dict = {}
+        for payload in info.values():
+            gathered.update(payload)
+        return build_payload(gathered, output_as=self._output_as)
+
+
 def fake_assess(title: str, summary: str) -> dict:
     """Domain-free fake tool: plain callable, signature is its contract."""
     return {"result": f"[{title}] {summary}"}
@@ -177,6 +197,12 @@ def build_nested_agents(
         policy={"timeout": 30, "retries": 0},
     )
 
+    catalog = load_patterns(NESTED_YAML)
+    extract_spec = catalog.specs["extract"]
+    assess_spec = catalog.specs["assess"]
+    cata_spec = catalog.specs["cata"]
+    inner_spec = catalog.specs["extract_and_summarize"]
+    outer_spec = catalog.specs["deep_pipeline"]
     extract = LinguisticAgent(
         agent_id="extract",
         db=db,
@@ -185,8 +211,10 @@ def build_nested_agents(
         ),
         prompt_template="Extract the key points of {text} in {lang}.",
         output_model=ExtractOutput,
-        input_as="payload",
-        output_as="extract",
+        input_as=extract_spec.input.input_as,
+        output_as=extract_spec.output.output_as,
+        input_schema=extract_spec.input.input_schema,
+        output_schema=extract_spec.output.output_schema,
     )
     assess = ToolAgent(
         agent_id="assess",
@@ -194,8 +222,10 @@ def build_nested_agents(
         available_tools=registry,
         tool_name="assess",
         parameters={"title": "{extract.title}", "summary": "{extract.summary}"},
-        input_as="extract",
-        output_as="result",
+        input_as=assess_spec.input.input_as,
+        output_as=assess_spec.output.output_as,
+        input_schema=assess_spec.input.input_schema,
+        output_schema=assess_spec.output.output_schema,
     )
     cata = LinguisticAgent(
         agent_id="cata",
@@ -203,26 +233,29 @@ def build_nested_agents(
         lingo_client=MockLLM(responses=[CataOutput(cata="a category")]),
         prompt_template="Categorize: {text}",
         output_model=CataOutput,
-        input_as="text",
-        output_as="cata",
+        input_as=cata_spec.input.input_as,
+        output_as=cata_spec.output.output_as,
+        input_schema=cata_spec.input.input_schema,
+        output_schema=cata_spec.output.output_schema,
     )
 
-    catalog = load_patterns(NESTED_YAML)
-    inner_spec = catalog.specs["extract_and_summarize"]
-    outer_spec = catalog.specs["deep_pipeline"]
-    inner = CompositeAgent(
+    inner = GatherComposite(
         agent_id="extract_and_summarize",
         db=db,
         branches=resolve_composite_branches(inner_spec, catalog),
-        input_as="payload",
-        output_as="result",
+        input_as=inner_spec.input.input_as,
+        output_as=inner_spec.output.output_as,
+        input_schema=inner_spec.input.input_schema,
+        output_schema=inner_spec.output.output_schema,
     )
-    outer = CompositeAgent(
+    outer = GatherComposite(
         agent_id="deep_pipeline",
         db=db,
         branches=resolve_composite_branches(outer_spec, catalog),
-        input_as="payload",
-        output_as="final",
+        input_as=outer_spec.input.input_as,
+        output_as=outer_spec.output.output_as,
+        input_schema=outer_spec.input.input_schema,
+        output_schema=outer_spec.output.output_schema,
     )
     return outer, inner, extract, assess, cata
 
@@ -282,7 +315,9 @@ async def test_nested_composite_in_branch_over_rest(
         assert entry["result_key"] == result_queue_key(task_id)
         # The outer composite gathered its two branches under its output_as:
         # slot 1 is the nested composite's own built payload {result: {result: ...}}.
-        assert entry["output"]["final"]["result"]["result"]["result"] == "[Foxes] A note about foxes."
+        assert (
+            entry["output"]["final"]["result"]["result"]["result"] == "[Foxes] A note about foxes."
+        )
         assert entry["output"]["final"]["cata"]["cata"] == "a category"
 
     # Recursion mechanics are observable in the log stream (rule 12 audit trail):

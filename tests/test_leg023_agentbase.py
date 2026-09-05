@@ -55,10 +55,16 @@ class FinalAgent(AgentBase):
     output (the builder's ``{output_as: output}``) allowing the base to finish."""
 
     def __init__(
-        self, *, agent_id: str, db: Any, input_as: str | None = None, output_as: str | None = None, **kwargs: object
+        self,
+        *,
+        agent_id: str,
+        db: Any,
+        input_as: str | None = None,
+        output_as: str | None = None,
+        **kwargs: Any,
     ) -> None:
         self._input_as = input_as or agent_id
-        super().__init__(agent_id=agent_id, db=db, output_as=output_as or agent_id)
+        super().__init__(agent_id=agent_id, db=db, output_as=output_as or agent_id, **kwargs)
 
     async def _handle(self, request: ExecutionRequestMessage) -> dict:
         inp = dict(request.payload.get(self._input_as, {}))
@@ -70,10 +76,16 @@ class ChainAgent(AgentBase):
     incremented under ``output_as``; the base advances until level end."""
 
     def __init__(
-        self, *, agent_id: str, db: Any, input_as: str | None = None, output_as: str | None = None, **kwargs: object
+        self,
+        *,
+        agent_id: str,
+        db: Any,
+        input_as: str | None = None,
+        output_as: str | None = None,
+        **kwargs: Any,
     ) -> None:
         self._input_as = input_as or agent_id
-        super().__init__(agent_id=agent_id, db=db, output_as=output_as or agent_id)
+        super().__init__(agent_id=agent_id, db=db, output_as=output_as or agent_id, **kwargs)
 
     async def _handle(self, request: ExecutionRequestMessage) -> dict:
         inp = dict(request.payload.get(self._input_as, {}))
@@ -98,10 +110,10 @@ class BuildAgent(AgentBase):
     handoff carries it to the next step's ``input_as``)."""
 
     def __init__(
-        self, *, agent_id: str, db: Any, input_as: str, output_as: str, **kwargs: object
+        self, *, agent_id: str, db: Any, input_as: str, output_as: str, **kwargs: Any
     ) -> None:
         self._input_as = input_as
-        super().__init__(agent_id=agent_id, db=db, output_as=output_as)
+        super().__init__(agent_id=agent_id, db=db, output_as=output_as, **kwargs)
 
     async def _handle(self, request: ExecutionRequestMessage) -> dict:
         inp = dict(request.payload.get(self._input_as, {}))
@@ -290,3 +302,79 @@ async def test_three_stage_chain_builds_payload_across_steps(
     assert row is not None
     result = ExecutionResultMessage.model_validate(row)
     assert result.payload == {"out3": {"s1": 1, "s2": 2, "s3": 3}}
+
+
+@pytest.mark.asyncio
+async def test_contract_check_accepts_superset_extra_keys(beaver_db: AsyncBeaverDB) -> None:
+    """Superset semantics at the runner: declared data present, extras pass.
+
+    The incoming payload carries a declared ``{"v": 1}`` plus an undeclared
+    ``extra`` key; the built output matches the declared ``output_schema``.
+    Both edges validate and the result is deposited normally.
+    """
+    await beaver_db.queue(queue_key("main")).put(
+        make_request(
+            task_id="T-superset", payload={"main": {"v": 1, "extra": "irrelevant"}}
+        ).model_dump(mode="json"),
+        priority=0.0,
+    )
+    agent = build(
+        FinalAgent,
+        agent_id="main",
+        db=beaver_db,
+        input_schema={"type": "object", "properties": {"v": {"type": "integer"}}},
+        output_schema={"type": "object", "properties": {"v": {"type": "integer"}}},
+    )
+
+    assert await agent.run() == 1
+
+    result_item = await pop_one(beaver_db, "client")
+    assert result_item is not None
+    result = ExecutionResultMessage.model_validate(result_item)
+    assert result.payload["main"]["v"] == 1
+
+
+@pytest.mark.asyncio
+async def test_input_contract_rejection_routes_error(beaver_db: AsyncBeaverDB) -> None:
+    """A strict input_schema violation is a visible error, never silent."""
+    await beaver_db.queue(queue_key("main")).put(
+        make_request(task_id="T-in-bad", payload={"main": {"v": "one"}}).model_dump(mode="json"),
+        priority=0.0,
+    )
+    agent = build(
+        FinalAgent,
+        agent_id="main",
+        db=beaver_db,
+        input_schema={"type": "object", "properties": {"v": {"type": "integer"}}},
+    )
+
+    assert await agent.run() == 1
+
+    result_item = await pop_one(beaver_db, "client")
+    assert result_item is not None
+    result = ExecutionResultMessage.model_validate(result_item)
+    assert "error" in result.payload
+    assert "input contract rejected" in result.payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_output_contract_rejection_routes_error(beaver_db: AsyncBeaverDB) -> None:
+    """A strict output_schema violation is a visible error, never silent."""
+    await beaver_db.queue(queue_key("main")).put(
+        make_request(task_id="T-out-bad").model_dump(mode="json"), priority=0.0
+    )
+    agent = build(
+        FinalAgent,
+        agent_id="main",
+        db=beaver_db,
+        # FinalAgent builds {"v": 1}; the declared contract says v is a string.
+        output_schema={"type": "object", "properties": {"v": {"type": "string"}}},
+    )
+
+    assert await agent.run() == 1
+
+    result_item = await pop_one(beaver_db, "client")
+    assert result_item is not None
+    result = ExecutionResultMessage.model_validate(result_item)
+    assert "error" in result.payload
+    assert "output contract rejected" in result.payload["error"]

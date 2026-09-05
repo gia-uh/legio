@@ -15,8 +15,18 @@ caller-owned knowledge, and the step's produced payload travels in the single
 
 The actual steps (linguistic, tool, composite) plug in via ``_handle``, which
 returns the new payload to route; ``ToolAgent`` (LEG-022) is one such subclass.
+How an agent **builds** its output is its own implementation: ``_handle``
+produces the step's info and hands it to the re-implementable seam
+``build_output_as``, which constructs the ``{output_as: value}`` payload — the
+engine never guesses that shape (per type, basic models exist as overridable
+defaults; a pattern may inherit and build its own for any agent type).
+
 Failures are never silent (AGENTS.md rule 9): a raised step error is surfaced
-as an ``error`` result. There is no lease, no retry and no re-queue in the
+as an ``error`` result. The declared contracts are verified uniformly here on
+both edges — **superset**: the incoming data must contain the ``input_schema``
+and the built payload the ``output_schema`` (extras are irrelevant), for every
+agent, atomic or composite (missing data or wrong strict types raise
+``ContractError``). There is no lease, no retry and no re-queue in the
 dispatch: the agent is a stateless poller (AGENTS.md rule 8) — nothing sleeps,
 nothing is locked, and the item is simply consumed once.
 
@@ -28,13 +38,15 @@ directly.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from beaver import AsyncBeaverDB
+from pydantic import BaseModel, ValidationError
 
-from legio.flow import ExecutionRequestMessage, ExecutionResultMessage
+from legio.flow import ExecutionRequestMessage, ExecutionResultMessage, MessageType
 from legio.naming import queue_key
+from legio.patterns.compile import compile_schema
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +58,23 @@ _EVENT_STEP_ERROR = "step_error"
 _EVENT_IDLE = "idle"
 
 
+class ContractError(RuntimeError):
+    """A declared ``input_schema``/``output_schema`` contact was violated.
+
+    Raised by the uniform runner when the data at an agent's edge does not
+    *contain* the declared contract (superset): a required declared property is
+    missing or has the wrong (strict) type. It is surfaced like any step error —
+    a visible ``error`` result, never silent (AGENTS.md rule 9).
+    """
+
+
 class AgentBase:
     """The uniform run loop every agent implements (LEG-023) on native beaver."""
+
+    # Read alias owned by the step, set by subclasses (LEG-022/030/040). Defaults
+    # to "" — the agent then works on the whole payload. Kept as a plain class
+    # attribute so a subclass assignment in its own __init__ is never clobbered.
+    _input_as: str = ""
 
     def __init__(
         self,
@@ -55,10 +82,21 @@ class AgentBase:
         agent_id: str,
         db: AsyncBeaverDB,
         output_as: str = "",
+        input_schema: Mapping[str, Any] | None = None,
+        output_schema: Mapping[str, Any] | None = None,
     ) -> None:
         self._agent_id = agent_id
         self._db = db
         self._output_as = output_as
+        # The agent's declared contracts, compiled once to strict pydantic
+        # models (superset check, §12.1): None when the pattern declares no
+        # schema (plain text default — nothing to verify).
+        self._input_contract: type[BaseModel] | None = (
+            compile_schema(input_schema) if input_schema else None
+        )
+        self._output_contract: type[BaseModel] | None = (
+            compile_schema(output_schema) if output_schema else None
+        )
         self._queue = db.queue(queue_key(agent_id))
         self._monitor: Monitor | None = None
 
@@ -121,9 +159,21 @@ class AgentBase:
         return True
 
     async def _run_guarded(self, request: ExecutionRequestMessage) -> None:
-        """Run the step job and route its outcome, or route a raised failure."""
+        """Run the step job and route its outcome, or route a raised failure.
+
+        The uniform contract check wraps every step on both edges (rule 12):
+        the incoming data is verified against the agent's ``input_schema``
+        before the job runs, and the built payload against its ``output_schema``
+        before it is routed — superset on both edges, for every agent, atomic or
+        composite. A violation raises ``ContractError`` and is routed as a
+        visible ``error`` result, never silent.
+        """
+        new_payload: dict[str, Any] | None = None
         try:
+            self._verify_input_contract(request)
             new_payload = await self._handle(request)
+            if new_payload is not None:
+                self._verify_output_contract(new_payload)
         except Exception as exc:  # noqa: BLE001 - surfaced, never swallowed
             error = f"{type(exc).__name__}: {exc}"
             logger.warning(
@@ -138,6 +188,68 @@ class AgentBase:
         if new_payload is not None:
             await self._route_outcome(request, new_payload)
             await self._emit(_EVENT_STEP_DONE, request)
+
+    def _scoped_input(self, request: ExecutionRequestMessage) -> Any:
+        """The step's input data: the under-alias payload, or the whole payload."""
+        alias = self._input_as
+        if alias and alias in request.payload:
+            return request.payload[alias]
+        return request.payload
+
+    def _verify_input_contract(self, request: ExecutionRequestMessage) -> None:
+        """Superset-check the incoming data against the agent's ``input_schema``.
+
+        The payload must *contain* the declared input data — missing declared
+        properties or wrong strict types reject the step with a raised
+        ``ContractError``; undeclared extras are irrelevant and pass through.
+        No contract declared → no check. A fan-in ``EXECUTION_RESULT`` (a
+        returned branch state, composite-internal) is not an entry — the input
+        contract applies to entry requests only.
+        """
+        model = self._input_contract
+        if model is None:
+            return
+        if request.message_type is MessageType.EXECUTION_RESULT:
+            return
+        try:
+            model.model_validate(self._scoped_input(request))
+        except ValidationError as exc:
+            raise ContractError(
+                f"input contract rejected agent={self._agent_id} task={request.task_id} "
+                f"alias={self._input_as!r} problems={self._summarize_errors(exc)}"
+            ) from exc
+
+    def _verify_output_contract(self, payload: dict[str, Any]) -> None:
+        """Superset-check the built payload against the agent's ``output_schema``.
+
+        Runs after construction, before the payload is routed: the value under
+        the agent's ``output_as`` must contain everything the schema declared
+        (missing/typed-wrong → ``ContractError``; extras pass through). A
+        payload without the agent's ``output_as`` (an ``error`` result) is
+        passed through unverified — never swallowed (AGENTS.md rule 9).
+        """
+        model = self._output_contract
+        if model is None:
+            return
+        alias = self._output_as
+        if not alias or alias not in payload:
+            return
+        try:
+            model.model_validate(payload[alias])
+        except ValidationError as exc:
+            raise ContractError(
+                f"output contract rejected agent={self._agent_id} alias={alias!r} "
+                f"problems={self._summarize_errors(exc)}"
+            ) from exc
+
+    @staticmethod
+    def _summarize_errors(exc: ValidationError) -> str:
+        """Compact `loc:type` list (never the offending values — the error is
+        routed inside a message payload that must stay small)."""
+        return ", ".join(
+            f"{'.'.join(str(part) for part in error['loc'])}:{error['type']}"
+            for error in exc.errors()
+        )
 
     async def _emit(self, event: str, request: ExecutionRequestMessage | None) -> None:
         if self._monitor is None:
@@ -235,9 +347,25 @@ class AgentBase:
 
         Implemented by concrete agents. A returned dict is routed by position by
         ``_route_outcome``; a raised exception is surfaced as an error result by
-        ``_run_guarded``.
+        ``_run_guarded``. The step's produced *info* is handed to
+        ``build_output_as``, which constructs the payload — the seam every agent
+        re-implements.
+        """
+        raise NotImplementedError
+
+    async def build_output_as(self, info: Any) -> dict[str, Any]:  # pragma: no cover - abstract
+        """Construct the agent's new payload from its produced ``info`` (seam).
+
+        Exact output built from the produced info is the agent's own
+        implementation: ``output_as`` is the agent's write alias and the way it
+        composes the value under it is what a pattern re-implements (AGENT_LIFECYCLE
+        §12.1 construction). ``info`` is whatever the type's runner yields
+        (a tool's raw output, a linguistic record's dump, a composite's grouped
+        branch slots); the return value is always ``{output_as: <value>}``. Basic
+        models exist per type in each subclass (overridable); the engine never
+        supplies a generic shape.
         """
         raise NotImplementedError
 
 
-__all__ = ["AgentBase"]
+__all__ = ["AgentBase", "ContractError"]

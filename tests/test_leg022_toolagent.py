@@ -115,13 +115,137 @@ async def test_input_signature_rejection_is_never_silent(
 
 
 @pytest.mark.asyncio
-async def test_output_validation_failure_is_never_silent(
-    beaver_db: AsyncBeaverDB,
-) -> None:
-    """Tool returns wrong type - schema validation at agent edge catches it."""
-    # This test is about the agent's output_schema validation, which is not
-    # part of ToolAgent itself but of the pattern's output_as/output_schema.
-    # ToolAgent just builds the payload; the pattern-level validation is separate.
+async def test_output_validation_failure_is_never_silent(beaver_db: AsyncBeaverDB) -> None:
+    """Declared output_schema violation at the agent edge is a visible error.
+
+    The tool returns ``{"transformed": "HELLOHELLO"}`` (a string); the pattern
+    declares the output contract as **integer** — under the strict superset
+    check the built value fails and the failure routes as an ``error`` result,
+    never silent (AGENTS.md rule 9).
+    """
+    registry = AvailableToolsRegistry()
+    registry.declare(
+        "transform",
+        implementation="tests.test_tools.fake_transform",
+        policy={"timeout": 30, "retries": 0},
+    )
+
+    request = crafted_request(task_id="T-bad-out", payload={"summ": {"text": "hello", "factor": 2}})
+    await beaver_db.queue(queue_key("summ")).put(request.model_dump(mode="json"), priority=0.0)
+
+    agent = ToolAgent(
+        agent_id="summ",
+        db=beaver_db,
+        available_tools=registry,
+        tool_name="transform",
+        parameters={"text": "{summ.text}", "factor": "{summ.factor}"},
+        input_as="summ",
+        output_as="summ",
+        output_schema={
+            "type": "object",
+            "properties": {"transformed": {"type": "integer"}},
+        },
+    )
+
+    await agent.process_next()
+
+    result_item = await pop_one(beaver_db, "main_a")
+    assert result_item is not None
+    result = ExecutionResultMessage.model_validate(result_item)
+    assert result.task_id == "T-bad-out"
+    assert "error" in result.payload
+    assert "output contract rejected" in result.payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_input_contract_rejection_is_never_silent(beaver_db: AsyncBeaverDB) -> None:
+    """Declared input_schema violation at the agent edge is a visible error.
+
+    The incoming data fails the strict superset check (``factor`` is "two",
+    not the declared ``integer``) before the tool is invoked — surfaced as an
+    ``error`` result, never silent.
+    """
+    registry = AvailableToolsRegistry()
+    registry.declare(
+        "transform",
+        implementation="tests.test_tools.fake_transform",
+        policy={"timeout": 30, "retries": 0},
+    )
+
+    request = crafted_request(
+        task_id="T-bad-in-schema", payload={"summ": {"text": "hello", "factor": "two"}}
+    )
+    await beaver_db.queue(queue_key("summ")).put(request.model_dump(mode="json"), priority=0.0)
+
+    agent = ToolAgent(
+        agent_id="summ",
+        db=beaver_db,
+        available_tools=registry,
+        tool_name="transform",
+        parameters={"text": "{summ.text}", "factor": "{summ.factor}"},
+        input_as="summ",
+        output_as="summ",
+        input_schema={
+            "type": "object",
+            "properties": {"text": {"type": "string"}, "factor": {"type": "integer"}},
+        },
+    )
+
+    await agent.process_next()
+
+    result_item = await pop_one(beaver_db, "main_a")
+    assert result_item is not None
+    result = ExecutionResultMessage.model_validate(result_item)
+    assert result.task_id == "T-bad-in-schema"
+    assert "error" in result.payload
+    assert "input contract rejected" in result.payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_contract_check_accepts_superset_extras(beaver_db: AsyncBeaverDB) -> None:
+    """Superset semantics: declared properties present, extras pass through.
+
+    The input carries an undeclared ``extra`` key and the output matches the
+    declared schema — the check passes and the result is deposited normally.
+    """
+    registry = AvailableToolsRegistry()
+    registry.declare(
+        "transform",
+        implementation="tests.test_tools.fake_transform",
+        policy={"timeout": 30, "retries": 0},
+    )
+
+    request = crafted_request(
+        task_id="T-super",
+        payload={"summ": {"text": "hello", "factor": 2, "extra": "irrelevant"}},
+    )
+    await beaver_db.queue(queue_key("summ")).put(request.model_dump(mode="json"), priority=0.0)
+
+    agent = ToolAgent(
+        agent_id="summ",
+        db=beaver_db,
+        available_tools=registry,
+        tool_name="transform",
+        parameters={"text": "{summ.text}", "factor": "{summ.factor}"},
+        input_as="summ",
+        output_as="summ",
+        input_schema={
+            "type": "object",
+            "properties": {"text": {"type": "string"}, "factor": {"type": "integer"}},
+        },
+        output_schema={
+            "type": "object",
+            "properties": {"transformed": {"type": "string"}},
+        },
+    )
+
+    await agent.process_next()
+
+    result_item = await pop_one(beaver_db, "main_a")
+    assert result_item is not None
+    result = ExecutionResultMessage.model_validate(result_item)
+    assert result.task_id == "T-super"
+    assert result.payload["summ"]["transformed"] == "HELLOHELLO"
 
 
 @pytest.mark.asyncio

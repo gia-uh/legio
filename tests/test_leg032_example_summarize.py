@@ -25,6 +25,7 @@ from legio.agents.composite_agent import CompositeAgent
 from legio.agents.linguistic_agent import LinguisticAgent
 from legio.agents.tool_agent import ToolAgent
 from legio.api import create_app
+from legio.flow import build_payload
 from legio.naming import result_queue_key
 from legio.patterns import load_patterns, resolve_composite_branches
 from legio.security import ClientTokenStore
@@ -93,7 +94,10 @@ output:
   output_schema:
     type: object
     properties:
-      result: {type: string}
+      result:
+        type: object
+        properties:
+          result: {type: string}
 branches:
   - - summ
     - assess
@@ -108,6 +112,22 @@ class SummarizeOutput(BaseModel):
 
 class AssessOutput(BaseModel):
     result: str
+
+
+class GatherComposite(CompositeAgent):
+    """A concrete composite pattern (fictitious domain): transcribes each
+    branch's built payload (slot order) into its own ``output_as``.
+
+    The engine's ``CompositeAgent`` has **no** generic default build — output
+    construction is the pattern's model (it must satisfy the pattern's declared
+    ``output_schema``); each concrete composite inherits and implements it.
+    """
+
+    async def build_output_as(self, info):
+        gathered: dict = {}
+        for payload in info.values():
+            gathered.update(payload)
+        return build_payload(gathered, output_as=self._output_as)
 
 
 def fake_assess(title: str, summary: str) -> dict:
@@ -134,14 +154,21 @@ def build_standing_agents(
         policy={"timeout": 30, "retries": 0},
     )
 
+    catalog = load_patterns(SUMMARIZE_YAML)
+    summ_spec = catalog.specs["summ"]
+    assess_spec = catalog.specs["assess"]
+    composite_spec = catalog.specs["summarize"]
+
     summ = LinguisticAgent(
         agent_id="summ",
         db=db,
         lingo_client=lingo_client,
         prompt_template="Summarize {text} and {lang}.",
         output_model=SummarizeOutput,
-        input_as="payload",
-        output_as="summ",
+        input_as=summ_spec.input.input_as,
+        output_as=summ_spec.output.output_as,
+        input_schema=summ_spec.input.input_schema,
+        output_schema=summ_spec.output.output_schema,
     )
     assess = ToolAgent(
         agent_id="assess",
@@ -149,18 +176,21 @@ def build_standing_agents(
         available_tools=registry,
         tool_name="assess",
         parameters={"title": "{summ.title}", "summary": "{summ.summary}"},
-        input_as="summ",
-        output_as="result",
+        input_as=assess_spec.input.input_as,
+        output_as=assess_spec.output.output_as,
+        input_schema=assess_spec.input.input_schema,
+        output_schema=assess_spec.output.output_schema,
     )
 
-    catalog = load_patterns(SUMMARIZE_YAML)
-    branches = resolve_composite_branches(catalog.specs["summarize"], catalog)
-    composite = CompositeAgent(
+    branches = resolve_composite_branches(composite_spec, catalog)
+    composite = GatherComposite(
         agent_id="summarize",
         db=db,
         branches=branches,
-        input_as="payload",
-        output_as="result",
+        input_as=composite_spec.input.input_as,
+        output_as=composite_spec.output.output_as,
+        input_schema=composite_spec.input.input_schema,
+        output_schema=composite_spec.output.output_schema,
     )
     return composite, summ, assess
 
@@ -187,7 +217,11 @@ async def test_summarize_flows_linguistic_to_tool_over_rest_and_auth(
         # Submit to the summarize pattern
         resp = await ac.post(
             "/submit",
-            json={"client_id": "client-a", "agent": "summarize", "payload": {"text": "The quick brown fox.", "lang": "en"}},
+            json={
+                "client_id": "client-a",
+                "agent": "summarize",
+                "payload": {"text": "The quick brown fox.", "lang": "en"},
+            },
             headers=bearer("tok-a"),
         )
         assert resp.status_code == 200, resp.text
