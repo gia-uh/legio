@@ -8,6 +8,7 @@ chain-wide dotted-path resolution, contract compatibility, reuse, encapsulation.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -124,6 +125,10 @@ def resolve_branch(
             raise UnrecoverableError(
                 f"branch references unknown pattern: {step_name!r}"
             )
+        if catalog.is_invalid(step_name):
+            raise UnrecoverableError(
+                f"branch references invalid pattern: {step_name!r} (not served)"
+            )
         step = catalog.specs[step_name]
         route.append((step.name, step.input.input_as))
     return tuple(route)
@@ -162,6 +167,27 @@ def _load_specs_from_yaml(data: Any, catalog: Catalog) -> list[AgentSpec]:
         _validate_agent_spec(spec, catalog=catalog.specs)
 
     return specs
+
+
+def load_pattern_dirs(pattern_dirs: Mapping[str, Path]) -> Catalog:
+    """Load patterns from the three per-type directories (recursive ``*.yaml``).
+
+    Each directory is scanned recursively (``rglob``) and every document is
+    loaded into one accumulated Catalog (duplicate names across dirs are a load
+    error). A configured directory that is missing is a visible, loud boot
+    failure (rule 9) — never a silent empty scan.
+    """
+    catalog = Catalog()
+    for kind, directory in pattern_dirs.items():
+        path = Path(directory)
+        if not path.is_dir():
+            raise UnrecoverableError(
+                f"pattern directory missing: {path} (field {kind!r})"
+            )
+        for yaml_file in sorted(path.rglob("*.yaml")):
+            _load_all_documents(yaml_file.read_text(encoding="utf-8"), catalog)
+        logger.info("patterns loaded kind=%s dir=%s count=%d", kind, path, len(catalog))
+    return catalog
 
 
 def load_patterns(source: str | Path | dict[str, Any] | list[dict[str, Any]]) -> Catalog:
@@ -208,6 +234,7 @@ def _load_all_documents(text: str, catalog: Catalog) -> None:
 
 __all__ = [
     "Catalog",
+    "load_pattern_dirs",
     "load_patterns",
     "resolve_branch",
     "resolve_composite_branches",

@@ -6,11 +6,16 @@ and terse call vocabulary. No v1 legacy fields (`input_mapping`, etc.).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
+
+from legio.errors import UnrecoverableError
+
+logger = logging.getLogger(__name__)
 
 
 class AgentType(str, Enum):
@@ -146,9 +151,18 @@ AgentSpec.model_rebuild()
 
 
 class Catalog(BaseModel):
-    """Read-only catalog of loaded agent specs."""
+    """Catalog of loaded agent specs with cascade invalidation (LEG-070).
+
+    The loaded ``specs`` are read-only after load. Invalidation is a separate,
+    observable runtime state: ``invalidate`` marks one pattern and, transitively,
+    every pattern that depends on it (through composite ``branches``) as invalid;
+    invalid patterns are removed from the **served** catalog. The dependency
+    graph is a DAG over composite references (reuse by reference; no cycles load,
+    LEG-021).
+    """
 
     specs: dict[str, AgentSpec] = Field(default_factory=dict)
+    invalid: frozenset[str] = Field(default_factory=frozenset)
 
     def get(self, name: str) -> AgentSpec | None:
         return self.specs.get(name)
@@ -161,6 +175,60 @@ class Catalog(BaseModel):
 
     def __len__(self) -> int:
         return len(self.specs)
+
+    def dependents(self, name: str) -> frozenset[str]:
+        """Direct dependents: composites whose branches reference ``name``."""
+        return frozenset(
+            spec.name
+            for spec in self.specs.values()
+            if spec.type is AgentType.COMPOSITE
+            and spec.branches
+            and any(name in branch for branch in spec.branches)
+        )
+
+    def invalidate(self, name: str) -> frozenset[str]:
+        """Invalidate ``name`` and every dependent transitively.
+
+        Returns the patterns newly invalidated (empty on a re-invalidation —
+        idempotent). The catalog never serves invalid patterns afterwards. An
+        unknown pattern is a visible error, never silent (rule 9).
+        """
+        if name not in self.specs:
+            raise UnrecoverableError(f"cannot invalidate unknown pattern: {name!r}")
+
+        frontier = {name}
+        reachable: set[str] = set()
+        while frontier:
+            next_frontier: set[str] = set()
+            for current in frontier:
+                for dependent in self.dependents(current):
+                    if dependent not in reachable:
+                        reachable.add(dependent)
+                        next_frontier.add(dependent)
+            frontier = next_frontier
+        reachable.add(name)
+
+        newly_invalid = frozenset(reachable) - self.invalid
+        if newly_invalid:
+            self.invalid = self.invalid | newly_invalid
+            logger.warning(
+                "patterns invalidated count=%d chain=%s",
+                len(newly_invalid),
+                ",".join(sorted(newly_invalid)),
+            )
+        return newly_invalid
+
+    def is_invalid(self, name: str) -> bool:
+        """Whether ``name`` is invalidated (disabled, never served)."""
+        return name in self.invalid
+
+    def served(self) -> frozenset[str]:
+        """The served catalog: every loaded pattern minus the invalid set."""
+        return frozenset(name for name in self.specs if name not in self.invalid)
+
+    def is_served(self, name: str) -> bool:
+        """Whether ``name`` is loaded and not invalidated (served)."""
+        return name in self.specs and name not in self.invalid
 
 
 __all__ = [
