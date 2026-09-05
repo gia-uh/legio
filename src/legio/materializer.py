@@ -60,6 +60,8 @@ logger = logging.getLogger(__name__)
 LingoFactory = Callable[[LlmConfig | None, str | None], Any]
 CompositeClasses = Mapping[str, type[CompositeAgent]]
 
+_SUPERVISE_MAX_ROUNDS = 100
+
 
 def default_lingo_factory(llm: LlmConfig | None, api_key: str | None) -> Any:
     """Default seam: build ``lingo.LLM(model, base_url, api_key)`` (LEG-081).
@@ -354,6 +356,51 @@ class NodeRuntime:
     def starting_agents(self) -> frozenset[str]:
         """The served ``main`` patterns — the node's starting agents."""
         return frozenset(spec.name for spec in self.catalog.specs.values() if spec.main)
+
+    async def supervise(self, *, max_rounds: int = _SUPERVISE_MAX_ROUNDS) -> int:
+        """Poll every materialized agent until the node is idle; return steps run.
+
+        The node's single polling loop (rule 8 — nothing sleeps, no callbacks):
+        each round polls every materialized agent in deterministic (sorted)
+        order, draining each with its own bounded ``run()``. Because every wake
+        is a poll (LEG-023), the flow advances only while this loop keeps every
+        agent's queue moving — including the non-``main`` capability agents a
+        composite fans out to. A round that finds nothing is the idle gate and
+        ends the loop (a second call then returns 0 immediately); ``max_rounds``
+        bounds a pathological never-idle flow so a misbehaving agent cannot
+        starve the node. Re-dispatch/re-scheduling stays out of the agent loop:
+        ``next_run_at`` is the TaskManager's scheduling field, the agent is a
+        stateless poller (base.py). Returns the total number of steps dispatched.
+        """
+        agents = self.agents
+        order = sorted(agents)
+        total_steps = 0
+        for round_number in range(1, max_rounds + 1):
+            round_steps = 0
+            for name in order:
+                round_steps += await agents[name].run()
+            total_steps += round_steps
+            if round_steps == 0:
+                logger.info(
+                    "supervisor idle node=%s rounds=%d steps=%d",
+                    self.config.config.node.id,
+                    round_number,
+                    total_steps,
+                )
+                return total_steps
+            logger.debug(
+                "supervisor round node=%s round=%d steps=%d",
+                self.config.config.node.id,
+                round_number,
+                round_steps,
+            )
+        logger.warning(
+            "supervisor round limit reached node=%s max_rounds=%d steps=%d",
+            self.config.config.node.id,
+            max_rounds,
+            total_steps,
+        )
+        return total_steps
 
 
 __all__ = [
