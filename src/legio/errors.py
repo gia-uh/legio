@@ -53,12 +53,21 @@ class TemplateResolutionError(UnrecoverableError):
     """
 
 
+class ConfigError(UnrecoverableError):
+    """The configuration is missing, unreadable, or violates the schema.
+
+    Configuration failures are authoring-level and fatal: the node refuses to
+    boot on them (fail-fast, AGENTS.md rule 9) and never falls back silently.
+    """
+
+
 def recoverable(error: LegioError) -> bool:
     """Whether the error type is recoverable (a transient failure)."""
     return isinstance(error, RecoverableError)
 
 
 __all__ = [
+    "ConfigError",
     "InvalidNameError",
     "LegioError",
     "RecoverableError",
