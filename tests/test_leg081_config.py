@@ -30,6 +30,7 @@ from legio.config import (
     load_tools_file,
 )
 from legio.errors import UnrecoverableError
+from legio.patterns.schema1 import AgentKind
 
 
 def write_config(tmp_path: Path, data: dict) -> Path:
@@ -48,6 +49,11 @@ def full_config_data() -> dict:
             "tool": "./patterns/tool/",
             "linguistic": "./patterns/linguistic/",
             "composite": "./patterns/composite/",
+        },
+        "pools": {
+            "per_pattern": {"classifier": 6, "transcriber": 4},
+            "per_kind": {"tool": 4, "linguistic": 1},
+            "default": 2,
         },
         "services": {
             "llm": {
@@ -89,6 +95,9 @@ class TestDefaults:
         assert cfg.patterns.tool == Path("./patterns/tool")
         assert cfg.patterns.linguistic == Path("./patterns/linguistic")
         assert cfg.patterns.composite == Path("./patterns/composite")
+        assert cfg.pools.per_pattern == {}
+        assert cfg.pools.per_kind == {}
+        assert cfg.pools.default is None
         assert cfg.services.llm is None
         assert cfg.services.embedding is None
         assert cfg.api.host == "0.0.0.0"
@@ -117,6 +126,11 @@ class TestFileLoading:
         assert cfg.patterns.tool == Path("./patterns/tool/")
         assert cfg.patterns.linguistic == Path("./patterns/linguistic/")
         assert cfg.patterns.composite == Path("./patterns/composite/")
+        assert cfg.pools.per_pattern == {"classifier": 6, "transcriber": 4}
+        assert set(cfg.pools.per_kind) == {AgentKind.TOOL, AgentKind.LINGUISTIC}
+        assert cfg.pools.per_kind[AgentKind.TOOL] == 4
+        assert cfg.pools.per_kind[AgentKind.LINGUISTIC] == 1
+        assert cfg.pools.default == 2
         assert cfg.services.llm is not None
         assert cfg.services.embedding is not None
         assert cfg.services.llm.base_url == "http://127.0.0.1:1234/v1/"
@@ -184,6 +198,58 @@ class TestPrecedence:
         assert loaded.config.api.host == "0.0.0.0"
 
 
+class TestPools:
+    def test_resolution_precedence_per_pattern_wins(self, tmp_path):
+        path = write_config(tmp_path, full_config_data())
+        cfg = load(config_path=path, env={}).config
+        assert cfg.pools.resolve("classifier", per_kind=AgentKind.TOOL) == 6
+        assert cfg.pools.resolve("transcriber", per_kind=AgentKind.TOOL) == 4
+
+    def test_resolution_falls_back_by_kind_then_default(self, tmp_path):
+        path = write_config(tmp_path, full_config_data())
+        cfg = load(config_path=path, env={}).config
+        assert cfg.pools.resolve("unlisted_tool", per_kind=AgentKind.TOOL) == 4
+        assert cfg.pools.resolve("unlisted_linguistic", per_kind=AgentKind.LINGUISTIC) == 1
+        assert cfg.pools.resolve("unlisted_composite", per_kind=None) == 2
+
+    def test_resolution_returns_none_when_nothing_matches(self, tmp_path):
+        path = write_config(tmp_path, {"pools": {"per_kind": {"tool": 4}}})
+        cfg = load(config_path=path, env={}).config
+        assert cfg.pools.resolve("unlisted_composite", per_kind=None) is None
+
+    def test_pool_size_zero_allowed(self, tmp_path):
+        data = full_config_data() | {"pools": {"per_pattern": {"classifier": 0}}}
+        path = write_config(tmp_path, data)
+        cfg = load(config_path=path, env={}).config
+        assert cfg.pools.resolve("classifier", per_kind=AgentKind.TOOL) == 0
+
+
+class TestPoolsFailFast:
+    def test_negative_pool_sizes_rejected(self, tmp_path):
+        data = full_config_data() | {"pools": {"per_pattern": {"classifier": -1}}}
+        path = write_config(tmp_path, data)
+        with pytest.raises(ConfigError):
+            load(config_path=path, env={})
+
+    def test_negative_kind_pool_rejected(self, tmp_path):
+        data = full_config_data() | {"pools": {"per_kind": {"tool": -2}}}
+        path = write_config(tmp_path, data)
+        with pytest.raises(ConfigError):
+            load(config_path=path, env={})
+
+    def test_negative_default_rejected(self, tmp_path):
+        data = full_config_data() | {"pools": {"default": -3}}
+        path = write_config(tmp_path, data)
+        with pytest.raises(ConfigError):
+            load(config_path=path, env={})
+
+    def test_unknown_kind_key_rejected(self, tmp_path):
+        data = full_config_data() | {"pools": {"per_kind": {"foo": 2}}}
+        path = write_config(tmp_path, data)
+        with pytest.raises(ConfigError):
+            load(config_path=path, env={})
+
+
 class TestFailFast:
     def test_invalid_node_id_rejected(self, tmp_path):
         path = write_config(tmp_path, {"node": {"id": "bad"}})
@@ -192,9 +258,7 @@ class TestFailFast:
         assert "node" in str(exc.value).lower() or "id" in str(exc.value).lower()
 
     def test_invalid_peer_id_rejected(self, tmp_path):
-        data = full_config_data() | {
-            "federation": {"peers": [{"id": "nodep", "url": "http://x"}]}
-        }
+        data = full_config_data() | {"federation": {"peers": [{"id": "nodep", "url": "http://x"}]}}
         path = write_config(tmp_path, data)
         with pytest.raises(ConfigError):
             load(config_path=path, env={})

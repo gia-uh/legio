@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from legio import naming
 from legio.errors import ConfigError, InvalidNameError
+from legio.patterns.schema1 import AgentKind
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,49 @@ class PatternsConfig(BaseModel):
     tool: Path = Path("./patterns/tool")
     linguistic: Path = Path("./patterns/linguistic")
     composite: Path = Path("./patterns/composite")
+
+
+class PoolsConfig(BaseModel):
+    """Horizontal capacity per pattern (LEG-080) — deployment, not functionality.
+
+    Resolution at class creation (highest wins):
+    ``--pool N`` (explicit invocation) > ``per_pattern`` > ``per_kind`` >
+    ``default`` > 1. ``per_kind`` admits only the Schema 1 KINDS
+    (``tool | linguistic``); ``type: composite`` has no kind (Schema 1) so it
+    resolves via ``per_pattern`` or ``default``. A pattern name in
+    ``per_pattern`` that is not yet loaded is a visible boot warning — it applies
+    if the pattern is created later (dynamic lifecycle). Values are intents; the
+    catalog records the real count of instances actually brought up. ``0`` ⇒
+    class born disabled.
+    """
+
+    per_pattern: dict[str, int] = Field(default_factory=dict)
+    per_kind: dict[AgentKind, int] = Field(default_factory=dict)
+    default: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_pool_counts(self) -> PoolsConfig:
+        for level, pools in (
+            ("per_pattern", self.per_pattern),
+            ("per_kind", self.per_kind),
+        ):
+            for name, count in pools.items():
+                if count < 0:
+                    raise ValueError(f"pools.{level}.{name}: pool size must be >= 0")
+        if self.default is not None and self.default < 0:
+            raise ValueError("pools.default: pool size must be >= 0")
+        return self
+
+    def resolve(self, pattern_name: str, *, per_kind: AgentKind | None) -> int | None:
+        """Resolve the intended pool size for a pattern (None → the caller's default 1).
+
+        Highest wins: per_pattern > per_kind > default.
+        """
+        if pattern_name in self.per_pattern:
+            return self.per_pattern[pattern_name]
+        if per_kind is not None and per_kind in self.per_kind:
+            return self.per_kind[per_kind]
+        return self.default
 
 
 class LlmConfig(BaseModel):
@@ -167,6 +211,7 @@ class LegioConfig(BaseModel):
     node: NodeConfig = Field(default_factory=NodeConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     patterns: PatternsConfig = Field(default_factory=PatternsConfig)
+    pools: PoolsConfig = Field(default_factory=PoolsConfig)
     services: ServicesConfig = Field(default_factory=ServicesConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
@@ -400,6 +445,7 @@ __all__ = [
     "NodeConfig",
     "PatternsConfig",
     "PeerConfig",
+    "PoolsConfig",
     "ServicesConfig",
     "ToolDeclaration",
     "ToolPolicy",
