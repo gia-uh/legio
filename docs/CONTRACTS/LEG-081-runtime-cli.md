@@ -139,29 +139,6 @@ documented config into a running, observable node:
      agent. Nothing sleeps and nothing is pushed: the supervisor (pending
      slice) polls `next_run_at`.
 
-## Runtime — Supervisor (implemented — Session 60)
-
-The boot product's standing agent map is inert until something keeps waking the
-agents: the **supervisor** is the node's single polling loop (rule 8 — nothing
-sleeps, no callbacks).
-
-- `await runtime.supervise(*, max_rounds=100) -> int` polls **every materialized
-  agent** (the served standing map, not only the `main` entry points) in
-  deterministic sorted order, round after round, draining each with its own
-  bounded `run()`. The flow advances only while the loop keeps every queue
-  moving — including the non-`main` capability agents a composite fans out to.
-- **Idle gate**: a round that finds zero work ends the loop and returns the
-  total steps dispatched (a second call returns 0 immediately). `max_rounds`
-  bounds a pathological never-idle flow (agent misbehavior cannot starve the
-  node); hitting it logs a warning.
-- **No re-scheduling in the loop**: re-queue/`next_run_at`/retry stay out of
-  the agent dispatch (base.py — the agent is a stateless poller; `next_run_at`
-  remains the TaskManager's scheduling field, per the runtime roles in
-  `docs/AGENT_LIFECYCLE.md` §0/§6.1).
-- Free of the agent loop, errors stay visible per rule 9: a raised step is
-  already routed by `AgentBase` as an `error` result; the supervisor only polls
-  and idles when the flow reaches its final-result queue.
-
 ## Acceptance criteria
 From `docs/PLAN.md` (LEG-081), verbatim:
 - The node starts via the CLI, exposes submit/status, and honors the LEG-017

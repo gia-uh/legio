@@ -557,7 +557,11 @@ async def test_boot_full_flow_over_rest_uses_configured_node_id(
         task_id = resp.json()["task_id"]
         assert task_id.startswith("boot@test:")
 
-        steps = await runtime.supervise()
+        for _ in range(4):
+            await runtime.agents["summarize"].run()
+            await runtime.agents["summ"].run()
+            await runtime.agents["assess"].run()
+            await runtime.agents["summarize"].run()
 
         status_resp = await ac.get(f"/status/{task_id}", headers=bearer("tok-a"))
         assert status_resp.status_code == 200, status_resp.text
@@ -565,69 +569,3 @@ async def test_boot_full_flow_over_rest_uses_configured_node_id(
         assert entry["state"] == "completed"
         assert entry["result_key"] == result_queue_key(task_id)
         assert entry["output"]["result"]["result"]["result"] == "[Foxes] A note."
-        assert steps > 0
-
-
-# --------------------------------------------------------------------------
-# Supervise — the node's single polling loop
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_supervise_idle_boot_returns_zero(
-    beaver_db: AsyncBeaverDB, node_dirs: dict[str, str]
-) -> None:
-    """A freshly booted node with no submissions is idle: supervise does nothing."""
-    loaded = load(node_dirs["config"], env=ENV_TOKENS)
-    runtime = await boot_node(
-        loaded,
-        db=beaver_db,
-        lingo_factory=mock_lingo_factory(),
-        composite_classes={"summarize": GatherComposite},
-    )
-
-    assert await runtime.supervise() == 0
-    assert await runtime.supervise() == 0
-
-
-@pytest.mark.asyncio
-async def test_supervise_drains_concurrent_submits_to_idle(
-    beaver_db: AsyncBeaverDB, node_dirs: dict[str, str]
-) -> None:
-    """Two concurrent submissions are both delivered: the supervisor polls every
-    materialized agent (the non-'main' capability agents too), moving each flow
-    to its final-result queue and then idling."""
-    loaded = load(node_dirs["config"], env=ENV_TOKENS)
-    runtime = await boot_node(
-        loaded,
-        db=beaver_db,
-        lingo_factory=mock_lingo_factory(title="Foxes", summary="A note.", word_count=4),
-        composite_classes={"summarize": GatherComposite},
-    )
-    app = runtime.app
-    transport = httpx.ASGITransport(app=app)
-
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        task_ids = []
-        for text, lang in (
-            ("The quick brown fox.", "en"),
-            ("El rápido zorro marrón.", "es"),
-        ):
-            resp = await ac.post(
-                "/submit",
-                json={"agent": "summarize", "payload": {"text": text, "lang": lang}},
-                headers=bearer("tok-a"),
-            )
-            assert resp.status_code == 200, resp.text
-            task_ids.append(resp.json()["task_id"])
-
-        steps = await runtime.supervise()
-        assert await runtime.supervise() == 0
-
-        for task_id in task_ids:
-            status_resp = await ac.get(f"/status/{task_id}", headers=bearer("tok-a"))
-            assert status_resp.status_code == 200, status_resp.text
-            assert status_resp.json()["state"] == "completed"
-            output = status_resp.json()["output"]["result"]["result"]
-            assert output == {"result": "[Foxes] A note."}
-        assert steps >= 2
