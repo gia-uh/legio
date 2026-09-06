@@ -1333,6 +1333,11 @@ for an atomic starting agent, it is the agent's own `output_as`.
 
 - Every class has exactly **one inbox queue** (`legio:queue:<class>`); all of
   its agents (instances) poll and consume that same queue.
+- The class inbox carries **only entry requests** (`ExecutionRequestMessage`).
+  Results are never deposited onto an inbox: they land on the closer's queue
+  (`end_of_level_queue` — a final-result queue, or a composite's gathering
+  queue, §12.3). **Partition is by queue, never by message type**: nothing in
+  the dispatch inspects a `message_type` to decide a message's fate.
 - Agents are **interchangeable, stateless** consumers of the unit of work the
   class knows; an agent learns *what to do, where it is, and where the level
   ends* **only from the message + token** it just consumed (Schema 2: position
@@ -1355,14 +1360,20 @@ not the two conceptual ones of the earlier model. There is no separate
 "sequence" vs "parallel"; a composite with a single branch is a sequence, one
 with several branches is a parallel — both are the same agent, the same runner.
 
-- The composite has **one gathering queue** for the fan-in of its branches.
+- A composite consumes **two physical queues**: its class inbox
+  (`legio:queue:<class>`, only entry requests, §12.2) and its own **gathering
+  queue** (`legio:queue:gather:<agent_id>`, only its branches' fan-in results).
+  The two are **separate beaver queues** — the gathering is not "the inbox
+  viewed as a result channel". Partition is structural (by queue), so neither
+  the base runner nor the composite ever inspects a message type to route work.
 - Each **branch** is an ordered list of steps (each step a bare pattern-name
   reference); a branch of size 1 (an atomic) advances and closes; a branch
   whose steps reference a `type: composite` opens inner ramification. The
   step's `(class, input_as)` route is resolved by the loader when it builds the
   level/branch DAG (Schema 2).
 - The composite's `end_of_level_queue`, in the tokens it fans out, **is** its
-  gathering queue (Schema 2): branches return there by position/level.
+  gathering queue (`gather:<agent_id>`, Schema 2): branches return there by
+  position/level.
 - A composite is itself a class with its own queue/instances (§7, dependencies);
   it is invoked like any capability agent — through its inbox.
 - There is no out-of-message accumulator; fan-in accounting lives in the
@@ -1408,6 +1419,19 @@ naming — distinct from its own and from every other branch across all levels, 
 avoid name collisions; constant along the branch's sequence, carried
 on the message). It also re-keys the composite's shared `input_as` under the
 first step's (resolved) `input_as` for that branch (§12.1).
+
+**The composite's two-inlet poll (intake + gated collection).** A composite
+consume its two physical queues (its inbox and its gathering, §12.3) in one
+`process_next`, as two cycles:
+
+1. **Intake (unconditional):** poll the class inbox (§12.2); every entry request
+   is fanned out, and its task is annotated as **pending** in the composite's
+   bookkeeping (rule 8 — nothing sleeps or waits; fan-out is a deposit).
+2. **Collection (gated):** only when at least one task is pending is the
+   gathering queue polled. With none pending there is nothing legitimate to
+   receive, so poll it is pointless; a result that landed anyway is an
+   **anomaly — surfaced visibly (rule 9)**, never processed silently and never
+   re-deposited onto the gathering (no silent loop).
 
 **Fan-in.** Each branch, on branch close, deposits its
 `ExecutionResultMessage` to the gathering queue **conserving its `branch_id`**

@@ -13,6 +13,14 @@ destination travel inside the message itself: routing is always derived from
 caller-owned knowledge, and the step's produced payload travels in the single
 ``payload`` container (Schema 2).
 
+Every agent polls **its class inbox** (``legio:queue:<class>``); only an
+``ExecutionRequestMessage`` — an entry — ever lands there, so the base never
+dispatches by message type (partition is by queue, §12.2/§12.3). A composite
+additionally owns a second physical queue, its **gathering**
+(``legio:queue:gather:<class>``), where its branches return fan-in results; it
+overrides ``process_next`` with its two-inlet intake + gated collection cycle
+(§12.3).
+
 The actual steps (linguistic, tool, composite) plug in via ``_handle``, which
 returns the new payload to route; ``ToolAgent`` (LEG-022) is one such subclass.
 How an agent **builds** its output is its own implementation: ``_handle``
@@ -44,7 +52,7 @@ from typing import Any
 from beaver import AsyncBeaverDB
 from pydantic import BaseModel, ValidationError
 
-from legio.flow import ExecutionRequestMessage, ExecutionResultMessage, MessageType
+from legio.flow import ExecutionRequestMessage, ExecutionResultMessage
 from legio.naming import queue_key
 from legio.patterns.compile import compile_schema
 
@@ -124,21 +132,32 @@ class AgentBase:
         return steps
 
     async def process_next(self) -> bool:
-        """Consume at most one work item; return whether one was handled.
+        """Consume at most one work item from the class inbox; else return False.
 
         The native beaver queue ``get(block=False)`` pops destructively: there
         is no lease, no ``next_run_at`` gate and no re-queue — the item is
         consumed once and routed. Idle returns ``False`` (rule 8, polling only).
+        A composite overrides this poll with its two-inlet intake + gated
+        collection cycle (§12.3).
         """
         try:
             qitem = await self._queue.get(block=False)
         except IndexError:
             logger.debug("agent idle agent=%s", self._agent_id)
             return False
+        await self._process_inbox_item(dict(qitem.data))
+        return True
 
-        item = qitem.data
+    async def _process_inbox_item(self, item: dict[str, Any]) -> None:
+        """Consume one item from the class inbox (an entry request) and run it.
+
+        Every message that ever lands on an inbox is an
+        ``ExecutionRequestMessage``: results are partitioned onto the closer's
+        queue (final-result or a composite's gathering) by construction
+        (§12.2/§12.3), so no message-type dispatch happens here.
+        """
         try:
-            request = ExecutionRequestMessage.model_validate(dict(item))
+            request = ExecutionRequestMessage.model_validate(item)
             logger.info(
                 "agent run agent=%s task=%s level=%s index=%s",
                 self._agent_id,
@@ -156,7 +175,6 @@ class AgentBase:
             )
             raise
         logger.debug("agent done agent=%s", self._agent_id)
-        return True
 
     async def _run_guarded(self, request: ExecutionRequestMessage) -> None:
         """Run the step job and route its outcome, or route a raised failure.
@@ -202,14 +220,13 @@ class AgentBase:
         The payload must *contain* the declared input data — missing declared
         properties or wrong strict types reject the step with a raised
         ``ContractError``; undeclared extras are irrelevant and pass through.
-        No contract declared → no check. A fan-in ``EXECUTION_RESULT`` (a
-        returned branch state, composite-internal) is not an entry — the input
-        contract applies to entry requests only.
+        No contract declared → no check. It applies to **entry requests only** —
+        by construction a fan-in result never lands on an inbox (partition by
+        queue, §12.2/§12.3), so there is no result-kind exemption to
+        special-case here.
         """
         model = self._input_contract
         if model is None:
-            return
-        if request.message_type is MessageType.EXECUTION_RESULT:
             return
         try:
             model.model_validate(self._scoped_input(request))

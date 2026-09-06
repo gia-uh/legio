@@ -24,7 +24,7 @@ from beaver import AsyncBeaverDB
 from legio.agents.base import AgentBase
 from legio.agents.composite_agent import CompositeAgent
 from legio.flow import ExecutionRequestMessage, ExecutionResultMessage, build_payload
-from legio.naming import queue_key
+from legio.naming import gathering_key, queue_key
 
 
 class BuildStep(AgentBase):
@@ -131,9 +131,10 @@ async def test_composite_forwards_to_first_stage_of_flattened_route(
     assert forwarded.level_route == (("a", "a"), ("b", "b"))
     assert forwarded.current_index == 0
     assert forwarded.task_id == "T-seq"
-    # the branch's stages close to this composite's own gathering queue, so the
-    # composite can join them before resuming its own level
-    assert forwarded.end_of_level_queue == "seq"
+    # the branch's stages close to this composite's own gathering queue
+    # (a second physical queue, gather:seq), so the composite can join them
+    # before resuming its own level
+    assert forwarded.end_of_level_queue == gathering_key("seq")
     assert forwarded.level == 2
     assert forwarded.payload == {"a": {"seed": 7}}
 
@@ -171,7 +172,7 @@ async def test_composite_preserves_level_and_end_queue_for_branch(
     assert first is not None
     forwarded = ExecutionRequestMessage.model_validate(first)
     assert forwarded.level == 3
-    assert forwarded.end_of_level_queue == "seq"
+    assert forwarded.end_of_level_queue == gathering_key("seq")
     assert forwarded.level_route == (("p", "p"), ("q", "q"))
     assert forwarded.payload == {"p": {"v": 1}}
 
@@ -240,9 +241,10 @@ async def test_composite_runs_steps_in_order_and_builds_payload(
     )
     assert await step2.process_next() is True
 
-    # The branch closes to the composite's gathering queue (collapsed onto its
-    # own queue); the composite joins (single branch -> immediate) and resumes
-    # its own level — here the level's end, delivering to the final-result queue.
+    # The branch closes to the composite's gathering queue (its second physical
+    # queue, separate from the class inbox); the composite joins (single branch
+    # -> immediate) and resumes its own level — here the level's end, delivering
+    # to the final-result queue.
     assert await seq.process_next() is True
 
     result_item = await pop_one(beaver_db, "result:T-2")

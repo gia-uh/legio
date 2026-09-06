@@ -29,7 +29,7 @@ from legio.flow import (
     ExecutionResultMessage,
     build_payload,
 )
-from legio.naming import queue_key
+from legio.naming import gathering_key, queue_key
 
 
 class Branch(AgentBase):
@@ -160,7 +160,7 @@ def child_result(
     return ExecutionResultMessage(
         level_route=level_route,
         current_index=current_index,
-        end_of_level_queue="comp",
+        end_of_level_queue=gathering_key("comp"),
         level=level,
         launcher_class="main",
         task_id=task_id,
@@ -190,9 +190,10 @@ async def test_composite_fans_out_both_branches_sharing_task_id(
     # both branches fanned out: current_index 0, one level deeper
     assert r1.current_index == 0 and r2.current_index == 0
     assert r1.level == 2 and r2.level == 2
-    # branches return to the composite's gathering queue, collapsed onto its inbox
-    assert r1.end_of_level_queue == "comp"
-    assert r2.end_of_level_queue == "comp"
+    # branches return to the composite's own gathering queue (gather:comp),
+    # its second physical queue — never onto its class inbox
+    assert r1.end_of_level_queue == gathering_key("comp")
+    assert r2.end_of_level_queue == gathering_key("comp")
     # the task id stays constant across the fan-out — it is the task's identity
     assert r1.task_id == "P-root"
     assert r2.task_id == "P-root"
@@ -245,7 +246,7 @@ async def test_composite_does_not_advance_until_all_branches_return(
     child1, child2 = children[0], children[1]
 
     # One branch returns; the other has not. The composite must NOT advance yet.
-    await beaver_db.queue(queue_key("comp")).put(
+    await beaver_db.queue(queue_key(gathering_key("comp"))).put(
         child_result(
             branch_id=child1.branch_id,
             level_route=(("b1", "b1"),),
@@ -259,7 +260,7 @@ async def test_composite_does_not_advance_until_all_branches_return(
     assert await pop_one(beaver_db, "after") is None
 
     # Second branch returns -> now the join completes and the composite advances.
-    await beaver_db.queue(queue_key("comp")).put(
+    await beaver_db.queue(queue_key(gathering_key("comp"))).put(
         child_result(
             branch_id=child2.branch_id,
             level_route=(("b2", "b2"),),
@@ -295,7 +296,7 @@ async def test_composite_joins_and_delivers_to_flow_end(
     children = await fan_out_and_collect(db=beaver_db, comp=comp, request=request)
 
     for child, branch_name in ((children[0], "b1"), (children[1], "b2")):
-        await beaver_db.queue(queue_key("comp")).put(
+        await beaver_db.queue(queue_key(gathering_key("comp"))).put(
             child_result(
                 branch_id=child.branch_id,
                 level_route=((branch_name, branch_name),),
@@ -337,7 +338,7 @@ async def test_composite_slots_never_collide_on_shared_output_as(
     a, b = children[0], children[1]
 
     # Both branches return their value under the very same output_as key "same".
-    await beaver_db.queue(queue_key("comp")).put(
+    await beaver_db.queue(queue_key(gathering_key("comp"))).put(
         child_result(
             branch_id=a.branch_id,
             level_route=(("same", "same"),),
@@ -346,7 +347,7 @@ async def test_composite_slots_never_collide_on_shared_output_as(
         ).model_dump(mode="json"),
         priority=0.0,
     )
-    await beaver_db.queue(queue_key("comp")).put(
+    await beaver_db.queue(queue_key(gathering_key("comp"))).put(
         child_result(
             branch_id=b.branch_id,
             level_route=(("same", "same"),),
@@ -383,7 +384,7 @@ async def test_composite_build_failure_surfaces_via_own_context(
     )
     children = await fan_out_and_collect(db=beaver_db, comp=comp, request=request)
 
-    await beaver_db.queue(queue_key("comp")).put(
+    await beaver_db.queue(queue_key(gathering_key("comp"))).put(
         child_result(
             branch_id=children[0].branch_id,
             level_route=(("b1", "b1"),),
@@ -401,7 +402,7 @@ async def test_composite_build_failure_surfaces_via_own_context(
     result = ExecutionResultMessage.model_validate(result_item)
     assert result.task_id == "P-broken"
     assert "error" in result.payload
-    assert await pop_one(beaver_db, "comp") is None
+    assert await pop_one(beaver_db, gathering_key("comp")) is None
     assert await pop_one(beaver_db, "b1") is None
 
 
@@ -429,7 +430,7 @@ async def test_composite_joins_a_multi_step_branch_by_branch_id(
 
     # The multi-step branch ('seqbranch') returns with the expanded level_route
     # (("summ_a", ...), ("summ_b", ...)) but keeps the parent-assigned branch_id.
-    await beaver_db.queue(queue_key("comp")).put(
+    await beaver_db.queue(queue_key(gathering_key("comp"))).put(
         child_result(
             branch_id=seq_branch.branch_id,
             level_route=(("summ_a", "summ_a"), ("summ_b", "summ_b")),
@@ -442,7 +443,7 @@ async def test_composite_joins_a_multi_step_branch_by_branch_id(
     assert await comp.process_next() is True
 
     # Second (atomic) branch still returns with its own branch_id.
-    await beaver_db.queue(queue_key("comp")).put(
+    await beaver_db.queue(queue_key(gathering_key("comp"))).put(
         child_result(
             branch_id=atomic_branch.branch_id,
             level_route=(("atomic", "atomic"),),
@@ -496,7 +497,7 @@ async def test_composite_resume_preserves_its_own_branch_id(
     # Both this inner composite's branches return with their own autogenerated ids.
     for child, route in zip(children, comp._branches):
         branch_class = route[0][0]
-        await beaver_db.queue(queue_key("comp")).put(
+        await beaver_db.queue(queue_key(gathering_key("comp"))).put(
             child_result(
                 branch_id=child.branch_id,
                 level_route=route,

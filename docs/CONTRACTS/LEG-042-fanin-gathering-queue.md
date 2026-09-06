@@ -24,9 +24,15 @@ silently — when a branch is bugged or missing.
 ## Contract & design
 
 - The payload travels **in the messages** (AGENT_LIFECYCLE §12.1);
-  the gathering queue of the composite class holds the children's
-  `ExecutionResultMessage` returns from which the composite **builds its
-  payload** — there is **no** out-of-message accumulator and no central store.
+  the gathering queue of the composite class is a **second physical queue**
+  (`legio:queue:gather:<agent_id>`, distinct from the class inbox, §12.3) that
+  holds the children's `ExecutionResultMessage` returns from which the composite
+  **builds its payload** — there is **no** out-of-message accumulator and no
+  central store. Results are partitioned **by queue**, never by message type.
+- A result landing on the gathering with no pending fan-out (the composite's
+  collection cycle is **gated by its pending bookkeeping**, §12.3/§12.4) is an
+  **anomaly surfaced visibly** (AGENTS.md rule 9), never processed silently and
+  never re-deposited.
 - The composite's bookkeeping (`state:<composite>`, keyed per task) records
   the continuation and one slot per branch, each slot pre-created at fan-out and
   filled when that branch's result returns; the join completes when every slot

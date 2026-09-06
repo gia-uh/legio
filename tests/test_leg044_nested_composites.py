@@ -324,9 +324,10 @@ async def test_nested_composite_in_branch_over_rest(
     # the inner composite fanned out its own multi-step branch at a deeper level.
     assert "composite fan-out agent=extract_and_summarize task=" in caplog.text
     assert "agent run agent=extract task=" in caplog.text and "level=3 index=0" in caplog.text
-    # LEG-051: the nested composite returns only to its exact parent and closes
-    # at level 2 (its own level), not at the root.
+    # LEG-051: the nested composite returns only to its exact parent (its own
+    # gathering queue, gather:deep_pipeline) and closes at level 2 (its own
+    # level), not at the root.
     assert "agent branch close agent=extract_and_summarize task=" in caplog.text
-    assert "level=2 to=deep_pipeline" in caplog.text
+    assert "level=2 to=gather:deep_pipeline" in caplog.text
     # The root composite finishes and delivers to the final-result queue.
     assert "agent finish agent=deep_pipeline task=" in caplog.text

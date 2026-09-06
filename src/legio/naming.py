@@ -5,9 +5,12 @@ no ``client:`` family (Schema 2, addendum AL): root results land on the
 submit-created final-result queue, addressed by ``result_queue_key``.
 
 The only persisted namespaces legio names directly are the per-agent queue
-``legio:queue:<agent_id>`` and the per-task final-result queue
-``legio:queue:result:<task_id>``. Flow results always travel in the
-message payload. Everything else is beaver's native naming.
+``legio:queue:<agent_id>``, the per-composite gathering queue
+``legio:queue:gather:<agent_id>`` and the per-task final-result queue
+``legio:queue:result:<task_id>``. A composite consumes **two physical queues**
+(its class inbox and its gathering — AGENT_LIFECYCLE §12.2/§12.3); messages
+are partitioned by queue, never by message type. Flow results always travel in
+the message payload. Everything else is beaver's native naming.
 """
 
 from __future__ import annotations
@@ -35,6 +38,18 @@ def result_queue_key(task_id: str) -> str:
     resolved to a beaver queue via ``queue_key`` when delivering/reading.
     """
     return f"result:{task_id}"
+
+
+def gathering_key(agent_id: str) -> str:
+    """The queue *name* (relative) of a composite's gathering queue (§12.3).
+
+    A composite consumes two physical queues: its class inbox
+    (``queue_key(agent_id)``) and this gathering queue, where its branches
+    return their fan-in results via ``end_of_level_queue``. Resolved to a beaver
+    queue via ``queue_key`` when delivering/reading, exactly like a
+    final-result queue. Results never land on an inbox: partition is by queue.
+    """
+    return f"gather:{agent_id}"
 
 
 _NODE_RE = re.compile(r"^[^@]+@[^@]+$")
@@ -83,6 +98,7 @@ def is_reserved_agent(agent_id: str) -> bool:
 
 __all__ = [
     "QUEUE_NAMESPACE",
+    "gathering_key",
     "is_reserved_agent",
     "queue_key",
     "result_queue_key",
