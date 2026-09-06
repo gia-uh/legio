@@ -25,7 +25,7 @@
 ```
 External API      Runtime (submit/status · lifecycle ops · CLI/HTTP)
 Federation        catalog · resolver · work-item HTTP · outbox
-Lifecycle         AgentRegistry (mirror: catalog + YAML cache) · TaskManager (task engine + scheduler)
+Lifecycle         Registry (mirror: catalog + YAML cache) · Manager (generic task environment)
 Agents            linguistic · tool (atomic) · composite (type: composite + branches)  (+ base)
 Flow              FlowToken (level_route + current_index + end_of_level_queue + level) · message payload
 Patterns          YAML → PatternSpec → pydantic models (compile-time)
@@ -36,16 +36,15 @@ Substrate         beaver native: dict(scope) · queue(name) · lock(name)
 
 `beaver` is the single substrate (see `docs/DEPENDENCIES.md`). legio speaks it
 **directly** — there is no `legio.primitives` abstraction layer: a
-`db = await manager.db()` handle is passed around, and agents/managers address
-beaver primitives by name, exactly as castor's Manager calls `db.dict` /
-`db.queue` / `db.lock` directly.
+`db = await manager.db()` handle is passed around (agents, the Manager, the
+Runtime and the Registry all take the same system db), and components address
+beaver primitives by name — `db.dict(scope)` / `db.queue(name)` / `db.lock(name)`.
 
-- **Registry** — beaver persistent dict per scope: `db.dict("tasks")`
-  (the TaskRegistry, Runtime-written, per `legio.manager.task_registry()`).
-  Future scopes: `gates` (Runtime-written class gate, read by depositors —
-  AGENT_LIFECYCLE §12.5), `semaphore`, `outbox`, the AgentRegistry's
-  `catalog` / `instances` / `yaml_cache`, and the TaskManager's `tm_tasks` /
-  `tm_control` (see `docs/AGENT_LIFECYCLE.md` §4.8/§6.1). There is **no**
+- **Registry** — beaver persistent dict per scope: the mirror `Registry`'s
+  scopes — the **live catalog** (classes / instances / dependencies) and the
+  **runtime YAML cache** (§4.7), Runtime-written posteriori per AGENT_LIFECYCLE
+  §4.8. Future scopes: `gates` (Runtime-written class gate, read by depositors —
+  AGENT_LIFECYCLE §12.5), `semaphore`, `outbox`. There is **no**
   ``results`` return store: the final result is delivered to the
   **final-result queue** (Schema 2) — the Runtime owns a per-task final-result
   queue that the submit sets as the root `end_of_level_queue`.
@@ -53,8 +52,9 @@ beaver primitives by name, exactly as castor's Manager calls `db.dict` /
   `db.queue("legio:queue:<agent_id>")`; `get(block=False)` pops destructively and
   raises `IndexError` when empty; `put(item, priority=...)` deposits the next
   request/result. An item is popped once and routed (rule 8: polling only — no
-  schedule gate, no re-queue). The TaskManager adds its own two queues —
-  `tm_pending` and `tm_scheduled` (§6.1).
+  schedule gate, no re-queue). The Manager adds its own task scopes on beaver —
+  `db.dict("tasks")` + `db.queue("pending_tasks")` + `db.dict("control")`
+  (§6.1).
 - **Lock** — beaver lock with TTL + `renew`, used only where genuine mutual
   exclusion over a shared key is required (it is **not** a per-dispatch task
   lease: the dispatch is stateless and holds no lock).
@@ -138,7 +138,7 @@ composite:
 - **Lifecycle (create / enable / disable / destroy)** is governed at two levels:
   the **class** (type + queue) by the catalog registry, and the **instance**
   (replica) by the **Runtime** (no "instance supervisor": the Runtime
-  orchestrates materialization over the **TaskManager**, see
+  orchestrates materialization over the **Manager**, see
   `docs/AGENT_LIFECYCLE.md` §0/§6.1). Disabling a class closes entry but keeps
   draining pending work; no instances ⇒ class disabled; destroying the class is
   armageddon (removes spec + queue + all instances). Lifecycle governance touches
@@ -195,10 +195,11 @@ composite:
 
 ## 7. Task lifecycle
 
-1. Client calls the API → **Runtime**: creates `task_id`, registers state,
-   stages inputs, deposits `ExecutionRequestMessage` into the starting agent's
-   queue (the class entry gate is checked here — `docs/AGENT_LIFECYCLE.md`
-   §5.6/§6.1).
+1. Client calls the API → **Runtime** (the public face, which knows the domain's
+   business tasks): creates `task_id`, checks the class entry gate
+   (`docs/AGENT_LIFECYCLE.md` §5.6/§6.1), stages inputs, and does the
+   **Manager**'s `submit_task` — the task the Manager runs seeds the flow
+   (deposits the `ExecutionRequestMessage` into the starting agent's queue).
 2. The **submit** seeds the flow: `ExecutionRequestMessage` on the `main` class
    in **level 1**, `end_of_level_queue` = the **final-result queue**; the agent
    walks its flow.
@@ -222,7 +223,7 @@ composite:
    creator's gathering queue.
 7. The client polls `status(task_id)` → Runtime reads the final result from the
    per-task final-result queue. Lifecycle of the agents themselves (not of a
-   task) is governed by the Runtime / AgentRegistry / TaskManager model —
+   task) is governed by the Runtime / Registry / Manager model —
    `docs/AGENT_LIFECYCLE.md` §0–§6.1.
 
 ## 8. Failure and resilience
@@ -348,6 +349,6 @@ over the network.
 ## 13. Deliberate exclusions
 
 Broker, Redis/central DB, workflow engine, scheduler library, callbacks, vector
-store, castor (outdated against current beaver), session layer, in-memory
-handles, and "pattern instances" with their own identity — two `B`s are two
-tasks.
+store, castor / castor-io (never used — the Manager is implemented in legio over beaver),
+session layer, in-memory handles, and "pattern instances" with their own
+identity — two `B`s are two tasks.

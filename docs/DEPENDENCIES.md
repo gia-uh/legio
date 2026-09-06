@@ -29,8 +29,9 @@ removed before a reviewed PR to this file. Managed with `uv`. Python runtime:
 
 ## Excluded on purpose
 
-- `castor-io`: outdated against current beaver; its role (the **TaskManager**)
-  is implemented in legio itself (see `docs/AGENT_LIFECYCLE.md`).
+- `castor-io`: outdated against current beaver, **never used**; legio implements
+  its own generic task environment (the **Manager**) on beaver (see
+  `docs/AGENT_LIFECYCLE.md` §6.1).
 - **Task-queue / task-executor libraries evaluated and rejected** (criteria:
   minimal, no Redis/broker, isolated dependencies, and — critically — backed by
   **beaver** as the substrate; note these are generic task-queue libraries, not
@@ -43,7 +44,7 @@ removed before a reviewed PR to this file. Managed with `uv`. Python runtime:
     by their **own** persistence, not by beaver — adopting one would introduce a
     **second substrate** alongside beaver (duplicating persistence). Rejected.
   - Conclusion: no pure-Python library both fulfills the criteria **and** sits on
-    beaver. legio implements its own `TaskManager` on beaver (single substrate,
+    beaver. legio implements its own `Manager` on beaver (single substrate,
     no Redis, no extra dependencies).
 - Any broker, Redis, DB server, workflow engine, scheduler library, or
   callback/event library: all covered by beaver + the design's polling/field

@@ -9,69 +9,79 @@ extends it with **dynamic** loading/unloading, which the reference does not
 have. The vocabulary is deliberately fixed: **create / enable / disable /
 destroy**, only — no other verbs such as "down"/"up"/"load"/"unload".
 
-> Design note (AGENTS.md rule: decoupling is a hard rule). The manager never
-> decides the DAG nor the routing. The agent that starts a leg concretizes and
-> passes the DAG. The `AgentRegistry` governs only **existence and lifecycle**
+> Design note (AGENTS.md rule: decoupling is a hard rule). No layer ever
+> decides the DAG nor the routing. The agent that starts a task concretizes and
+> passes the DAG. The `Registry` governs only **existence and lifecycle**
 > (create/enable/disable/destroy) as a *posterior mirror of facts* — never the
 > DAG, never routing, and never the materialization itself (that is the
-> `TaskManager`'s, orchestrated by the `Runtime`; see §0 and §6).
+> `Manager`'s, orchestrated by the `Runtime`; see §0 and §6).
 
 ---
 
-## 0. Decoupled roles: Runtime vs AgentRegistry vs TaskManager vs beaver vs lingo
+## 0. Decoupled roles: Runtime vs Manager vs Registry vs beaver vs lingo
 
 `legio` keeps five independent layers that never know one another:
 
-- **`Runtime`** — the only layer with initiative, and the **public face** of the
-  lifecycle. It decides operations, exposes them (CLI / HTTP / programmatic),
-  orchestrates the other two, and **records facts after they happen**. It never
-  executes agent work itself. Its functions are detailed in §6.
-- **`AgentRegistry`** — the **memory of the node's agent state at runtime**. It
-  owns (a) the **live catalog** — the state of classes/instances/dependencies —
-  and (b) the **runtime cache of YAML specs** (§4.7). It is a **mirror of facts**:
-  every entry is written **after** (never before) the corresponding fact
-  occurred, so the catalog never reports something that does not exist. It never
-  materializes or executes anything.
-- **`TaskManager`** — the **mini-castor task engine** (submit, status, task
-  executors draining the task queues, scheduling by `next_run_at`). It is the
-  **executor of facts**: the Runtime asks it for an *action* in task language,
-  and it is what actually executes the fact — e.g. running the callable that is
-  the internal loop of an agent the Runtime decided to create (§6.1). It is
-  **blind to the domain and to the AgentRegistry** — it only knows
-  "run this task / stop this task", never that a task is "the agent lifecycle".
-  Implemented in `legio` itself (see `docs/DEPENDENCIES.md`, "Excluded on
-  purpose"); its functional reference is `castor-io`. The `TaskManager` scales
-  the Runtime and the Registry.
-- **`beaver`** — the single substrate (registries, priority queues, locks). All of
-  the above sit on it.
+- **`Runtime`** — the only layer with initiative, the **public face**, and the
+  owner of the domain's **business tasks**. It decides operations, exposes them
+  (CLI / HTTP / programmatic), receives the client submit and delegates task
+  management to the `Manager` (`manager.submit_task`), orchestrates the Registry
+  and the Manager, and **records facts after they happen**. It never executes
+  agent work itself. Its functions are detailed in §6.
+- **`Registry`** (call it `AgentRegistry` elsewhere) — the **memory of the
+  node's agent state at runtime**. It owns (a) the **live catalog** — the state
+  of classes/instances/dependencies — and (b) the **runtime cache of YAML specs**
+  (§4.7). It is a **mirror of facts**: every entry is written **after** (never
+  before) the corresponding fact occurred, so the catalog never reports something
+  that does not exist. It never materializes or executes anything.
+- **`Manager`** (= task manager = mini-manager — one and the same; the
+  runtime-triangle's `legio.manager`) — the **generic, domain-agnostic task
+  environment** that manages **any kind of task** (submit / status / pause /
+  resume / cancel over tasks that are simply `name + args/kwargs + state +
+  result/error + timestamps`). It is the **executor of facts**: the Runtime asks
+  it for an *action* in task language, and it is what actually executes the fact.
+  It is **blind to the domain and to the Registry** — it only knows
+  "run this task / stop this task", never that a task is "the agent lifecycle"
+  and never what a task's callable is. A task is **not** an agent cycle (that
+  coupling is forbidden). Implemented in `legio` itself over beaver; **castor /
+  castor-io is not a dependency and nothing from it is used** (see
+  `docs/DEPENDENCIES.md`, "Excluded on purpose"). The `Manager` executes the
+  facts the `Runtime` orders and does not know the Registry.
+- **`beaver`** — the **system's database**: the single substrate shared by
+  everything, exposing Python-like data structures (`queue`, `dict`, `channel`,
+  `lock`). It is **not** the Manager's substrate alone — the Runtime, the
+  Manager, the agents and the Registry all live on the same beaver db
+  (agents poll `db.queue`, the Manager keeps its task dict/queues, the outputs
+  and the boards all sit on it).
 - **`lingo`** — LLM + structured output (the role the reference's `argo` played
   for LLM interaction).
 
 **The regulating principle — registration is a mirror of facts.** Nothing is
 registered before it happens. The vocabulary is strict:
 
-- **Action** — what the `Runtime` asks the `TaskManager` to do, in task
-  language (imperative: run/stop/pause a task — bring up an agent's loop, stop
-  it). Opening/closing the class entry is **not** an Action: the entry
-  gate is the Runtime's own submission-side check (§5.6, §6.1).
-- **Fact** — the reality that results in the world (an agent's own loop runs and
-  polls its class's queue; a task runs; a task is paused/cancelled). It is
-  **provoked/administered by the `TaskManager`**, but it is the *reality itself*,
-  not the TaskManager's output.
-- **Record** — what the `AgentRegistry` stores, **after** the fact occurred
+- **Action** — what the `Runtime` asks the `Manager` to do, in task language
+  (imperative: run/stop/pause/cancel a task). Opening/closing the class entry is
+  **not** an Action: the entry gate is the Runtime's own submission-side check
+  (§5.6, §6.1).
+- **Fact** — the reality that results in the world (a business task the Runtime
+  submitted flows through the starting agent and poll routes a message; a task
+  runs; a task is paused/cancelled). It is **provoked/administered by the
+  `Manager`** (which the Runtime drives), but it is the *reality itself*, not the
+  Manager's output.
+- **Record** — what the `Registry` stores, **after** the fact occurred
   (posteriori mirror). Never before.
 - **Operation** — what the `Runtime` exposes (create_class, enable_class, ...);
   it is exactly *action → fact → record*.
 
 So the `Runtime` is the **translator** between two languages: it asks the
-`TaskManager` for *actions* (in task language) and then tells the `AgentRegistry`
-which *records* to store (in catalog language). The `TaskManager` never knows the
-AgentRegistry; the `AgentRegistry` never knows the TaskManager; only the `Runtime`
-knows both and translates.
+`Manager` for *actions* (in task language) and then tells the `Registry` which
+*records* to store (in catalog language). The `Manager` never knows the Registry;
+the `Registry` never knows the Manager; only the `Runtime` knows both and
+translates.
 
-There is no central scheduler: instances (agents) poll their own queue over
-beaver autonomously, and task scheduling is a field (`next_run_at`) — never
-callbacks or sleeps (AGENTS.md rule 8). Nothing here uses Redis or any broker.
+There is no central scheduler and nothing sleeps: instances (agents) poll their
+own queue over beaver autonomously, and scheduling is a field — never callbacks
+or sleeps (AGENTS.md rule 8). Nothing here uses Redis or any broker.
 
 ---
 
@@ -89,8 +99,8 @@ Every operation lives at one of two levels:
 - Its **dependencies** (from the spec): a composite references other classes by
   name (its `branches`). Depended-on classes are the class's
   **dependencies**; classes that reference it are its **dependents**.
-- Governed by the **AgentRegistry** (existence reflected in the live catalog);
-  its instances are brought up by the **TaskManager** executing the fact at the
+- Governed by the **Registry** (existence reflected in the live catalog);
+  its instances are brought up by the **Manager** executing the fact at the
   **Runtime**'s direction (§0/§6).
 
 ### 1.2 Instance (a concrete agent of the class)
@@ -98,8 +108,8 @@ Every operation lives at one of two levels:
 - A concrete agent that runs and **polls** the class's queue with its own
   internal loop (LEG-023).
 - An instance exists *in the catalog* only because an **agent was actually
-  brought up** (the Runtime decided it, the TaskManager executed the fact at the
-  Runtime's request) and the fact was then recorded in the `AgentRegistry` (§0,
+  brought up** (the Runtime decided it, the Manager executed the fact at the
+  Runtime's request) and the fact was then recorded in the `Registry` (§0,
   registration-is-a-mirror). There is no "instance supervisor" — the `Runtime`
   is what decides and orchestrates.
 
@@ -273,20 +283,20 @@ separate operation above.
 
 ### 4.8 The `AgentRegistry` and who does what
 
-The `AgentRegistry` owns the **runtime state of agent classes** — the live
+The `Registry` owns the **runtime state of agent classes** — the live
 catalog and the runtime YAML cache (§0, §4.7). It is the **posterior mirror**:
 entries are written only after the corresponding fact occurred. It does **not**
-materialize, run or destroy anything — that is the `TaskManager`'s job,
+materialize, run or destroy anything — that is the `Manager`'s job,
 orchestrated by the `Runtime`. Its operations fall into two groups:
 
 - **The `Runtime` exposes every lifecycle operation** (it is the public face,
-  §6). For each, it (1) asks the `TaskManager` to perform the real action, and
-  (2) only after success asks the `AgentRegistry` to **record the fact**.
-- **The `AgentRegistry` records and answers queries**; it never initiates.
+  §6). For each, it (1) asks the `Manager` to perform the real action, and
+  (2) only after success asks the `Registry` to **record the fact**.
+- **The `Registry` records and answers queries**; it never initiates.
 
 **Registry operations (all posteriori — the fact must have occurred first):**
 
-| Operation | What the `AgentRegistry` records (posteriori) |
+| Operation | What the `Registry` records (posteriori) |
 |---|---|
 | `record_class(name, kind, *, dependencies, queue, state)` | The class entry **after** its queue was created (the class's existence fact, §5.2). Bind kind. Unknown kind → error before anything is recorded. A class in the catalog reflects a real, materialized class. |
 | `cache_spec(name, yaml)` | The YAML, **once**, at `record_class` time (→ §4.7 cache). Never per-instance. |
@@ -298,21 +308,21 @@ orchestrated by the `Runtime`. Its operations fall into two groups:
 
 **Identity and ordering rules (mirror):**
 - `instance_id` is the **agent's own identity** (the concrete agent of the
-  class), **never** a TM `task_id`: an agent is not a task. The task that
-  executes the fact (the agent's loop, §6.1) has its own `task_id`; the catalog
+  class), **never** a Manager `task_id`: an agent is not a task. The task that
+  the Manager executes (the fact) has its own `task_id`; the catalog
   records the agent, not the task — there is **no** 1:1 instance ↔ task identity
   mapping, and no duplicated field.
 - Within a create, the order is fixed:
   **queue created (Runtime fact) → `record_class` + `cache_spec` → per agent:
-  brought up & confirmed running (TM) → `record_instance`** (§5.1/§5.2).
+  brought up & confirmed running (Manager) → `record_instance`** (§5.1/§5.2).
   A class is never recorded without a queue; an instance is never recorded
   before its agent is running; `record_instance` never precedes
   `record_class` (no orphan instances).
-- **Confirmation is a TM read.** Every mutation waits for the TaskManager's
-  observable state — `status(task_id)` `running` for a create; `tm_control`
-  `run`/`pause` for enable/disable; a terminal state for destroy — before the
-  `record_*`/`set_*`/`remove_*` call. The Runtime translates task-language facts
-  into catalog records.
+- **Confirmation is a Manager read.** Every mutation waits for the Manager's
+  observable state — `status(task_id)` `running` for a create; `status(task_id)`
+  on a paused/exited task for enable/disable; a terminal state for destroy —
+  before the `record_*`/`set_*`/`remove_*` call. The Runtime translates
+  task-language facts into catalog records.
 
 **Queries (granular, read-only — the `Runtime` delegates these):**
 
@@ -344,8 +354,8 @@ recorded.
 #### CLI (public face = the Runtime)
 
 The CLI talks to the **Runtime**, not to the registry directly. Each command is a
-Runtime high-level operation that performs the fact (via the `TaskManager`) and
-then records it (in the `AgentRegistry`), posteriori (§0).
+Runtime high-level operation that performs the fact (via the `Manager`) and
+then records it (in the `Registry`), posteriori (§0).
 
 ```text
 legio agent create-class <spec.yaml> [--pool N]        # Runtime.create_class
@@ -374,7 +384,7 @@ Plain text output by default.
 #### HTTP API (public face = the Runtime)
 
 The HTTP surface also exposes the **Runtime**. Read operations delegate to the
-`AgentRegistry`; mutation operations perform the fact (via `TaskManager`) and
+`Registry`; mutation operations perform the fact (via `Manager`) and
 then record it (Registry), posteriori.
 
 | Method | Path | Body | → Runtime |
@@ -790,19 +800,19 @@ activity; "polls/drains" = an enabled agent consuming its class's queue.
 
 **Who does each flow (all of §5):** every mutation flow follows the same split —
 the **Runtime** (public face, the authority that creates/destroys/enables/
-disables agents) exposes and orchestrates; it asks the **TaskManager** to
-perform the real fact (bring up/destroy an agent, start/stop its loop); and
-**only after** that fact is confirmed it asks the **AgentRegistry** to **record
-it** (§0, registration-is-a-mirror). **Confirmation is a TM read** (§4.8) — every
-mutation waits for the observable state (`status(task_id)` `running` on create;
-`tm_control` `run`/`pause` on enable/disable; a terminal state on destroy) before
-the `record_*`/`set_*`/`remove_*` call. The class **entry gate** is not a
-TaskManager fact — it is the Runtime's own submission-side check against the
+disables agents) exposes and orchestrates; it asks the **Manager** to
+perform the real fact (bring up/destroy an agent, run/stop its task); and
+**only after** that fact is confirmed it asks the **Registry** to **record
+it** (§0, registration-is-a-mirror). **Confirmation is a Manager read** (§4.8) —
+every mutation waits for the observable state (`status(task_id)` `running` on
+create; a paused/exited `status` on enable/disable; a terminal state on destroy)
+before the `record_*`/`set_*`/`remove_*` call. The class **entry gate** is not a
+Manager fact — it is the Runtime's own submission-side check against the
 catalog (§5.6, §6.1). The state tables below describe the resulting transitions;
 they happen *after* the fact, never before. Reads ("verify the class exists")
-always go to the `AgentRegistry`.
+always go to the `Registry`.
 There is **no** separate "instance supervisor" — bringing up agents is the
-Runtime's orchestration over the TaskManager.
+Runtime's orchestration over the Manager.
 
 ### 5.1 Create instance
 Precondition: the class exists. Bringing up an instance does **not** by itself
@@ -812,15 +822,15 @@ instances, §4.2/§4.4); instances of a disabled class are born disabled.
 | # | Action | Class | Instance |
 |---|---|---|---|
 | 1 | Verify the class exists (read) | created (enabled or disabled) | — |
-| 2 | Bring up the agent: its own loop starts running on the class's queue; wait until `running` (TM read) | unchanged | agent running |
+| 2 | Bring up the agent: its own loop starts running on the class's queue; wait until `running` (Manager read) | unchanged | agent running |
 | 3 | Record the instance with the class's **effective** state — born `disabled` if the class is disabled (§4.2/§4.4); initial control `run` (enabled) or `pause` (disabled) | unchanged | `created / disabled` or `created / enabled` |
 | 4 | (corollary) having instances is a precondition for the class being enabled, but does not enable it on its own | unchanged | — |
 
-How: **Runtime** → `TaskManager` executes the fact (the callable that is the
-agent's internal loop, §6.1) and confirms `status(task_id) == running` (TM read)
-→ on success **Runtime** → `AgentRegistry` `record_instance(class, instance_id,
-born_state)` (posteriori). If the agent never reaches `running` — nothing is
-recorded (the mirror never reports an agent that was not actually brought up).
+How: **Runtime** → **Manager** submits the task that brings the agent up and
+confirms `status(task_id) == running` (Manager read) → on success **Runtime** →
+**Registry** `record_instance(class, instance_id, born_state)` (posteriori). If
+the agent never reaches `running` — nothing is recorded (the mirror never
+reports an agent that was not actually brought up).
 
 **No instance supervisor** — the Runtime orchestrates this (§5 convention).
 
@@ -839,8 +849,8 @@ cascade.
 
 How: **Runtime** creates the type's queue (fact) → `record_class` + `cache_spec`
 (posteriori to the queue, **once per class**) → for each agent of the pool, asks
-the **TaskManager** to execute its fact (the agent's loop, one at a time) and
-confirms `running` → on each success **Runtime** → **AgentRegistry**
+the **Manager** to submit the bring-up fact (one at a time) and
+confirms `running` → on each success **Runtime** → **Registry**
 `record_instance` (posteriori). The catalog count is the **sum of real facts**,
 never a `pool_size` promise.
 
@@ -851,9 +861,9 @@ Precondition: the instance exists and is disabled.
 |---|---|---|---|
 | 1 | Resume the agent's loop | unchanged | `created / enabled` |
 
-How: **Runtime** → **TaskManager** resumes that agent's loop
-(`resume(task_id)`) and confirms `tm_control == run` (TM read; fact) → on success
-**Runtime** → **AgentRegistry** `set_instance_state(enabled)` (posteriori).
+How: **Runtime** → **Manager** resumes that agent's task
+(`resume(task_id)`) and confirms the running/paused state (Manager read; fact) →
+on success **Runtime** → **Registry** `set_instance_state(enabled)` (posteriori).
 
 ### 5.4 Enable class
 Precondition: the class exists and is disabled. Enabling is a **conscious**
@@ -871,11 +881,11 @@ instances. The registry does not record *why* an instance was paused (§7), so a
 explicit `disable_instance` of a single agent is a one-shot pause that the next
 `enable_class` clears.
 
-How: **Runtime** (conscious decision) → ensures an agent exists (via **TaskManager**,
-confirmed `running`, recorded **posteriori** in **AgentRegistry**) → resumes
-**all** instances (per-instance `resume`, `tm_control` `run`) → **AgentRegistry**
-`set_instance_state(enabled)` for each + `set_class_state(enabled)` after the
-facts hold.
+How: **Runtime** (conscious decision) → ensures an agent exists (via **Manager**,
+confirmed `running`, recorded **posteriori** in **Registry**) → resumes
+**all** instances (per-instance `resume`, confirmed paused/exited) →
+**Registry** `set_instance_state(enabled)` for each + `set_class_state(enabled)`
+after the facts hold.
 
 ### 5.5 Disable instance
 Precondition: the instance exists and is enabled.
@@ -884,9 +894,9 @@ Precondition: the instance exists and is enabled.
 |---|---|---|---|
 | 1 | Pause the agent | unchanged | `created / disabled` |
 
-How: **Runtime** → **TaskManager** pauses that single agent's loop
-(`pause(task_id)`) and confirms
-`tm_control == pause` (TM read; fact) → on success **Runtime** → **AgentRegistry**
+How: **Runtime** → **Manager** pauses that single agent's task
+(`pause(task_id)`) and confirms the paused/exited state (Manager read; fact) →
+on success **Runtime** → **Registry**
 `set_instance_state(disabled)` (posteriori). Unlike disable-class, here **one
 specific agent is stopped**.
 
@@ -901,9 +911,9 @@ Precondition: the class exists and is enabled.
 
 How (policy A): **Runtime** decides `disable_class`: from then on, its submit
 path **rejects new items** against the catalog (the entry gate, §6.1) →
-**AgentRegistry** `set_class_state(disabled)` records the fact → the agents are
+**Registry** `set_class_state(disabled)` records the fact → the agents are
 **not touched** — they keep draining the pending work → for each dependent
-(transitive), the Runtime gate applies and **AgentRegistry** marks it disabled,
+(transitive), the Runtime gate applies and **Registry** marks it disabled,
 agents still draining. **disable ≠ destroy**: disable closes entry, never kills
 agents.
 
@@ -915,9 +925,9 @@ Precondition: the instance exists.
 | 1 | Terminate the agent | unchanged | `does not exist` |
 | 2 | (corollary) if it was the last instance, the class becomes disabled | `created / disabled` | — |
 
-How: **Runtime** → **TaskManager** destroys that agent's loop (`cancel(task_id)`)
+How: **Runtime** → **Manager** cancels that agent's task (`cancel(task_id)`)
 and confirms a terminal state (`failed(cancelled)`)
-(TM read; fact) → on success **Runtime** → **AgentRegistry** `remove_instance`
+(Manager read; fact) → on success **Runtime** → **Registry** `remove_instance`
 (posteriori); if it was the last instance, `set_class_state(disabled)` — and reads
 report it via the **effective state** (§4.4) even across the two records.
 
@@ -941,11 +951,11 @@ Notes:
   cascade.
 
 How: **Runtime** resolves `mode` (`drain` waits until queue empty; `now`
-proceeds) → for each agent: **TaskManager** `cancel(task_id)` and confirm
-terminal (fact) → **AgentRegistry** `remove_instance` (posteriori) → the Runtime
-removes the queue and its entry gate and the **AgentRegistry** `remove_class`
+proceeds) → for each agent: **Manager** `cancel(task_id)` and confirm
+terminal (fact) → **Registry** `remove_instance` (posteriori) → the Runtime
+removes the queue and its entry gate and the **Registry** `remove_class`
 (the YAML stays in the Registry's cache) → cascade-disable dependents (Runtime
-gate + AgentRegistry `set_class_state(disabled)`; their agents keep draining).
+gate + Registry `set_class_state(disabled)`; their agents keep draining).
 **Down (dependencies) is never touched.** Irreversible.
 
 ---
@@ -956,32 +966,33 @@ The lifecycle splits across the three layers described in §0:
 
 - **`Runtime` (only layer with initiative, public face)** — decides every
   lifecycle operation, exposes it (CLI / HTTP / programmatic), and orchestrates
-  the other two. For each mutation it asks the `TaskManager` to perform the real
-  fact and, **only after success**, asks the `AgentRegistry` to record it
-  (registration-is-a-mirror). It validates reads against the `AgentRegistry`.
-  Functions: `create_class`, `recreate_class`, `create_instance`,
-  `destroy_instance`, `enable_class`, `disable_class`, `destroy_class`,
-  `enable_instance`, `disable_instance`, and the read queries.
-- **`AgentRegistry` (posterior mirror, owner of the YAML cache)** — records the
+  the other two. It knows the domain's **business tasks** and receives the client
+  submit; for each mutation it asks the `Manager` to submit/manage the task that
+  performs the real fact (lifecycle included) and, **only after success**, asks
+  the `Registry` to record it (registration-is-a-mirror). It validates reads
+  against the `Registry`. Functions: `create_class`, `recreate_class`,
+  `create_instance`, `destroy_instance`, `enable_class`, `disable_class`,
+  `destroy_class`, `enable_instance`, `disable_instance`, the business
+  `submit`/`status`, and the read queries.
+- **`Registry` (posterior mirror, owner of the YAML cache)** — records the
   facts the `Runtime` confirms (classes, instances, state changes, specs in the
   cache) and answers the granular queries. It **never initiates, never
   materializes, never runs** anything. Governs only existence and lifecycle —
   **never the DAG or routing**.
-- **`TaskManager` (executor of facts, blind to the domain)** — actually
-  executes the fact, in task language: it runs the callable that is an agent's
-  internal loop (creating an agent), pauses/resumes/cancels it. It does not know
-  that a task is "the agent lifecycle", it never knows the DAG, and it is not
-  involved in business submissions — the class entry gate belongs to the Runtime
-  (§6.1).
+- **`Manager` (the generic task environment, executor of facts, blind to the
+  domain)** — manages **any kind of task** (submit, status, pause, resume,
+  cancel). The Runtime drives it for lifecycle facts and for business tasks; it
+  does **not** know that a task is "the agent lifecycle", it never knows the
+  DAG, and it is not the submit's public face — the submit arrives at the
+  Runtime, which delegates to the `Manager` (§6.1).
 
-The `TaskManager` holds the task/machine reality (the agent's life runs through
-it); the `AgentRegistry` is its posterior mirror; the `Runtime` is the decision
-point between them. An **agent is not a task**: the catalog records the agent by
-its own identity; the TM task that executes its loop keeps a separate `task_id`
-(§4.8).
+The `Manager` holds the task reality (a task runs through it); the `Registry` is
+its posterior mirror; the `Runtime` is the decision point between them. An
+**agent is not a task**: the catalog records the agent by its own identity; the
+Manager task that is the fact keeps a separate `task_id` (§4.8).
 
 **Invariant — no orphaned jobs.** A business task is
-always traceable in the Runtime registries (`tasks` / and the TM's `tm_tasks`):
+always traceable in the Runtime registries (`tasks` / the Manager's task dict):
 it either reaches a
 terminal state or stays visibly pending. The only deliberate-loss path is
 `destroy_class --mode now`, which is explicit and operator-chosen (§4.6). There
@@ -989,65 +1000,78 @@ must never be a job that exists nowhere and is seen by no one. **If an orphan
 appears, that is a design error to fix — never a runtime condition to paper
 over.**
 
-### 6.1 The `TaskManager` — minimal task surface (design)
+### 6.1 The `Manager` — generic task environment (design)
 
-The `TaskManager` is the **executor of facts** (§0): a reduced, domain-free task
-engine on beaver. It knows only **tasks** — a task is a `name` + `args/kwargs` +
-a state + an execution time. It never knows agents, classes, agent queues,
-patterns, the DAG, routing or the `AgentRegistry`. Its functional reference is
-`castor-io`, reduced to what legio's lifecycle needs; it is **not** castor and
-**not** an engine for business tasks (business `submit`/results stay in the
-Runtime, `legio.manager`).
+The `Manager` (= task manager = mini-manager; the runtime triangle's one task
+engine, `legio.manager`) is the reduced, domain-free task environment on beaver,
+implemented in legio itself — **castor / castor-io is not a dependency and
+nothing from it is used** (`docs/DEPENDENCIES.md`, "Excluded on purpose"). It
+knows only **tasks** — a task is a `name` + a
+`task_id` + `args/kwargs` + a state + result/error + timestamps. It never knows
+agents, classes, agent queues, patterns, the DAG, routing or the `Registry`.
 
-**What a task is (domain-free).** A task is identified by `task_id` (uuid). Its
-record lives on the registry `db.dict("tm_tasks")` and holds: `name`, `args`,
-`kwargs`, `status`, `cancellable`, `next_run_at`, timestamps (`enqueued_at`,
-`started_at`, `finished_at`), `result`, `error`. Status is one of `pending |
-running | success | failed | cancelling` (`cancelling` is the visible half-open
-state of a cooperative cancel). Execution time is the `next_run_at` **field**
-(rule 8 — no sleeps, no scheduler).
+**What a task is (domain-free, decoupled).** A task is a plain unit of work for
+the Manager to manage: identified by `task_id`; the record holds `name`,
+`args`, `kwargs`, `status`, timestamps (`enqueued_at`, `started_at`,
+`finished_at`), `result`, `error`. Status is one of `pending | running |
+success | failed | cancelling` (`cancelling` is the visible half-open state of
+a cooperative cancel). **A task is NOT an agent cycle / an agent loop** — that
+coupling is forbidden. The Manager executes callables; it never sees what a
+callable means. The agent's own polling loop (`AgentBase.run`, LEG-023) is
+**not** a Manager task: it is the agent's own life, governed by the Runtime's
+lifecycle facts (§5, §12.2) — the Manager is not "the thing that runs agent
+loops".
 
-**Beaver footprint (all TaskManager-owned scopes):**
+The **client submit lives at the Runtime** (the public face knows the domain's
+business tasks); the Runtime "hace el submit task del manager": it calls the
+Manager's `submit_task` to manage the tasks it handles — the shape of the
+reference project: its public routes receive the client request and call
+`submit(...)` on the task environment, which stays blind to what the task
+means. Task id is the Manager's own
+(`<node_id>:<uuid>`, `legio.naming`, LEG-016); it is **not** the catalog's
+`instance_id`.
+
+**Beaver footprint (Manager-owned scopes):**
 
 | Primitive | Scope | Role |
 |---|---|---|
-| dict | `tm_tasks` | task records (`task_id` → `TaskRecord`) |
-| queue | `tm_scheduled` | task ids ordered by `next_run_at` (priority = timestamp) |
-| queue | `tm_pending` | task ids due now (priority 0) |
-| dict | `tm_control` | cooperative control per task: `run \| pause \| cancel` (TTL) |
+| dict | `tasks` | task records (`task_id` → `TaskRecord`) |
+| queue | `pending_tasks` | task ids due now (priority 0) |
+| dict | `control` | cooperative control per task: `run \| pause \| cancel` (TTL) |
 
 Result/error travel **inside the task record** — consumers poll
-`status(task_id)`. There is no result queue: polling-only (rule 8).
+`status(task_id)`. There is no result queue: polling-only (rule 8). There is no
+scheduling queue and no `next_run_at`: nothing sleeps and nothing waits — a task
+runs as soon as it is enqueued; scheduling (when a task may run) is a field on
+the record, never a scheduler (rule 8).
 
 **Surface.**
 
 ```
 register(name, callable)                    # in-process: name → async fn | async generator
-async submit(name, *args, *, next_run_at=None, **kwargs) -> task_id
+async submit_task(name, *args, **kwargs) -> task_id
 async status(task_id) -> TaskRecord | None
 async pause(task_id) / resume(task_id)      # disable ≠ destroy: non-terminal suspension
 async cancel(task_id)                       # terminal, cooperative
 ```
 
 - The **callable registry is in-process code**, never a registry: it is the task
-  executor's execution scope (castor's `_registry`); state — the authority of what
-  happened — is always a (persistent) registry.
-- The Runtime **registers the callables that are the agents' internal loops**
-  (each agent's `AgentBase.run`, LEG-023). To the TM each is just a callable —
-  it never sees what is inside, and the callable is **not** the agent: it is the
-  vehicle through which the agent's life runs. The catalog records the agent by
-  its own identity, with a separate `task_id` for the task executing its loop
-  (§4.8) — never a 1:1 instance ↔ task identity.
+  executor's execution scope; state — the authority of what
+  happened — is always a (persistent) registry on beaver.
+- The Runtime and the agents **register their callables** with the Manager; to
+  the Manager each is just a callable — it never sees what is inside. The
+  callable is **not** the agent: the catalog records the agent by its own
+  identity, with a separate `task_id` for the task the Manager manages (§4.8) —
+  never a 1:1 instance ↔ task identity.
 
-**Task-executor algorithm.** A TM task executor is a polling loop over the task
-queues:
+**Task-executor algorithm.** A Manager task executor is a polling loop over the
+task queue:
 
 ```
-1. tm_scheduled.peek() → get() the due head (next_run_at <= now) → dispatch
-2. else tm_pending.get(block=False) → dispatch   (IndexError ⇒ nothing due; run() returns)
-3. dispatch(task_id):
+1. pending_tasks.get(block=False) → dispatch   (IndexError ⇒ nothing due; run() returns)
+2. dispatch(task_id):
    a. status := running (+ started_at)
-   b. cancellable? drive the generator, checking tm_control at each yield:
+   b. cancellable? drive the generator, checking control at each yield:
         run    → advance one step
         pause  → yield without advancing
         cancel → cancelling → failed(cancelled)
@@ -1057,40 +1081,38 @@ queues:
 
 - **Executor death**: because `get()` is destructive/atomic and a task executes
   once, a crashed executor is not retried and runs are not at-least-once. A
-  crashed loop is surfaced visibly rather than silently re-run.
-- **Multi-process concurrency**: several TM task executors (any process) drain
-  the same queues; `get()` is destructive/atomic, so a task executes once.
+  crashed task is surfaced visibly rather than silently re-run.
+- **Multi-process concurrency**: several Manager task executors (any process)
+  drain the same queue; `get()` is destructive/atomic, so a task executes once.
 
-**Lifecycle verbs → task language.** The TM executes these facts; the Runtime
-decides them and records them in the `AgentRegistry` **after** each is confirmed
-(registration-is-a-mirror):
+**Lifecycle verbs → task language.** The Manager executes these facts; the
+Runtime decides them and records them in the `Registry` **after** each is
+confirmed (registration-is-a-mirror):
 
-| Runtime verb | TaskManager fact (task language) | Observable TM state | Registry record (posteriori) |
+| Runtime verb | Manager fact (task language) | Observable Manager state | Registry record (posteriori) |
 |---|---|---|---|
-| create_instance | `submit(agent_loop, ...)` (the agent's internal loop, long-running, cancellable) | `running` | `record_instance` |
+| create_instance | `submit_task(...)` (bring-up task) | `running` | `record_instance` |
 | destroy_instance | `cancel(task_id)` | `cancelling → failed(cancelled)` | `remove_instance` |
-| disable_instance | `pause(task_id)` | `tm_control=pause` (loop yields; still exists) | `set_instance_state(disabled)` |
-| enable_instance | `resume(task_id)` | `tm_control=run` | `set_instance_state(enabled)` |
-| create_class (pool N) | N × `submit(agent_loop, ...)` | N tasks `running` | `record_class` + N×`record_instance` + `cache_spec` |
+| disable_instance | `pause(task_id)` | paused/exited | `set_instance_state(disabled)` |
+| enable_instance | `resume(task_id)` | running | `set_instance_state(enabled)` |
+| create_class (pool N) | N × `submit_task(...)` | N tasks `running` | `record_class` + N×`record_instance` + `cache_spec` |
 | destroy_class | N × `cancel(...)` | all tasks terminated | N×`remove_instance` + `remove_class` |
 
-**What the TaskManager does NOT own** (decoupling boundaries):
+**What the Manager does NOT own** (decoupling boundaries):
 - The **entry gate of a class queue** (what §0/§5.6/§5.8/§6 name "dispatch"):
   submitting into a disabled class is refused by the **Runtime** (it consults
-  the catalog); business submits never pass through the TM (see §10).
+  the catalog).
 - The DAG, routing, delivery, results: all Runtime/agent concern.
-- The AgentRegistry: the TM never records anything in it.
+- The Registry: the Manager never records anything in it.
 
-**Compliance (audit).** Polling-only / no sleeps (rule 8), scheduling as a field
-(`next_run_at`); domain-free (rule 7 — names/states only, never agents); errors
-never silent (rule 9 — `failed`+`error` visible,
-`cancelled`); everything is a registry (rule 13 — callables are code, never
-authority); logging with the implementation (rule 11); no instance supervisor
-(the TM is executor only; the Runtime decides; the agent's internal cycle is the
-callable's own — the agent is not a task, its identity lives in the catalog);
-disable ≠ destroy (pause vs cancel); additive — the Runtime and
-the agents are untouched. Implementation lands with the Runtime's lifecycle ops
-(R-8), executed in task language by the TaskManager (§6.1).
+**Compliance (audit).** Polling-only / no sleeps (rule 8); domain-free (rule 7 —
+names/states only, never agents, never a task = agent-loop coupling); errors
+never silent (rule 9 — `failed`+`error` visible, `cancelled`); everything is a
+registry (rule 13 — callables are code, never authority); logging with the
+implementation (rule 11); no instance supervisor (the Manager is executor only;
+the Runtime decides); disable ≠ destroy (pause vs cancel); additive — the Runtime
+and the agents are untouched. Implementation lands with the Runtime's lifecycle
+ops (R-8), executed in task language by the Manager (§6.1).
 
 ---
 
@@ -1124,7 +1146,7 @@ other classes by name. These govern enable/disable/destroy behavior.
 ## 8. Bootstrap — build the initial state and the initial cache
 
 The bootstrap **constructs the initial state of the system and the initial
-cache** in the `AgentRegistry` (§0). It does **not** "run tasks": it leaves the
+cache** in the `Registry` (§0). It does **not** "run tasks": it leaves the
 agents idle and the node standing. The catalog holds all dependency information
 (classes, instances, DAGs and states), so the full graph is known. The node is
 brought up **by CLI or programmatically** (the Runtime is the entry point); the
@@ -1138,8 +1160,8 @@ agent was actually brought up / the spec was actually read) is confirmed.
 2. Build the **topological order** of the dependency graph (leaves first, then
    the classes that depend on them, etc.).
 3. For each class in that order: **Runtime** creates its queue (fact) →
-   `record_class` + `cache_spec` (once, posteriori to the queue) → **TaskManager**
-   brings up its agents one at a time (each agent's own loop, §6.1), each
+   `record_class` + `cache_spec` (once, posteriori to the queue) → **Manager**
+   submits the bring-up task for its agents one at a time (§6.1), each
    confirmed `running` before the **Registry** records the instance
    (§5.2/§4.8 ordering). (`pool_size` is the *intent*; the catalog reflects the
    *real* count of agents actually brought up — never a promise.)
@@ -1151,10 +1173,11 @@ agent was actually brought up / the spec was actually read) is confirmed.
 6. A dependency cycle breaks the order → detected and resolved (rejected /
    flagged).
 7. The agents are already running their own internal loops (each was brought up
-   in step 3, §6.1); the node's task executors are up and drain the TM queues.
+   in step 3, §6.1); the node's task executors are up and drain the Manager
+   queue.
 
 **Result:** the **initial catalog state** plus the **initial YAML cache** exist in
-the `AgentRegistry`; agents are idle (nothing pending on their class queues);
+the `Registry`; agents are idle (nothing pending on their class queues);
 **no business task has been started** (a task only begins when a work item
 enters the starting agent's queue, Flows B/C in the execution model). The node
 is ready to receive submits.
@@ -1194,8 +1217,8 @@ No disablement-history is recorded; the live catalog is what guides decisions.
    silent hang (large timeout → visible failure, §4.6).
 3. **Entry gate / dispatch ownership:** the class entry
    gate belongs to the **Runtime** — its submit path rejects new items against
-   the catalog when the class is disabled. It is not a `TaskManager` fact (the
-   TaskManager never sees business submissions, and there is no open/closed
+   the catalog when the class is disabled. It is not a `Manager` fact (the
+   Manager never sees business submissions, and there is no open/closed
    attribute on a beaver queue to "close"). §0/§5/§5.6/§5.8/§6 wording updated
    accordingly.
 4. **Dispatch has no lease or reaper:** the agent's
@@ -1203,11 +1226,13 @@ No disablement-history is recorded; the live catalog is what guides decisions.
    is popped once and routed, a crashed executor is surfaced visibly and never
    re-run (rule 8 polls, never pushes; rule 9 never silent). No reaper, no
    `executor_died` recovery, no retry/DLQ — those invented mechanism are removed.
-5. **TaskManager scope names and placement:** module
-   **`legio.taskmanager`**; class **`TaskManager`**; beaver scopes, all under the
-   `tm_` prefix: `tm_tasks` (dict), `tm_scheduled` (queue), `tm_pending` (queue),
-   `tm_control` (dict). Normative in `legio.naming`
-   (LEG-016) at implementation.
+5. **Manager scope names and placement:** the runtime
+   triangle's one task environment is **`legio.manager`** (module and class
+   `Manager` — the same name the shipped business, task surface already uses);
+   its beaver scopes are `tasks` (dict), `pending_tasks` (queue), `control`
+   (dict). Normative in `legio.naming` (LEG-016) at implementation. No
+   `legio.taskmanager` module, no `tm_*` scopes, no `next_run_at` — those
+   invented names are removed.
 
 ### Open risks
 
@@ -1219,12 +1244,12 @@ No disablement-history is recorded; the live catalog is what guides decisions.
 3. **Two state levels (class + instance) must stay coherent** — prefer that
    instances read (derive) the class state rather than the registry coordinating
    each instance individually.
-4. **"Polling" means the agent's loop is scheduled by the TaskManager as a task**
-   (a runnable task the TM executes, bounded by `max_steps` — not a
-   permanently active uncontrolled thread, AGENTS.md rule 8), not a leased,
-   at-least-once execution.
-5. **The task executing an agent's loop can die outside any operator operation**
-   (the agent's executor crashes), leaving a catalog instance that no longer
+4. **"Polling" means the agent's loop is the agent's own `run()`** (LEG-023,
+   bounded by `max_steps` — not a permanently active uncontrolled thread,
+   AGENTS.md rule 8), not a leased, at-least-once execution and not a Manager
+   task.
+5. **A fact task can die outside any operator operation**
+   (the executor crashes), leaving a catalog instance that no longer
    exists and a class that *reads* `enabled` (or `disabled`) with zero live
    agents — surfaced as a visible task failure (rule 9). The **effective state**
    read (§4.4) limits the damage — zero instances read as `disabled` — but the
@@ -1349,9 +1374,9 @@ for an atomic starting agent, it is the agent's own `output_as`.
   it, repeating until idle. Operational control (pause / cancel / shutdown)
   is checked **between dispatches** — never inside a step, and never by
   parking, leasing or task-ifying the loop. The loop is the agent's own, the
-  vehicle of the fact the Runtime asks the TaskManager to execute; an agent is
-  **not** a task and **not** a recorded TM identity (its identity lives in the
-  catalog, §4.8).
+  vehicle of the fact the Runtime orders; an agent is
+  **not** a task and **not** a recorded Manager identity (its identity lives in
+  the catalog, §4.8).
 
 ### 12.3 A composite has one gathering queue; branches route by position and level
 
@@ -1506,9 +1531,8 @@ another class's queue. Rules (decoupled, local, no oracle):
 
 ### 12.6 Polling-only, fields not mechanisms (restated for execution)
 
-- Scheduling is `next_run_at` (a field on the task record), never a
+- Scheduling is a field on the Manager task record, never a
   sleep/delay in the flow.
 - Idle is `get(block=False)` → `IndexError` → the instance loop returns.
-- Scheduling/supervision of the instance loop is the TaskManager's (§6.1,
-  §10 risks 3-5); the flow itself never sleeps, never loops waiting for a
-  peer.
+- The instance loop is the agent's own (§6.1, §10 risks 3-5); the flow itself
+  never sleeps, never loops waiting for a peer.

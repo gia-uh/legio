@@ -135,9 +135,9 @@ documented config into a running, observable node:
      `lingo_factory` (default = legio builds `lingo.LLM(model, base_url, api_key)`
      from `services.llm` + env), and concrete composite classes. Unmaterializable
      specs — undeclared tool, linguistic agent without an LLM service/factory,
-     composite without a concrete class — fail the boot loudly, naming the
-     agent. Nothing sleeps and nothing is pushed: the supervisor (pending
-     slice) polls `next_run_at`.
+      composite without a concrete class — fail the boot loudly, naming the
+      agent. Nothing sleeps and nothing is pushed: polling-only (rule 8), the
+      agent loops and the Manager's executor drain their queues on demand.
 
 ## Acceptance criteria
 From `docs/PLAN.md` (LEG-081), verbatim:

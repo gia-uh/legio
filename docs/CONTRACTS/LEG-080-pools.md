@@ -23,7 +23,8 @@ behavior unchanged.
 - `pool_size` is a **creation parameter of the class, given with its YAML spec**
   (`create-class <spec.yaml> [--pool N]`, §4.3/§4.8 of AGENT_LIFECYCLE) — the
   spec is data (patterns as YAML, rule 7), the pool size is operator capacity,
-  never part of a loop or of the TaskManager.
+  never part of a loop or of the Manager (the agents' loops are their own; the
+  pool size is a creation parameter, not a task property).
 - `pool_size: 1` is the default single-agent path. `pool_size: 0` creates the
   class without agents (born disabled, §4.3/§4.4).
 
