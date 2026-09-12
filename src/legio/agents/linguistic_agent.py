@@ -26,7 +26,6 @@ from lingo.llm import Message
 from pydantic import BaseModel
 
 from legio.agents.base import AgentBase
-from legio.concurrency import ConcurrencyCaps, ShutdownGate
 from legio.flow import ExecutionRequestMessage, build_payload
 from legio.patterns.template import resolve_template
 
@@ -49,8 +48,6 @@ class LinguisticAgent(AgentBase):
         output_as: str = "",
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
-        concurrency: ConcurrencyCaps | None = None,
-        drain: ShutdownGate | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -58,12 +55,10 @@ class LinguisticAgent(AgentBase):
             output_as=output_as,
             input_schema=input_schema,
             output_schema=output_schema,
-            drain=drain,
         )
         self._lingo = lingo_client
         self._prompt = prompt_template
         self._output_model = output_model
-        self._concurrency = concurrency
         self._input_as = input_as
         ready_vars = dict(system_vars or {})
         ready_vars.setdefault("current_date", datetime.now(UTC).date().isoformat())
@@ -88,14 +83,7 @@ class LinguisticAgent(AgentBase):
             request.task_id,
         )
         messages = [Message.system(prompt)]
-        # A call is bounded by the shared node-wide LLM semaphore when a cap is
-        # declared (LEG-082): a constrained LLM waits (cooperative, rule-8
-        # exception), never fails or drops the step.
-        if self._concurrency is None:
-            result = await self._lingo.create(self._output_model, messages)
-        else:
-            async with self._concurrency.llm():
-                result = await self._lingo.create(self._output_model, messages)
+        result = await self._lingo.create(self._output_model, messages)
         logger.info(
             "linguistic result agent=%s task=%s",
             self._agent_id,

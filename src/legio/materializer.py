@@ -40,7 +40,6 @@ from fastapi import FastAPI
 
 from legio.agents import AgentBase, CompositeAgent, LinguisticAgent, ToolAgent
 from legio.api import create_app
-from legio.concurrency import ConcurrencyCaps, ShutdownGate
 from legio.config import LlmConfig, LoadedConfig
 from legio.errors import UnrecoverableError
 from legio.patterns import (
@@ -84,8 +83,6 @@ def _materialize_atom(
     db: AsyncBeaverDB,
     available_tools: AvailableToolsRegistry,
     lingo_client: Any,
-    concurrency: ConcurrencyCaps | None = None,
-    drain: ShutdownGate | None = None,
 ) -> AgentBase:
     """Materialize a single atomic agent (tool or linguistic) or raise."""
     if spec.kind is AgentKind.TOOL:
@@ -104,8 +101,6 @@ def _materialize_atom(
             output_as=spec.output.output_as,
             input_schema=spec.input.input_schema,
             output_schema=spec.output.output_schema,
-            concurrency=concurrency,
-            drain=drain,
         )
 
     if spec.kind is AgentKind.LINGUISTIC:
@@ -124,8 +119,6 @@ def _materialize_atom(
             output_as=spec.output.output_as,
             input_schema=spec.input.input_schema,
             output_schema=spec.output.output_schema,
-            concurrency=concurrency,
-            drain=drain,
         )
 
     raise UnrecoverableError(f"atomic agent {spec.name!r} has unknown kind: {spec.kind}")
@@ -137,7 +130,6 @@ def _materialize_composite(
     catalog: Catalog,
     db: AsyncBeaverDB,
     composite_classes: CompositeClasses,
-    drain: ShutdownGate | None = None,
 ) -> AgentBase:
     """Materialize one composite through its concrete class, or raise."""
     composite_type = composite_classes.get(spec.name)
@@ -156,7 +148,6 @@ def _materialize_composite(
         output_as=spec.output.output_as,
         input_schema=spec.input.input_schema,
         output_schema=spec.output.output_schema,
-        drain=drain,
     )
 
 
@@ -170,8 +161,6 @@ def materialize_agents(
     lingo_factory: LingoFactory | None = None,
     composite_classes: CompositeClasses | None = None,
     on_built: Callable[[str], None] | None = None,
-    concurrency: ConcurrencyCaps | None = None,
-    drain: ShutdownGate | None = None,
 ) -> dict[str, AgentBase]:
     """Build the standing agent map from a validated catalog, in DAG order.
 
@@ -179,31 +168,10 @@ def materialize_agents(
     reference already-materialized atomics or other composites by name —
     LEG-070 DAG order). Every spec is validated at load, so an unmaterializable
     spec here is a *boot-time* failure — visible and naming the agent (rule 9).
-
-    ``concurrency`` (LEG-082): when not injected, a ``ConcurrencyCaps`` is
-    derived from the Schema 3 tool declarations' ``policy.concurrency`` and
-    ``services.llm.max_concurrency``, and threaded into the materialized
-    atomics. ``drain`` is the optional shared ``ShutdownGate`` the deployment
-    sets on SIGTERM/SIGINT; vehicles honour it between dispatches.
     """
     classes = composite_classes or {}
     lingo_client: Any | None = None
     agents: dict[str, AgentBase] = {}
-
-    if concurrency is None:
-        tool_limits = {
-            name: int(declaration["policy"]["concurrency"])
-            for name, declaration in available_tools.all_declarations().items()
-            if (declaration.get("policy") or {}).get("concurrency") is not None
-        }
-        max_llm = llm_config.max_concurrency if llm_config is not None else None
-        if tool_limits or max_llm is not None:
-            concurrency = ConcurrencyCaps(max_llm=max_llm, tool_limits=tool_limits)
-            logger.info(
-                "concurrency caps built tools=%d llm=%s",
-                len(tool_limits),
-                max_llm,
-            )
 
     def _lingo() -> Any:
         nonlocal lingo_client
@@ -227,8 +195,6 @@ def materialize_agents(
                     db=db,
                     available_tools=available_tools,
                     lingo_client=_lingo(),
-                    concurrency=concurrency,
-                    drain=drain,
                 )
             except UnrecoverableError as exc:
                 raise UnrecoverableError(
@@ -240,8 +206,6 @@ def materialize_agents(
                 db=db,
                 available_tools=available_tools,
                 lingo_client=None,
-                concurrency=concurrency,
-                drain=drain,
             )
         agents[spec.name] = agent
         if on_built is not None:
@@ -252,11 +216,7 @@ def materialize_agents(
         if spec.type is not AgentType.COMPOSITE:
             continue
         agent = _materialize_composite(
-            spec,
-            catalog=catalog,
-            db=db,
-            composite_classes=classes,
-            drain=drain,
+            spec, catalog=catalog, db=db, composite_classes=classes
         )
         agents[spec.name] = agent
         if on_built is not None:
@@ -318,8 +278,6 @@ async def boot_node(
     lingo_factory: LingoFactory | None = None,
     composite_classes: CompositeClasses | None = None,
     on_built: Callable[[str], None] | None = None,
-    concurrency: ConcurrencyCaps | None = None,
-    drain: ShutdownGate | None = None,
 ) -> BootedNode:
     """Boot a node from its LoadedConfig: connect → load → validate → materialize.
 
@@ -329,8 +287,6 @@ async def boot_node(
     materialize. ``db`` lets tests inject their database (the node's shared
     substrate); otherwise the configured path is opened directly. The Runtime
     (LEG-085), the HTTP app and the authenticated client store are built last.
-    ``concurrency``/``drain`` (LEG-082 seams) thread into the materialized
-    agents from here.
     """
     cfg = loaded.config
 
@@ -349,8 +305,6 @@ async def boot_node(
             lingo_factory=lingo_factory,
             composite_classes=composite_classes,
             on_built=on_built,
-            concurrency=concurrency,
-            drain=drain,
         )
     except BaseException:
         if owns_database:
@@ -366,8 +320,6 @@ async def _boot_on_database(
     lingo_factory: LingoFactory | None,
     composite_classes: CompositeClasses | None,
     on_built: Callable[[str], None] | None,
-    concurrency: ConcurrencyCaps | None = None,
-    drain: ShutdownGate | None = None,
 ) -> BootedNode:
     """Boot the node over an already-connected substrate (fail-fast, rule 9)."""
     cfg = loaded.config
@@ -389,8 +341,6 @@ async def _boot_on_database(
         lingo_factory=lingo_factory,
         composite_classes=composite_classes,
         on_built=on_built,
-        concurrency=concurrency,
-        drain=drain,
     )
 
     client_store = _build_client_store(loaded)

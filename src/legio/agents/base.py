@@ -58,7 +58,6 @@ from typing import Any
 from beaver import AsyncBeaverDB
 from pydantic import BaseModel, ValidationError
 
-from legio.concurrency import ShutdownGate
 from legio.flow import ExecutionRequestMessage, ExecutionResultMessage
 from legio.naming import queue_key
 from legio.patterns.compile import compile_schema
@@ -100,7 +99,6 @@ class AgentBase:
         output_as: str = "",
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
-        drain: ShutdownGate | None = None,
     ) -> None:
         self._agent_id = agent_id
         self._db = db
@@ -115,7 +113,6 @@ class AgentBase:
             compile_schema(output_schema) if output_schema else None
         )
         self._queue = db.queue(queue_key(agent_id))
-        self._drain = drain
         self._monitor: Monitor | None = None
         # The class gate (``db.dict("gates")``, §12.5) is written only by the
         # Runtime and READ by any depositor — a submit or an internal task.
@@ -132,29 +129,17 @@ class AgentBase:
         return self._agent_id
 
     async def run(self) -> int:
-        """Poll the queue until idle (or a drain holds dispatch); return steps.
+        """Poll the queue until idle; return the number of steps processed.
 
         Death-march steps are structurally impossible (LEG-070 rejects
         cycles at load; a route is forward-only, level + 1 per hop), so the
         loop's only termination is the empty queue — no arbitrary cap hides
-        pending work (rule 9). A drain (``ShutdownGate``, LEG-082) stops the
-        pulling of new items *between dispatches* while in-flight steps finish
-        and always deposit (§12.2). Idle returns 0 without sleeping (rule 8).
+        pending work (rule 9). Idle returns 0 without sleeping (rule 8).
         """
         steps = 0
         while await self.process_next():
             steps += 1
         return steps
-
-    def _drain_holding(self) -> bool:
-        """Whether a drain request holds the pulling of new items (§12.2)."""
-        holding = self._drain is not None and self._drain.draining
-        if holding:
-            logger.info(
-                "agent drain holds dispatch agent=%s",
-                self._agent_id,
-            )
-        return holding
 
     async def process_next(self) -> bool:
         """Consume at most one work item from the class inbox; else return False.
@@ -165,8 +150,6 @@ class AgentBase:
         A composite overrides this poll with its two-inlet intake + gated
         collection cycle (§12.3).
         """
-        if self._drain_holding():
-            return False
         try:
             qitem = await self._queue.get(block=False)
         except IndexError:

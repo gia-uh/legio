@@ -189,23 +189,10 @@ def _overlay_lifecycle(base: LifecycleParams, layer: LifecycleParams) -> Lifecyc
 
 
 class LlmConfig(BaseModel):
-    """`services.llm` — the real `lingo.LLM` constructor args (base_url/model).
-
-    ``max_concurrency`` (LEG-082) caps concurrent ``create`` calls node-wide
-    when set (``>= 1``); absent → unbounded.
-    """
+    """`services.llm` — the real `lingo.LLM` constructor args (base_url/model)."""
 
     base_url: str
     model: str
-    max_concurrency: int | None = None
-
-    @model_validator(mode="after")
-    def _validate_max_concurrency(self) -> LlmConfig:
-        if self.max_concurrency is not None and self.max_concurrency < 1:
-            raise ValueError(
-                f"services.llm.max_concurrency must be >= 1 (got {self.max_concurrency})"
-            )
-        return self
 
 
 class EmbeddingConfig(BaseModel):
@@ -307,13 +294,6 @@ class ToolPolicy(BaseModel):
 
     timeout: int | float | None = None
     retries: int | None = None
-    concurrency: int | None = None
-
-    @model_validator(mode="after")
-    def _validate_concurrency(self) -> ToolPolicy:
-        if self.concurrency is not None and self.concurrency < 1:
-            raise ValueError(f"policy.concurrency must be >= 1 (got {self.concurrency})")
-        return self
 
 
 class ToolDeclaration(BaseModel):
