@@ -271,9 +271,13 @@ are red for the yet-unimplemented surface.
   - **Accept**: `legio server ...` starts, exposes `submit`/`status`, and honors
     the LEG-017 config shape; the Runtime lifecycle verbs are reachable via
     `legio agent ...`.
-- **LEG-082** Graceful shutdown + concurrency semaphores (LLM, per-tool).
-  - **Accept**: SIGTERM drains in-flight work before exit; per-tool
-    concurrency cap is honored under load (test with a slow fake tool).
+  - **Accept**: a `SIGTERM` drains in-flight work before exit — the CLI stops
+    driving the executor between dispatches (LEG-083/LEG-085 one-pass run) and
+    an in-flight step completes before exit. No engine-side shutdown seams:
+    the engine owns no shared resource beyond the queues (beaver's own
+    consumption mechanism), and `process_next` is one atomic step — pull,
+    handle, deposit — so shut-down is naturally the host's no-dispatch
+    decision.
 - **LEG-083** Manager generic task environment (`legio.manager` module + class
   `Manager`, per `docs/AGENT_LIFECYCLE.md` §6.1). Additive to the Runtime and
   the agents. Reifies the docs' runtime-triangle slice: generic task submit /

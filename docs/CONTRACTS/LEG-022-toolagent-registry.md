@@ -15,8 +15,8 @@ advances the route by position (Schema 2).
 ## Scope
 - **In scope:** the ToolAgent execution path (parameters resolution → call →
   contract validation → route advance / deposit).
-- **Out of scope:** concurrency semaphores (LEG-082), runtime
-  tool-loading mechanics (decided at implementation, not the schema).
+- **Out of scope:** runtime tool-loading mechanics (decided at implementation,
+  not the schema).
 
 ## Contract & design
 - A `kind: tool` agent (Schema 1) declares `tool: <name>` (a Schema 3
