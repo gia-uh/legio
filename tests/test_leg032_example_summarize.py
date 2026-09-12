@@ -28,6 +28,7 @@ from legio.api import create_app
 from legio.flow import build_payload
 from legio.naming import result_queue_key
 from legio.patterns import load_patterns, resolve_composite_branches
+from legio.runtime import Runtime
 from legio.security import ClientTokenStore
 from legio.tools import AvailableToolsRegistry
 
@@ -197,7 +198,7 @@ def build_standing_agents(
 
 @pytest.mark.asyncio
 async def test_summarize_flows_linguistic_to_tool_over_rest_and_auth(
-    caplog: pytest.LogCaptureFixture, beaver_db: AsyncBeaverDB
+    caplog: pytest.LogCaptureFixture, beaver_db: AsyncBeaverDB, runtime: Runtime
 ) -> None:
     caplog.set_level(logging.INFO)
 
@@ -210,7 +211,7 @@ async def test_summarize_flows_linguistic_to_tool_over_rest_and_auth(
     # Create the authenticated app with pattern catalog
     store = ClientTokenStore()
     store.register("client-a", token="tok-a")
-    app = create_app(clients=store, pattern_catalog=pattern_catalog)
+    app = create_app(runtime=runtime, clients=store, pattern_catalog=pattern_catalog)
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -226,6 +227,8 @@ async def test_summarize_flows_linguistic_to_tool_over_rest_and_auth(
         )
         assert resp.status_code == 200, resp.text
         task_id = resp.json()["task_id"]
+        # The seed task deposits the root message on the node pump (§7.1).
+        await runtime.manager.run()
 
         # Drive the composite fan-out, the branch steps, and the fan-in to
         # completion (interleaved, polling only).

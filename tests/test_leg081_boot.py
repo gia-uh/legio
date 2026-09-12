@@ -556,6 +556,8 @@ async def test_boot_full_flow_over_rest_uses_configured_node_id(
         assert resp.status_code == 200, resp.text
         task_id = resp.json()["task_id"]
         assert task_id.startswith("boot@test:")
+        # The seed task deposits the root message on the node pump (§7.1).
+        await runtime.runtime.manager.run()
 
         for _ in range(4):
             await runtime.agents["summarize"].run()

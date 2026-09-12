@@ -41,6 +41,12 @@ nothing is locked, and the item is simply consumed once.
 No invented substrate layer exists: the agent speaks beaver natively,
 exactly as castor's Manager holds a ``db`` and calls ``db.dict``/``db.queue``
 directly.
+
+Execution meets lifecycle at **deposit time** (§12.5): before advancing into
+another class the agent reads that class's gate row (``db.dict("gates")``,
+written only by the Runtime) — a disabled class blocks every non-error deposit,
+surfaced as a visible ``error`` result on the level's ``end_of_level_queue``,
+while an **error-result deposit is exempt** and always proceeds (§12.5.5).
 """
 
 from __future__ import annotations
@@ -55,6 +61,7 @@ from pydantic import BaseModel, ValidationError
 from legio.flow import ExecutionRequestMessage, ExecutionResultMessage
 from legio.naming import queue_key
 from legio.patterns.compile import compile_schema
+from legio.registry import ActivityState
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +114,10 @@ class AgentBase:
         )
         self._queue = db.queue(queue_key(agent_id))
         self._monitor: Monitor | None = None
+        # The class gate (``db.dict("gates")``, §12.5) is written only by the
+        # Runtime and READ by any depositor — a submit or an internal task.
+        # This handle is read-only; the agent never writes a gate row.
+        self._gates = db.dict("gates")
 
     def set_hooks(self, *, monitor: Monitor | None = None) -> None:
         """Register the optional ``monitor`` observability hook."""
@@ -274,6 +285,18 @@ class AgentBase:
         task_id = request.task_id if request is not None else "?"
         await self._monitor(self._agent_id, task_id, event)
 
+    async def _class_gate_open(self, class_name: str) -> bool:
+        """Whether a deposit may enter a class's queue (§12.5).
+
+        A gate row ``{state: disabled}`` closes entry for every depositor —
+        submit and internal deposits alike (§12.5.1/§12.5.2). A missing row is
+        open. Only the Runtime writes gate rows; this is a plain read.
+        """
+        gate = await self._gates.fetch(class_name)
+        if gate is None:
+            return True
+        return gate.get("state") != ActivityState.DISABLED.value
+
     async def _route_outcome(
         self, request: ExecutionRequestMessage, payload: dict[str, Any]
     ) -> None:
@@ -287,11 +310,35 @@ class AgentBase:
         as an ``ExecutionResultMessage`` (the submit's final-result queue at
         ``level == 1``). The destination is never caller-owned — everything rides
         in the message (ARCHITECTURE §0/§3).
+
+        The §12.5 deposit-time gate handshake lives on the advance: a non-error
+        deposit into a disabled class is **blocked** — nothing enters a
+        non-enabled class (§12.5.1) — and surfaces as a visible ``error`` result
+        on this level's ``end_of_level_queue`` (§12.5.5), never a silent drop.
+        An **error-result deposit is exempt** and always proceeds (§12.5.5): a
+        closed class keeps draining and an error must reach its return path.
         """
         next_index = request.current_index + 1
         if next_index < len(request.level_route):
             next_step = request.level_route[next_index]
             next_class, next_input_as = next_step
+            if not await self._class_gate_open(next_class) and "error" not in payload:
+                logger.warning(
+                    "agent deposit blocked agent=%s task=%s to=%s gate=closed",
+                    self._agent_id,
+                    request.task_id,
+                    next_class,
+                )
+                await self._deposit_result(
+                    request,
+                    {
+                        "error": (
+                            f"deposit blocked: class {next_class!r} is disabled "
+                            f"(gate closed at advance, task={request.task_id})"
+                        )
+                    },
+                )
+                return
             logger.info(
                 "agent advance agent=%s task=%s level=%s to=%s index=%s",
                 self._agent_id,
@@ -328,6 +375,14 @@ class AgentBase:
                 request.level,
                 request.end_of_level_queue,
             )
+        await self._deposit_result(request, payload)
+
+    async def _deposit_result(
+        self, request: ExecutionRequestMessage, payload: dict[str, Any]
+    ) -> None:
+        """Close the level: deposit ``payload`` as an ``ExecutionResultMessage``
+        to ``request.end_of_level_queue`` (the result/gather queue — never a
+        class, so no gate handshake applies)."""
         result = ExecutionResultMessage(
             level_route=request.level_route,
             current_index=request.current_index,

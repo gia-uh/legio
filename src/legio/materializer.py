@@ -42,7 +42,6 @@ from legio.agents import AgentBase, CompositeAgent, LinguisticAgent, ToolAgent
 from legio.api import create_app
 from legio.config import LlmConfig, LoadedConfig
 from legio.errors import UnrecoverableError
-from legio.manager import connect_manager
 from legio.patterns import (
     AgentKind,
     AgentSpec,
@@ -52,6 +51,7 @@ from legio.patterns import (
     resolve_composite_branches,
 )
 from legio.patterns.compile import compile_schema
+from legio.runtime import Runtime
 from legio.security import ClientTokenStore
 from legio.tools import AvailableToolsRegistry
 
@@ -284,20 +284,46 @@ async def boot_node(
     Ordered, fail-fast (rule 9): the database connects, the three pattern dirs
     load *and validate* (any invalid pattern refuses the boot before any agent
     binds), the Schema 3 tools register, and only then the standing agents
-    materialize. ``db`` lets tests inject their manager connection; otherwise
-    the configured path is opened. The HTTP app and the authenticated client
-    store are built last.
+    materialize. ``db`` lets tests inject their database (the node's shared
+    substrate); otherwise the configured path is opened directly. The Runtime
+    (LEG-085), the HTTP app and the authenticated client store are built last.
     """
     cfg = loaded.config
 
     if db is None:
-        database = await connect_manager(
-            str(cfg.database.db_path), node_id=cfg.node.id
-        )
+        database = AsyncBeaverDB(str(cfg.database.db_path))
+        await database.connect()
+        owns_database = True
     else:
-        await connect_manager(node_id=cfg.node.id)
         database = db
+        owns_database = False
 
+    try:
+        return await _boot_on_database(
+            loaded,
+            database,
+            lingo_factory=lingo_factory,
+            composite_classes=composite_classes,
+            on_built=on_built,
+        )
+    except BaseException:
+        if owns_database:
+            logger.warning("node boot failed; closing connected db path=%s", cfg.database.db_path)
+            await database.close()
+        raise
+
+
+async def _boot_on_database(
+    loaded: LoadedConfig,
+    database: AsyncBeaverDB,
+    *,
+    lingo_factory: LingoFactory | None,
+    composite_classes: CompositeClasses | None,
+    on_built: Callable[[str], None] | None,
+) -> NodeRuntime:
+    """Boot the node over an already-connected substrate (fail-fast, rule 9)."""
+    cfg = loaded.config
+    engine = Runtime(database, node_id=cfg.node.id)
     pattern_dirs = {
         "tool": cfg.patterns.tool,
         "linguistic": cfg.patterns.linguistic,
@@ -323,6 +349,7 @@ async def boot_node(
         agents=agents,
         catalog=catalog,
         db=database,
+        runtime=engine,
         client_store=client_store,
     )
     logger.info(
@@ -337,18 +364,23 @@ async def boot_node(
 
 @dataclass(frozen=True)
 class NodeRuntime:
-    """A booted node: config, connected db, catalog, standing agents and app."""
+    """A booted node: config, connected db, catalog, standing agents, runtime and app."""
 
     config: LoadedConfig
     agents: Mapping[str, AgentBase]
     catalog: Catalog
     db: AsyncBeaverDB
+    runtime: Runtime
     client_store: ClientTokenStore | None = None
 
     @property
     def app(self) -> FastAPI:
-        """The HTTP app exposing the mini-manager over REST (LEG-025)."""
-        return create_app(clients=self.client_store, pattern_catalog=self.catalog)
+        """The HTTP app exposing the Runtime's submit/status over REST (LEG-025)."""
+        return create_app(
+            runtime=self.runtime,
+            clients=self.client_store,
+            pattern_catalog=self.catalog,
+        )
 
     @property
     def starting_agents(self) -> frozenset[str]:

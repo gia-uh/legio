@@ -31,6 +31,7 @@ from legio.api import create_app
 from legio.flow import build_payload
 from legio.naming import result_queue_key
 from legio.patterns import load_patterns, resolve_composite_branches
+from legio.runtime import Runtime
 from legio.security import ClientTokenStore
 from legio.tools import AvailableToolsRegistry
 
@@ -326,7 +327,7 @@ def build_multi_branch_agents(
 
 @pytest.mark.asyncio
 async def test_extract_and_summarize_single_branch_over_rest(
-    caplog: pytest.LogCaptureFixture, beaver_db: AsyncBeaverDB
+    caplog: pytest.LogCaptureFixture, beaver_db: AsyncBeaverDB, runtime: Runtime
 ) -> None:
     caplog.set_level(logging.INFO)
     comp, extract, assess = build_single_branch_agents(beaver_db)
@@ -334,7 +335,7 @@ async def test_extract_and_summarize_single_branch_over_rest(
 
     store = ClientTokenStore()
     store.register("client-a", token="tok-a")
-    app = create_app(clients=store, pattern_catalog=pattern_catalog)
+    app = create_app(runtime=runtime, clients=store, pattern_catalog=pattern_catalog)
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -349,6 +350,8 @@ async def test_extract_and_summarize_single_branch_over_rest(
         )
         assert resp.status_code == 200, resp.text
         task_id = resp.json()["task_id"]
+        # The seed task deposits the root message on the node pump (§7.1).
+        await runtime.manager.run()
 
         # The composite fans out its single branch; run the branch steps and
         # the composite's fan-in repeatedly to a standstill.
@@ -370,7 +373,7 @@ async def test_extract_and_summarize_single_branch_over_rest(
 
 @pytest.mark.asyncio
 async def test_distribute_summary_multi_branch_root_over_rest(
-    caplog: pytest.LogCaptureFixture, beaver_db: AsyncBeaverDB
+    caplog: pytest.LogCaptureFixture, beaver_db: AsyncBeaverDB, runtime: Runtime
 ) -> None:
     caplog.set_level(logging.INFO)
     comp, summ, cata = build_multi_branch_agents(beaver_db)
@@ -378,7 +381,7 @@ async def test_distribute_summary_multi_branch_root_over_rest(
 
     store = ClientTokenStore()
     store.register("client-a", token="tok-a")
-    app = create_app(clients=store, pattern_catalog=pattern_catalog)
+    app = create_app(runtime=runtime, clients=store, pattern_catalog=pattern_catalog)
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -393,6 +396,8 @@ async def test_distribute_summary_multi_branch_root_over_rest(
         )
         assert resp.status_code == 200, resp.text
         task_id = resp.json()["task_id"]
+        # The seed task deposits the root message on the node pump (§7.1).
+        await runtime.manager.run()
 
         # The submit delivered to the composite's own class (dumb delivery point).
         # Run the composite fan-out, then the branch agents and the composite's

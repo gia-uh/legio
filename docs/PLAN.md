@@ -274,6 +274,53 @@ are red for the yet-unimplemented surface.
 - **LEG-082** Graceful shutdown + concurrency semaphores (LLM, per-tool).
   - **Accept**: SIGTERM drains in-flight work before exit; per-tool
     concurrency cap is honored under load (test with a slow fake tool).
+- **LEG-083** Manager generic task environment (`legio.manager` module + class
+  `Manager`, per `docs/AGENT_LIFECYCLE.md` §6.1). Additive to the Runtime and
+  the agents. Reifies the docs' runtime-triangle slice: generic task submit /
+  status / pause / resume / cancel with cooperative control, in-process callable
+  registry, task-executor polling loop over `pending_tasks` (priority 0).
+  - **Accept**: any kind of task is managed (submit→run→success|failed, pause
+    non-terminal, cancel terminal `failed(cancelled)`); beaver footprint is
+    exactly `tasks` / `pending_tasks` / `control` with no result queue, no
+    scheduling queue and no `next_run_at`; task ids are `<node_id>:<uuid>` and
+    never `instance_id`; a task is not an agent cycle.
+- **LEG-084** Registry — the posterior mirror (§0/§4.8): the live catalog
+  (classes / instances / dependencies) and the runtime YAML cache (§4.7),
+  recorded after the facts occur; granular read queries with derived effective
+  state (§4.4). Operational, never initiating; chooses never.
+  - **Accept**: footprint exactly `catalog` / `instances` / `yaml_cache`;
+    record_class+cache_spec before record_instance (no orphan instances);
+    effective-state reads (stored enabled + ≥1 recorded instance); idempotent
+    record/remove, rule-9 errors on set/query of non-existent entries;
+    instance_id is the agent's identity, never a task_id.
+- **LEG-085** Runtime public face (`legio.runtime.Runtime`): the orchestrator
+  and translator between Manager task facts and Registry catalog facts (§0/§6).
+  Owns the class entry gate (§12.5); re-homes the business `submit`/`status`
+  under its node identity; implements the §5 lifecycle verbs (create / recreate
+  / enable / disable / destroy at both levels) as "action → Manager fact →
+  confirm by Manager read → Registry records, posteriori".
+  - **Accept**: footprint — the Runtime owns only `gates`; the Manager holds
+    `tasks`/`pending_tasks`/`control` (including the business `seed` task it
+    mints through `submit_task`), the Registry holds `catalog`/`instances`/
+    `yaml_cache`, all reached only through their public APIs (no layer writes
+    another layer's scope, pinning tests); every §6.1 translate-table line has
+    a test; terminal confirm on destroy (one-shot bring-up SUCCESS /
+    `failed(cancelled)` on a live cancel); the gate blocks submits into a
+    disabled class before anything is minted; business task ids are
+    `<node_id>:<uuid>`; the Runtime does not pump (the node drives the
+    executor; no `run()`/`register()`).
+- **LEG-086** Runtime boot catalog (§8, pools wiring of LEG-080):
+  `create_from_catalog` brings the initial catalog state up in a topological
+  order (leaves first) so dependents are created enabled (§4.2/§8 step 4),
+  resolving each class's pool as explicit `--pool N` (invocation) >
+  `per_pattern` > `per_kind` > `default` > 1 (§4.3); `0` borns the class
+  disabled; a dependency cycle is rejected before anything is recorded (§8
+  step 6); `spec_yamls` feed the runtime YAML cache (§8 step 3). Pool size is
+  intent — the catalog records the real count of instances brought up.
+  - **Accept**: dependents born enabled from a satisfying graph; pool resolution
+    precedence tested; cycle rejection leaves no recorded class; per-class
+    instances reflect the resolved pool; single-queue concurrent processing of
+    LEG-080 is the agent-loop interior, pending a maintainer decision.
 
 ### R-9 — Federation
 

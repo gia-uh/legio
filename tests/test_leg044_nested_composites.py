@@ -33,6 +33,7 @@ from legio.api import create_app
 from legio.flow import build_payload
 from legio.naming import result_queue_key
 from legio.patterns import load_patterns, resolve_composite_branches
+from legio.runtime import Runtime
 from legio.security import ClientTokenStore
 from legio.tools import AvailableToolsRegistry
 
@@ -273,7 +274,7 @@ def test_nested_branch_resolution() -> None:
 
 @pytest.mark.asyncio
 async def test_nested_composite_in_branch_over_rest(
-    caplog: pytest.LogCaptureFixture, beaver_db: AsyncBeaverDB
+    caplog: pytest.LogCaptureFixture, beaver_db: AsyncBeaverDB, runtime: Runtime
 ) -> None:
     caplog.set_level(logging.INFO)
     outer, inner, extract, assess, cata = build_nested_agents(beaver_db)
@@ -281,7 +282,7 @@ async def test_nested_composite_in_branch_over_rest(
 
     store = ClientTokenStore()
     store.register("client-a", token="tok-a")
-    app = create_app(clients=store, pattern_catalog=pattern_catalog)
+    app = create_app(runtime=runtime, clients=store, pattern_catalog=pattern_catalog)
     transport = httpx.ASGITransport(app=app)
 
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -296,6 +297,8 @@ async def test_nested_composite_in_branch_over_rest(
         )
         assert resp.status_code == 200, resp.text
         task_id = resp.json()["task_id"]
+        # The seed task deposits the root message on the node pump (§7.1).
+        await runtime.manager.run()
 
         # Outer fan-out, then drain: inner composite (recursion), leaves, joins,
         # and the nested composite returning to its exact parent. Idle runs are

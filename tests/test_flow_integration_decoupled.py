@@ -2,15 +2,16 @@
 
 Pins the corrected, decoupled model over the real modules:
 
-1. ``manager.submit`` (synthetic parent) deposits the first
-   ``ExecutionRequestMessage`` (root step, Schema 2 token with
-   ``end_of_level_queue`` = the task's final-result queue) into the starting
-   agent's queue (``db.queue("legio:queue:transform")``) and stages the payload.
+1. ``Runtime.submit`` (mounted on ``Manager.submit_task``, §7.1) stages the
+   task; its ``seed`` fact — dispatched by the node pump (``manager.run()``) —
+   deposits the first ``ExecutionRequestMessage`` (root step, Schema 2 token
+   with ``end_of_level_queue`` = the task's final-result queue) into the
+   starting agent's queue (``db.queue("legio:queue:transform")``).
 2. A ``ToolAgent`` runs its own loop and *polls* that queue — it never knows the
    client or the task, only the queue.
 3. The agent routes by position and, closing level 1, writes the result to
    ``end_of_level_queue`` (the task's final-result queue).
-4. ``status`` (peeking that queue) reflects COMPLETED with the output.
+4. ``Runtime.status`` (peeking that queue) reflects COMPLETED with the output.
 
 This validates the critical corrections so that LEG-025/026 are built on a
 faithful decoupled base, not an orchestrated one. No invented substrate layer;
@@ -24,8 +25,8 @@ from beaver import AsyncBeaverDB
 
 from legio.agents.tool_agent import ToolAgent
 from legio.flow import ExecutionResultMessage
-from legio.manager import status, submit
 from legio.naming import queue_key, result_queue_key
+from legio.runtime import Runtime
 from legio.tools import AvailableToolsRegistry
 
 
@@ -55,8 +56,13 @@ def build_transform_agent(db: AsyncBeaverDB) -> ToolAgent:
 @pytest.mark.asyncio
 async def test_submit_deposits_step_one_in_starting_agent_queue(
     beaver_db: AsyncBeaverDB,
+    runtime: Runtime,
 ) -> None:
-    task_id = await submit("client-a", (("transform", "transform"),), {"text": "hello"})
+    task_id = await runtime.submit(
+        "client-a", (("transform", "transform"),), {"text": "hello"}
+    )
+    # The seed task deposits the root message on the node pump (§7.1).
+    await runtime.manager.run()
 
     item = await beaver_db.queue(queue_key("transform")).get(block=False)
     assert item.data["task_id"] == task_id
@@ -70,14 +76,19 @@ async def test_submit_deposits_step_one_in_starting_agent_queue(
 @pytest.mark.asyncio
 async def test_decoupled_root_flow_writes_result_queue_and_status_completed(
     beaver_db: AsyncBeaverDB,
+    runtime: Runtime,
 ) -> None:
-    task_id = await submit("client-a", (("transform", "transform"),), {"text": "hello"})
+    task_id = await runtime.submit(
+        "client-a", (("transform", "transform"),), {"text": "hello"}
+    )
+    # The seed task deposits the root message on the node pump (§7.1).
+    await runtime.manager.run()
 
     agent = build_transform_agent(beaver_db)
     steps = await agent.run()
     assert steps == 1
 
-    entry = await status(task_id, "client-a")
+    entry = await runtime.status(task_id, "client-a")
     assert entry.state.value == "completed"
     assert entry.output == {"transform": {"transformed": "HELLOHELLO"}}
     assert entry.result_key == result_queue_key(task_id)

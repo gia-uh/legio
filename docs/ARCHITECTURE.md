@@ -35,8 +35,8 @@ Substrate         beaver native: dict(scope) · queue(name) · lock(name)
 ## 2. Substrate (beaver native, no invented wrapper)
 
 `beaver` is the single substrate (see `docs/DEPENDENCIES.md`). legio speaks it
-**directly** — there is no `legio.primitives` abstraction layer: a
-`db = await manager.db()` handle is passed around (agents, the Manager, the
+**directly** — there is no `legio.primitives` abstraction layer: the same
+`AsyncBeaverDB` handle is passed around (agents, the Manager, the
 Runtime and the Registry all take the same system db), and components address
 beaver primitives by name — `db.dict(scope)` / `db.queue(name)` / `db.lock(name)`.
 

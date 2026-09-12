@@ -19,6 +19,7 @@ from beaver import AsyncBeaverDB
 from legio.agents.tool_agent import ToolAgent
 from legio.api import create_app
 from legio.naming import queue_key, result_queue_key
+from legio.runtime import Runtime
 from legio.tools import AvailableToolsRegistry
 
 
@@ -47,10 +48,10 @@ def build_transform_agent(db: AsyncBeaverDB) -> ToolAgent:
 
 @pytest.mark.asyncio
 async def test_transform_e2e_over_rest_and_agent(
-    caplog: pytest.LogCaptureFixture, beaver_db: AsyncBeaverDB
+    caplog: pytest.LogCaptureFixture, beaver_db: AsyncBeaverDB, runtime: Runtime
 ) -> None:
     caplog.set_level(logging.INFO)
-    app = create_app()
+    app = create_app(runtime=runtime)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
         resp = await ac.post(
@@ -63,6 +64,8 @@ async def test_transform_e2e_over_rest_and_agent(
         )
         assert resp.status_code == 200, resp.text
         task_id = resp.json()["task_id"]
+        # The seed task deposits the root message on the node pump (§7.1).
+        await runtime.manager.run()
 
         agent = build_transform_agent(beaver_db)
         processed = await agent.run()

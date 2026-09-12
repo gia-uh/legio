@@ -378,3 +378,73 @@ async def test_output_contract_rejection_routes_error(beaver_db: AsyncBeaverDB) 
     result = ExecutionResultMessage.model_validate(result_item)
     assert "error" in result.payload
     assert "output contract rejected" in result.payload["error"]
+
+
+# --- §12.5 deposit-time gate handshake (audit finding #1 fix) ----------------
+
+
+@pytest.mark.asyncio
+async def test_advance_into_a_disabled_class_is_a_visible_blocked_deposit(
+    beaver_db: AsyncBeaverDB,
+) -> None:
+    """§12.5.1/§12.5.5: nothing enters a disabled class via the advancement rule.
+
+    A non-error deposit that must advance into a closed gate is NOT delivered to
+    that class; the step surfaces as a visible ``error`` result on its
+    ``end_of_level_queue`` — never a silent drop (§12.5.5 "a blocked deposit is
+    a visible failure").
+    """
+    await beaver_db.dict("gates").set("step", {"state": "disabled"})
+    first = build(ChainAgent, agent_id="main", db=beaver_db)
+    route = (("main", "main"), ("step", "step"))
+    await beaver_db.queue(queue_key("main")).put(
+        make_request(
+            task_id="T-blocked",
+            current_index=0,
+            route=route,
+            payload={"main": {"v": 1}},
+        ).model_dump(mode="json"),
+        priority=0.0,
+    )
+
+    assert await first.run() == 1
+
+    # nothing entered the disabled class
+    assert await pop_one(beaver_db, "step") is None
+    # the blocked deposit surfaced on the level's end_of_level_queue, visibly
+    result_item = await pop_one(beaver_db, "client")
+    assert result_item is not None
+    result = ExecutionResultMessage.model_validate(result_item)
+    assert "error" in result.payload
+    assert "disabled" in result.payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_error_result_deposit_is_exempt_from_a_closed_gate(
+    beaver_db: AsyncBeaverDB,
+) -> None:
+    """§12.5.5 exemption: an error-result deposit always proceeds past a gate.
+
+    A failing step's error payload must reach its return path even through a
+    closed class — the advance is NOT blocked, the error drains (policy A).
+    """
+    await beaver_db.dict("gates").set("step", {"state": "disabled"})
+    agent = build(FailingAgent, agent_id="main", db=beaver_db)
+    route = (("main", "main"), ("step", "step"))
+    await beaver_db.queue(queue_key("main")).put(
+        make_request(
+            task_id="T-exempt",
+            current_index=0,
+            route=route,
+            payload={"main": {"v": 1}},
+        ).model_dump(mode="json"),
+        priority=0.0,
+    )
+
+    assert await agent.run() == 1
+
+    # the error advanced into the closed class (exempt) — never stalled
+    step_item = await pop_one(beaver_db, "step")
+    assert step_item is not None
+    step_msg = ExecutionRequestMessage.model_validate(step_item)
+    assert "error" in step_msg.payload

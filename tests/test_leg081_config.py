@@ -26,6 +26,7 @@ import pytest
 from legio.config import (
     CliOverrides,
     ConfigError,
+    LifecycleParams,
     load,
     load_tools_file,
 )
@@ -74,6 +75,11 @@ def full_config_data() -> dict:
             },
         },
         "logging": {"level": "INFO", "file": "./data/legio.log"},
+        "lifecycle": {
+            "per_pattern": {"classifier": {"drain_timeout": 120.0}},
+            "per_kind": {"tool": {"drain_interval": 0.1}},
+            "default": {"drain_timeout": 60.0, "drain_interval": 0.02},
+        },
         "tools": {"config": "./tools.yaml"},
         "federation": {
             "peers": [
@@ -105,6 +111,12 @@ class TestDefaults:
         assert cfg.api.clients == {}
         assert cfg.logging.level == "INFO"
         assert cfg.logging.file is None
+        assert cfg.lifecycle.per_pattern == {}
+        assert cfg.lifecycle.per_kind == {}
+        assert cfg.lifecycle.default is None
+        params = cfg.lifecycle.resolve("any-class", per_kind=None)
+        assert params.drain_timeout == 300.0
+        assert params.drain_interval == 0.05
         assert cfg.tools.config == Path("./tools.yaml")
         assert cfg.federation.peers == []
         assert loaded.config_path is None
@@ -140,6 +152,12 @@ class TestFileLoading:
         assert cfg.api.clients["consumer-a"].agents == ["flow_a", "flow_b"]
         assert cfg.api.clients["consumer-b"].agents is None
         assert cfg.logging.file == Path("./data/legio.log")
+        assert cfg.lifecycle.per_pattern["classifier"].drain_timeout == 120.0
+        assert cfg.lifecycle.per_kind[AgentKind.TOOL].drain_interval == 0.1
+        default = cfg.lifecycle.default
+        assert default is not None
+        assert default.drain_timeout == 60.0
+        assert default.drain_interval == 0.02
         assert cfg.tools.config == Path("./tools.yaml")
         assert [peer.id for peer in cfg.federation.peers] == [
             "prod-b@host-02",
@@ -245,6 +263,63 @@ class TestPoolsFailFast:
 
     def test_unknown_kind_key_rejected(self, tmp_path):
         data = full_config_data() | {"pools": {"per_kind": {"foo": 2}}}
+        path = write_config(tmp_path, data)
+        with pytest.raises(ConfigError):
+            load(config_path=path, env={})
+
+
+class TestLifecycle:
+    def test_resolution_precedence_per_pattern_wins(self, tmp_path):
+        path = write_config(tmp_path, full_config_data())
+        cfg = load(config_path=path, env={}).config
+        # classifier: per_pattern timeout 120 over per_kind(tool) interval 0.1
+        params = cfg.lifecycle.resolve("classifier", per_kind=AgentKind.TOOL)
+        assert params.drain_timeout == 120.0
+        assert params.drain_interval == 0.1
+
+    def test_resolution_falls_back_by_kind_then_default(self, tmp_path):
+        path = write_config(tmp_path, full_config_data())
+        cfg = load(config_path=path, env={}).config
+        params = cfg.lifecycle.resolve("unlisted_tool", per_kind=AgentKind.TOOL)
+        assert params.drain_timeout == 60.0
+        assert params.drain_interval == 0.1
+        params = cfg.lifecycle.resolve("unlisted_composite", per_kind=None)
+        assert params.drain_timeout == 60.0
+        assert params.drain_interval == 0.02
+
+    def test_resolution_overlays_partial_levels(self, tmp_path):
+        path = write_config(tmp_path, {"lifecycle": {"per_kind": {"tool": {"drain_interval": 0.5}}}})
+        cfg = load(config_path=path, env={}).config
+        params = cfg.lifecycle.resolve("some-tool", per_kind=AgentKind.TOOL)
+        assert params.drain_timeout == 300.0
+        assert params.drain_interval == 0.5
+
+    def test_resolution_returns_builtin_when_nothing_matches(self, tmp_path):
+        path = write_config(tmp_path, {"lifecycle": {"per_kind": {"tool": {}}}})
+        cfg = load(config_path=path, env={}).config
+        params = cfg.lifecycle.resolve("unlisted_composite", per_kind=None)
+        assert params.drain_timeout == 300.0
+        assert params.drain_interval == 0.05
+
+    def test_empty_per_pattern_params_are_builtin(self):
+        params = LifecycleParams()
+        assert params.drain_timeout is None
+        assert params.drain_interval is None
+
+    def test_non_positive_budgets_rejected(self, tmp_path):
+        data = {"lifecycle": {"default": {"drain_timeout": 0}}}
+        path = write_config(tmp_path, data)
+        with pytest.raises(ConfigError):
+            load(config_path=path, env={})
+
+    def test_non_positive_interval_rejected(self, tmp_path):
+        data = {"lifecycle": {"per_kind": {"tool": {"drain_interval": -1}}}}
+        path = write_config(tmp_path, data)
+        with pytest.raises(ConfigError):
+            load(config_path=path, env={})
+
+    def test_unknown_kind_key_rejected(self, tmp_path):
+        data = {"lifecycle": {"per_kind": {"foo": {"drain_timeout": 10}}}}
         path = write_config(tmp_path, data)
         with pytest.raises(ConfigError):
             load(config_path=path, env={})

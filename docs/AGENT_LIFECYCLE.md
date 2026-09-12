@@ -992,7 +992,9 @@ its posterior mirror; the `Runtime` is the decision point between them. An
 Manager task that is the fact keeps a separate `task_id` (§4.8).
 
 **Invariant — no orphaned jobs.** A business task is
-always traceable in the Runtime registries (`tasks` / the Manager's task dict):
+always traceable in the Manager's `tasks` — the business record **is** the
+Manager's `seed` task (ARCHITECTURE §7), never a
+separate layer-private record:
 it either reaches a
 terminal state or stays visibly pending. The only deliberate-loss path is
 `destroy_class --mode now`, which is explicit and operator-chosen (§4.6). There
@@ -1023,11 +1025,17 @@ lifecycle facts (§5, §12.2) — the Manager is not "the thing that runs agent
 loops".
 
 The **client submit lives at the Runtime** (the public face knows the domain's
-business tasks); the Runtime "hace el submit task del manager": it calls the
-Manager's `submit_task` to manage the tasks it handles — the shape of the
-reference project: its public routes receive the client request and call
-`submit(...)` on the task environment, which stays blind to what the task
-means. Task id is the Manager's own
+business tasks): the Runtime checks the entry gate, mints the business
+`task_id`, builds the root `FlowToken` and — exactly like its lifecycle facts —
+calls `Manager.submit_task(SEED_TASK, task_id=..., client_id=..., token=...,
+payload=...)` (LEG-083, extra-official kwargs). The business record **is** the
+Manager's `seed` task; the in-process `seed` callable (registered by the Runtime
+at construction) validates the root token and deposits the root message into
+the first class's queue. The Manager is blind to what a `seed` means — it
+manages it like any task, and it is reached **only through its public API**
+(rule 7; ARCHITECTURE §7). There is no layer-private business scope (no
+`business_tasks`): the Runtime's only beaver scope is `gates`. Task id is the
+Manager's own
 (`<node_id>:<uuid>`, `legio.naming`, LEG-016); it is **not** the catalog's
 `instance_id`.
 
@@ -1038,6 +1046,11 @@ means. Task id is the Manager's own
 | dict | `tasks` | task records (`task_id` → `TaskRecord`) |
 | queue | `pending_tasks` | task ids due now (priority 0) |
 | dict | `control` | cooperative control per task: `run \| pause \| cancel` (TTL) |
+
+The Manager-owned scopes carry **only generic task records** (and the task ids /
+control facts that belong to them) — including the business `seed` task, created
+**through** `submit_task`, never by another layer opening `tasks`. The Runtime
+owns only the `gates` scope (§12.5); layers never write one another's scopes.
 
 Result/error travel **inside the task record** — consumers poll
 `status(task_id)`. There is no result queue: polling-only (rule 8). There is no
@@ -1051,6 +1064,7 @@ the record, never a scheduler (rule 8).
 register(name, callable)                    # in-process: name → async fn | async generator
 async submit_task(name, *args, **kwargs) -> task_id
 async status(task_id) -> TaskRecord | None
+async control_mode(task_id) -> str | None   # stored control instruction: run|pause|cancel|None
 async pause(task_id) / resume(task_id)      # disable ≠ destroy: non-terminal suspension
 async cancel(task_id)                       # terminal, cooperative
 ```
@@ -1058,6 +1072,11 @@ async cancel(task_id)                       # terminal, cooperative
 - The **callable registry is in-process code**, never a registry: it is the task
   executor's execution scope; state — the authority of what
   happened — is always a (persistent) registry on beaver.
+- `control_mode` is the public read of the **cooperative control** dict (the
+  instruction `pause`/`resume`/`cancel` the executor honors at each yield). The
+  task record itself has no `paused` status (§6.1); the control instruction is
+  the confirmable fact for the lifecycle verbs' by-reading confirm (§5.5/§5.6).
+  `None` means no explicit instruction (equivalent to `run`).
 - The Runtime and the agents **register their callables** with the Manager; to
   the Manager each is just a callable — it never sees what is inside. The
   callable is **not** the agent: the catalog records the agent by its own

@@ -229,6 +229,43 @@ async def test_composite_two_same_class_branches_get_distinct_branch_ids(
 
 
 @pytest.mark.asyncio
+async def test_composite_does_not_fan_out_a_branch_into_a_closed_gate(
+    beaver_db: AsyncBeaverDB,
+) -> None:
+    """§12.5.1/§12.5.5: a branch deposit into a disabled class is blocked.
+
+    The blocked branch is NOT delivered (nothing enters a non-enabled class via
+    fan-in); its join slot records a visible ``error`` result (rule 9) so the
+    fan-in still completes and the composite surfaces the failure — never a
+    silent drop and never a corrupted join.
+    """
+    await beaver_db.dict("gates").set("b2", {"state": "disabled"})
+    comp = build_composite(db=beaver_db, branches=[("b1", "b1"), ("b2", "b2")])
+    request = composite_request(
+        task_id="P-gate",
+        payload={"main": {"seed": 1}},
+        route=(("main", "main"), ("comp", "comp")),
+        current_index=1,
+        end_of_level_queue="result:P-gate",
+    )
+    await beaver_db.queue(queue_key("comp")).put(request.model_dump(mode="json"), priority=0.0)
+    assert await comp.process_next() is True
+
+    # the open branch was delivered; the closed one was not
+    assert await pop_one(beaver_db, "b1") is not None
+    assert await pop_one(beaver_db, "b2") is None
+
+    # the blocked branch's slot carries a visible error — the fan-in sees it
+    state = await beaver_db.dict("state:composite:comp").fetch("P-gate")
+    assert state is not None
+    slots = state["slots"]
+    assert len(slots) == 2
+    errored = [slot["result"] for slot in slots.values() if slot["result"] is not None]
+    assert len(errored) == 1
+    assert "disabled" in errored[0]["error"]
+
+
+@pytest.mark.asyncio
 async def test_composite_does_not_advance_until_all_branches_return(
     beaver_db: AsyncBeaverDB,
 ) -> None:

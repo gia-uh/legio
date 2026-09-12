@@ -16,6 +16,7 @@ from beaver import AsyncBeaverDB
 
 from legio.agents.tool_agent import ToolAgent
 from legio.api import create_app
+from legio.runtime import Runtime
 from legio.security import ClientTokenStore
 from legio.tools import AvailableToolsRegistry
 
@@ -34,8 +35,8 @@ def store() -> ClientTokenStore:
 
 
 @pytest.fixture
-def app(store: ClientTokenStore, beaver_db: AsyncBeaverDB) -> FastAPI:
-    return create_app(clients=store)
+def app(store: ClientTokenStore, runtime: Runtime) -> FastAPI:
+    return create_app(runtime=runtime, clients=store)
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -64,7 +65,7 @@ async def test_submit_with_valid_token_works(ac: httpx.AsyncClient) -> None:
         headers=bearer("tok-a"),
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["task_id"].startswith("local:")
+    assert resp.json()["task_id"].startswith("toplevel@test:")
 
 
 @pytest.mark.asyncio
@@ -192,7 +193,7 @@ def build_upper_agent(db: AsyncBeaverDB) -> ToolAgent:
 
 @pytest.mark.asyncio
 async def test_leg026_example_runs_behind_auth(
-    ac: httpx.AsyncClient, beaver_db: AsyncBeaverDB
+    ac: httpx.AsyncClient, beaver_db: AsyncBeaverDB, runtime: Runtime
 ) -> None:
     agent = build_upper_agent(beaver_db)
 
@@ -203,6 +204,8 @@ async def test_leg026_example_runs_behind_auth(
     )
     assert created.status_code == 200, created.text
     task_id = created.json()["task_id"]
+    # The seed task deposits the root message on the node pump (§7.1).
+    await runtime.manager.run()
 
     await agent.run()
 

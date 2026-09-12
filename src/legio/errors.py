@@ -61,6 +61,12 @@ class ConfigError(UnrecoverableError):
     """
 
 
+class UnknownAgentError(UnrecoverableError):
+    """A starting agent is unknown to the served pattern catalog, or not
+    entry-capable (``main``) — an invalid request the node must refuse before
+    minting anything (LEG-025)."""
+
+
 def recoverable(error: LegioError) -> bool:
     """Whether the error type is recoverable (a transient failure)."""
     return isinstance(error, RecoverableError)
@@ -72,6 +78,7 @@ __all__ = [
     "LegioError",
     "RecoverableError",
     "TemplateResolutionError",
+    "UnknownAgentError",
     "UnrecoverableError",
     "code",
     "recoverable",

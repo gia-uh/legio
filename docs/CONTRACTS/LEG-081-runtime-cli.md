@@ -117,19 +117,27 @@ documented config into a running, observable node:
 1. `legio.config.load()` resolves the file + env + CLI overrides (Session 58).
 2. `boot_node(loaded, *, db=None, lingo_factory=None, composite_classes=None,
    on_built=None)`:
-   - connects `manager.connect_manager(db_path=..., node_id=cfg.node.id)` so
-     every scheduled task carries the configured node id as its origin;
+   - connects the database (opens the configured path unless `db` is injected)
+     and builds a `Runtime(db, node_id=cfg.node.id)` so every scheduled task
+     carries the configured node id as its origin;
    - loads the three pattern dirs (`load_pattern_dirs`, recursive `*.yaml`)
      into one Catalog and **validates before anything binds**: a missing dir
      or an invalid pattern refuses the boot (rule 9);
    - loads the independent Schema 3 `tools.yaml` into the tool registry;
+     **fail-fast by design**: a `tools.yaml` that cannot be read is a
+     `ConfigError` that refuses the whole boot, even for a catalog declaring no
+     tools — unlike the general config's tolerant built-in default, the tools
+     pointer is never silently empty (rule 9; tools are the node's declared
+     capability surface). An explicitly empty `available_tools: {}` file is the
+     correct way to boot a tools-free node;
    - materializes the standing agent map in DAG order — tool/linguistic atoms
      first, composites after, from the resolved LEG-070 branches (tooling uses
      `legio.patterns.compile.compile_schema` for the linguistic `output_model`);
    - builds the client store from `LEGIO_CLIENT_TOKEN_<NAME>` only
      (token-less clients are skipped with a warning — LEG-017 §2);
    - returns a `NodeRuntime` exposing `config`, `agents`, `catalog`, `db`,
-     `client_store`, `app` (`create_app(clients=..., pattern_catalog=...)`)
+     `runtime` (the `Runtime`), `client_store`, `app`
+     (`create_app(runtime=..., clients=..., pattern_catalog=...)`)
      and `starting_agents` (the `main: true` specs the supervisor polls).
    - Resource seams are injected (rule 7): `db`, the tool registry,
      `lingo_factory` (default = legio builds `lingo.LLM(model, base_url, api_key)`

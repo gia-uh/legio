@@ -119,6 +119,75 @@ class PoolsConfig(BaseModel):
         return self.default
 
 
+_BUILTIN_DRAIN_TIMEOUT = 300.0
+_BUILTIN_DRAIN_INTERVAL = 0.05
+
+
+class LifecycleParams(BaseModel):
+    """One level of clock-wait budgets for the runtime's bounded waits (LEG-085).
+
+    ``drain_timeout`` / ``drain_interval`` are the *only* scheduled waits in the
+    engine (rule 8 exceptions, §5.8/§10.2): the queue-drain poll of
+    ``destroy_class`` and the read-confirm polls of the lifecycle verbs share the
+    same budgets (same safety valve). Absent (``None``) fields fall back to the
+    built-in or the next lower config level; both must be ``> 0`` when set.
+    """
+
+    drain_timeout: float | None = None
+    drain_interval: float | None = None
+
+    @model_validator(mode="after")
+    def _validate_budgets(self) -> LifecycleParams:
+        for name, value in (
+            ("drain_timeout", self.drain_timeout),
+            ("drain_interval", self.drain_interval),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"lifecycle.{name} must be > 0")
+        return self
+
+
+class LifecycleConfig(BaseModel):
+    """Bounded clock-wait budgets per pattern (LEG-085) — the ``lifecycle`` section.
+
+    Resolution per class at verb time (highest wins, partial-field overlay):
+    ``per_pattern`` > ``per_kind`` > ``default`` > built-in
+    (``drain_timeout`` 300.0 / ``drain_interval`` 0.05). ``per_kind`` admits
+    only the Schema 1 KINDS (``tool | linguistic``); ``type: composite`` has no
+    kind so it resolves via ``per_pattern`` or ``default``. Each level overlays
+    only its non-``None`` fields over the level below, so a level may tune a
+    single budget while inheriting the other.
+    """
+
+    per_pattern: dict[str, LifecycleParams] = Field(default_factory=dict)
+    per_kind: dict[AgentKind, LifecycleParams] = Field(default_factory=dict)
+    default: LifecycleParams | None = None
+
+    def resolve(self, pattern_name: str, *, per_kind: AgentKind | None) -> LifecycleParams:
+        """Resolve the budgets for a class (built-in < default < per_kind < per_pattern)."""
+        params = LifecycleParams(
+            drain_timeout=_BUILTIN_DRAIN_TIMEOUT,
+            drain_interval=_BUILTIN_DRAIN_INTERVAL,
+        )
+        if self.default is not None:
+            params = _overlay_lifecycle(params, self.default)
+        if per_kind is not None and per_kind in self.per_kind:
+            params = _overlay_lifecycle(params, self.per_kind[per_kind])
+        if pattern_name in self.per_pattern:
+            params = _overlay_lifecycle(params, self.per_pattern[pattern_name])
+        return params
+
+
+def _overlay_lifecycle(base: LifecycleParams, layer: LifecycleParams) -> LifecycleParams:
+    """Overlay the non-``None`` fields of ``layer`` onto ``base``."""
+    return LifecycleParams(
+        drain_timeout=layer.drain_timeout if layer.drain_timeout is not None else base.drain_timeout,
+        drain_interval=(
+            layer.drain_interval if layer.drain_interval is not None else base.drain_interval
+        ),
+    )
+
+
 class LlmConfig(BaseModel):
     """`services.llm` — the real `lingo.LLM` constructor args (base_url/model)."""
 
@@ -215,6 +284,7 @@ class LegioConfig(BaseModel):
     services: ServicesConfig = Field(default_factory=ServicesConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    lifecycle: LifecycleConfig = Field(default_factory=LifecycleConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     federation: FederationConfig = Field(default_factory=FederationConfig)
 
@@ -439,6 +509,8 @@ __all__ = [
     "EnvSecrets",
     "FederationConfig",
     "LegioConfig",
+    "LifecycleConfig",
+    "LifecycleParams",
     "LlmConfig",
     "LoadedConfig",
     "LoggingConfig",

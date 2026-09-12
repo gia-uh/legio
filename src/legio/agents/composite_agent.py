@@ -50,7 +50,10 @@ partitioned by queue, never by message type, so there is no dispatch on
 Nothing waits and nothing is locked (rule 8): branches run as soon as their
 deposit lands on their queue; the join is bookkeeping, not polling-blocking;
 the collection cycle is **gated by pending bookkeeping**, never a blind poll.
-Errors are never silent (rule 9).
+Each branch deposit reads the target class's gate (§12.5): a disabled class
+blocks the branch deposit at fan-out (§12.5.5 — the slot records a visible
+``error`` result so the fan-in still completes and the composite surfaces the
+failure, never a silent drop). Errors are never silent (rule 9).
 """
 
 from __future__ import annotations
@@ -198,6 +201,24 @@ class CompositeAgent(AgentBase):
         for index, branch_route in enumerate(self._branches):
             branch_slot = str(uuid.uuid4())
             first_class, first_input_as = branch_route[0]
+            if not await self._class_gate_open(first_class):
+                logger.warning(
+                    "composite branch blocked agent=%s task=%s branch=%s first=%s gate=closed",
+                    self._agent_id,
+                    request.task_id,
+                    index,
+                    first_class,
+                )
+                slots[branch_slot] = {
+                    "result": {
+                        "error": (
+                            f"deposit blocked: branch class {first_class!r} is disabled "
+                            f"(gate closed at fan-out, task={request.task_id})"
+                        )
+                    },
+                    "route": branch_route,
+                }
+                continue
             child = ExecutionRequestMessage(
                 level_route=branch_route,
                 current_index=0,
