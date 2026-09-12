@@ -128,17 +128,16 @@ class AgentBase:
         """The agent's stable identity (its queue/namespace name)."""
         return self._agent_id
 
-    async def run(self, *, max_steps: int = 100) -> int:
-        """Poll the queue until idle or ``max_steps`` reached; return steps done.
+    async def run(self) -> int:
+        """Poll the queue until idle; return the number of steps processed.
 
-        Bounded so a misbehaving step can never starve the agent into an
-        infinite busy loop.
+        Death-march steps are structurally impossible (LEG-070 rejects
+        cycles at load; a route is forward-only, level + 1 per hop), so the
+        loop's only termination is the empty queue — no arbitrary cap hides
+        pending work (rule 9). Idle returns 0 without sleeping (rule 8).
         """
         steps = 0
-        while steps < max_steps:
-            handled = await self.process_next()
-            if not handled:
-                break
+        while await self.process_next():
             steps += 1
         return steps
 

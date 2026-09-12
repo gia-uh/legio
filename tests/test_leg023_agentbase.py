@@ -228,6 +228,24 @@ async def test_idle_queue_returns_zero_without_busy_loop(beaver_db: AsyncBeaverD
 
 
 @pytest.mark.asyncio
+async def test_run_drains_every_queued_item_no_arbitrary_cap(beaver_db: AsyncBeaverDB) -> None:
+    """LEG-023: ``run()`` drains the queue to empty in one call.
+
+    The only termination is the idle queue (LEG-070 cycles are rejected at
+    load, routes are forward-only) — no hardcoded step cap may ever leave
+    pending work behind silently (rule 9).
+    """
+    queue = beaver_db.queue(queue_key("main"))
+    for suffix in ("T-a", "T-b", "T-c"):
+        await queue.put(make_request(task_id=suffix).model_dump(mode="json"), priority=0.0)
+
+    agent = build(FinalAgent, agent_id="main", db=beaver_db)
+
+    assert await agent.run() == 3
+    assert await queue.count() == 0
+
+
+@pytest.mark.asyncio
 async def test_root_task_deposits_result_to_end_of_level_queue(
     beaver_db: AsyncBeaverDB,
 ) -> None:
