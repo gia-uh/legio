@@ -21,7 +21,7 @@ seams (tool registry, lingo client factory, concrete composite classes).
   pattern's model — the engine never guesses it). A composite without a
   provided class is a visible boot error naming the composite.
 - Agents are built in DAG order (atomics first, composites after), reporting
-  each through the optional ``on_built`` supervisor hook.
+  each through the optional ``on_built`` progress hook.
 
 `boot_node` then builds the HTTP app and the authenticated client store
 (LEG-017) from `api.clients` + `LEGIO_CLIENT_TOKEN_*` secrets; a configured
@@ -278,7 +278,7 @@ async def boot_node(
     lingo_factory: LingoFactory | None = None,
     composite_classes: CompositeClasses | None = None,
     on_built: Callable[[str], None] | None = None,
-) -> NodeRuntime:
+) -> BootedNode:
     """Boot a node from its LoadedConfig: connect → load → validate → materialize.
 
     Ordered, fail-fast (rule 9): the database connects, the three pattern dirs
@@ -320,7 +320,7 @@ async def _boot_on_database(
     lingo_factory: LingoFactory | None,
     composite_classes: CompositeClasses | None,
     on_built: Callable[[str], None] | None,
-) -> NodeRuntime:
+) -> BootedNode:
     """Boot the node over an already-connected substrate (fail-fast, rule 9)."""
     cfg = loaded.config
     engine = Runtime(database, node_id=cfg.node.id)
@@ -344,7 +344,7 @@ async def _boot_on_database(
     )
 
     client_store = _build_client_store(loaded)
-    runtime = NodeRuntime(
+    booted = BootedNode(
         config=loaded,
         agents=agents,
         catalog=catalog,
@@ -357,13 +357,13 @@ async def _boot_on_database(
         database,
         cfg.node.id,
         len(agents),
-        ",".join(sorted(runtime.starting_agents)),
+        ",".join(sorted(booted.starting_agents)),
     )
-    return runtime
+    return booted
 
 
 @dataclass(frozen=True)
-class NodeRuntime:
+class BootedNode:
     """A booted node: config, connected db, catalog, standing agents, runtime and app."""
 
     config: LoadedConfig
@@ -389,7 +389,7 @@ class NodeRuntime:
 
 
 __all__ = [
-    "NodeRuntime",
+    "BootedNode",
     "available_tools_from_config",
     "boot_node",
     "default_lingo_factory",

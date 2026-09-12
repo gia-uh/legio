@@ -28,7 +28,7 @@ from legio.agents import CompositeAgent, LinguisticAgent, ToolAgent
 from legio.config import CliOverrides, load
 from legio.errors import ConfigError, UnrecoverableError
 from legio.flow import build_payload
-from legio.materializer import LingoFactory, NodeRuntime, boot_node, materialize_agents
+from legio.materializer import BootedNode, LingoFactory, boot_node, materialize_agents
 from legio.naming import result_queue_key
 from legio.patterns import Catalog, load_patterns
 from legio.security import ClientTokenStore
@@ -404,7 +404,7 @@ async def test_boot_loads_three_pattern_dirs_and_materializes(
         composite_classes={"summarize": GatherComposite},
     )
 
-    assert isinstance(runtime, NodeRuntime)
+    assert isinstance(runtime, BootedNode)
     assert runtime.config is loaded
     assert set(runtime.agents) == {"summ", "assess", "summarize"}
     assert isinstance(runtime.agents["summ"], LinguisticAgent)

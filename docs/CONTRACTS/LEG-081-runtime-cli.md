@@ -135,7 +135,7 @@ documented config into a running, observable node:
      `legio.patterns.compile.compile_schema` for the linguistic `output_model`);
    - builds the client store from `LEGIO_CLIENT_TOKEN_<NAME>` only
      (token-less clients are skipped with a warning — LEG-017 §2);
-   - returns a `NodeRuntime` exposing `config`, `agents`, `catalog`, `db`,
+   - returns a `BootedNode` exposing `config`, `agents`, `catalog`, `db`,
      `runtime` (the `Runtime`), `client_store`, `app`
      (`create_app(runtime=..., clients=..., pattern_catalog=...)`)
      and `starting_agents` (the `main: true` specs the supervisor polls).

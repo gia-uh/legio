@@ -50,14 +50,14 @@ the domain (rule 7): it never inspects what a `seed` record means.
   and the bring-up callable's real interior (the boot's job, step 4); the boot
   wiring that gives the **node** its executor and re-targets `api.py`/CLI to it
   (LEG-081/LEG-080); the DAG/routing/delivery (agent concern); the
-  `materializer.NodeRuntime` bag (booted node; it will adopt a `Runtime`
+  `materializer.BootedNode` bag (booted node; it will adopt a `Runtime`
   reference at step 4 — relationship documented below).
 
 ## Contract & design
 
-### The seam: `legio.runtime.Runtime` vs `materializer.NodeRuntime`
+### The seam: `legio.runtime.Runtime` vs `materializer.BootedNode`
 
-`materializer.NodeRuntime` (`src/legio/materializer.py`) is the **booted-node
+`materializer.BootedNode` (`src/legio/materializer.py`) is the **booted-node
 bag** (config, connected db, catalog, standing agents, `app`) produced by
 `boot_node` (LEG-081). `legio.runtime.Runtime` is the **orchestrating public
 face** of §0/§6. They are distinct layers: the Runtime decides and orchestrates;

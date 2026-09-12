@@ -39,7 +39,7 @@ of LEG-085; no existing surface changes.
 - **Out of scope:** the **agent-loop interior** — the real bring-up callable
   that starts the materialized agents' `run()` loops and the "n agents on the
   same queue process n items concurrently" acceptance of LEG-080. That is the
-  boot wiring between `materializer.NodeRuntime` and the Runtime/Manager/
+  boot wiring between `materializer.BootedNode` and the Runtime/Manager/
   Registry triangle, and the interior of instance execution — left to a
   maintainer decision (open item). This slice proves the *create-side* of pools:
   the resolved count of instances actually brought up and recorded (= the real
@@ -131,7 +131,7 @@ only when it has it.
   materialized agents' `run()` loops so a pool of n instances drives the same
   class queue concurrently (the LEG-080 accept "n agents process n items"). The
   default parked-gate vehicle of LEG-085 keeps instances parked; wiring
-  `materializer.NodeRuntime` (agents) into the Runtime/Manager/Registry will
+  `materializer.BootedNode` (agents) into the Runtime/Manager/Registry will
   replace it. History: the R-8 plan calls this the remaining "boot re-audit".
 - Whether `boot_node` itself should drive `create_from_catalog` from its loaded
   `Catalog`+`PoolsConfig`, or the decision stays higher (the caller/CLI), needs
