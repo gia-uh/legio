@@ -490,6 +490,37 @@ async def test_destroy_instance_cancels_and_confirms_terminal(beaver_db) -> None
 
 
 @pytest.mark.asyncio
+async def test_destroy_after_reboot_is_pure_registry_fact(beaver_db) -> None:
+    """§5.7 (open item #4, closed): a destroy whose in-process vehicle map is
+    gone (reboot) is a **pure Registry fact removal**.
+
+    The Manager holds no vehicle for a legacy row after reboot (callables live
+    in the Runtime object), so there is no cross-layer instance↔task identity
+    to reach (rule 13) — and nothing to cancel. The instance is removed, the
+    last instance disables the class, and no ``RecoverableError`` is raised.
+    """
+    boot = _runtime(beaver_db)
+    pump = _start_executor(boot)
+    name, spec = _load_atomic_spec("reboot-class")
+    try:
+        await boot.create_class(spec, spec_yaml=_atomic_yaml("reboot-class"), pool=0)
+        await boot.create_instance(name, count=1)
+        assert await boot.get_instance(name, "reboot-class-1") is not None
+        assert [i.instance_id for i in await boot.list_instances(name)] == ["reboot-class-1"]
+    finally:
+        await _teardown(beaver_db, boot, [], pump=pump)
+
+    rebooted = _runtime(beaver_db)
+    assert (name, "reboot-class-1") not in rebooted._instance_tasks
+
+    await rebooted.destroy_instance(name, "reboot-class-1")
+
+    assert await rebooted.get_instance(name, "reboot-class-1") is None
+    assert await rebooted.class_state(name) == ActivityState.DISABLED
+    assert name in [c.name for c in await rebooted.list_classes()]
+
+
+@pytest.mark.asyncio
 async def test_destroy_last_instance_leaves_class_disabled_but_existing(
     beaver_db,
 ) -> None:

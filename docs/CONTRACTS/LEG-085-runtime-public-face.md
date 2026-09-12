@@ -305,9 +305,12 @@ enabled): `manager.pause(task_id)` → confirm record alive + control `pause` �
    read reports it disabled even across the two records). If the class is
    otherwise already disabled this is still recorded once.
 5. A `destroy_instance` whose `_instance_tasks` has no entry for the instance
-   (transient map lost on restart) raises a **visible** `RecoverableError` — the
-   Runtime cannot know the task id; re-boot re-binds tasks (open item for step
-   4).
+   (transient map lost on restart) is a **pure Registry fact removal**: the
+   Manager holds no vehicle to cancel (callables live in the Runtime object),
+   so there is no cross-layer instance↔task identity to reach and nothing to
+   cancel (rule 13) — the cancel/confirm step is skipped and the row is removed
+   (log line `no_vehicle`, never a `RecoverableError`; a legacy row is a
+   Registry fact, not a vehicle).
 
 **`destroy_class(name, *, mode: Literal["drain", "now"] = "drain")`**
 (§4.6/§5.8, precondition: exists, always in hot, irreversible):
@@ -518,7 +521,8 @@ denial. No consumer domain (rule 7).
 2. **Bring-up interior / executor ownership.** The Runtime ships a one-shot
    default bring-up; real agent materialization, a persistent node executor,
    and re-binding `_instance_tasks` after restart belong to the boot (step 4);
-   `destroy_instance` of a map-less instance is a visible error here.
+   `destroy_instance` of a map-less instance is a pure Registry fact removal
+   (§5.7 pt. 5 — no error, no cross-layer identity).
 3. **`gates` row absence = open** (§12.5.3) — a destroyed class's missing row
    blocks submissions; a created-but-not-yet-gated class is open until
    `create_class` writes its birth row. Ordering chosen so the row always exists

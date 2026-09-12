@@ -698,7 +698,13 @@ class Runtime:
     async def destroy_instance(self, name: str, instance_id: str) -> None:
         """Destroy one instance (§5.7): cancel its vehicle (cooperative, terminal),
         confirm a terminal state, then remove the instance. Destroying the last
-        instance leaves the class disabled but existing."""
+        instance leaves the class disabled but existing.
+
+        The vehicle is only knowable in-process (§4.8); a destroy on a legacy
+        row with no in-process task (reboot) is a pure Registry fact removal —
+        the Manager holds no vehicle to cancel, so no cross-layer identity is
+        reached (rule 13).
+        """
         instance = await self.registry.get_instance(name, instance_id)
         if instance is None:
             logger.warning(
@@ -706,27 +712,24 @@ class Runtime:
             )
             return
         task_id = self._instance_tasks.get((name, instance_id))
-        if task_id is None:
-            logger.warning(
-                "runtime destroy_instance unreachable class=%s instance=%s (no knowable task); "
-                "re-boot re-binds",
+        if task_id is not None:
+            await self.manager.cancel(task_id)
+            await self._await_observable_state(
+                task_id,
+                lambda record: record.status == TaskStatus.SUCCESS
+                or (record.status == TaskStatus.FAILED and record.error == "cancelled"),
+                what=f"destroy instance class={name} instance={instance_id}",
+                class_name=name,
+            )
+            self._instance_tasks.pop((name, instance_id), None)
+        else:
+            logger.info(
+                "runtime destroy_instance no_vehicle class=%s instance=%s "
+                "(no in-process task; cancel is a structural no-op — legacy fact)",
                 name,
                 instance_id,
             )
-            raise RecoverableError(
-                f"no knowable bring-up task for class={name} instance={instance_id}; "
-                "re-boot will rebind it (the vehicle is only knowable in-process)"
-            )
-        await self.manager.cancel(task_id)
-        await self._await_observable_state(
-            task_id,
-            lambda record: record.status == TaskStatus.SUCCESS
-            or (record.status == TaskStatus.FAILED and record.error == "cancelled"),
-            what=f"destroy instance class={name} instance={instance_id}",
-            class_name=name,
-        )
         await self.registry.remove_instance(name, instance_id)
-        self._instance_tasks.pop((name, instance_id), None)
         if not await self.registry.list_instances(name):
             await self.registry.set_class_state(name, ActivityState.DISABLED)
         logger.info("runtime destroy_instance class=%s instance=%s", name, instance_id)
