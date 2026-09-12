@@ -64,6 +64,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from legio.agents.base import AgentBase
+from legio.concurrency import ShutdownGate
 from legio.flow import ExecutionRequestMessage, ExecutionResultMessage
 from legio.naming import gathering_key, queue_key
 
@@ -88,6 +89,7 @@ class CompositeAgent(AgentBase):
         output_as: str = "",
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
+        drain: ShutdownGate | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -95,6 +97,7 @@ class CompositeAgent(AgentBase):
             output_as=output_as,
             input_schema=input_schema,
             output_schema=output_schema,
+            drain=drain,
         )
         # Each branch is a route of (class, input_as) — the branch's own
         # loader-resolved steps (re-keying info, §12.1).
@@ -118,6 +121,8 @@ class CompositeAgent(AgentBase):
           arrived anyway is an anomaly surfaced as a visible error (rule 9).
         """
         handled = False
+        if self._drain_holding():
+            return False
         try:
             inbox_item = await self._queue.get(block=False)
         except IndexError:

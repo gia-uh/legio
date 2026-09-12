@@ -18,11 +18,13 @@ deposited instead (see AGENTS.md rule 9).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from typing import Any
 
 from legio.agents.base import AgentBase
+from legio.concurrency import ConcurrencyCaps, ShutdownGate
 from legio.flow import ExecutionRequestMessage, build_payload
 from legio.tools import AvailableToolsRegistry, resolve_parameters, validate_callable_signature
 
@@ -44,6 +46,8 @@ class ToolAgent(AgentBase):
         output_as: str = "",
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
+        concurrency: ConcurrencyCaps | None = None,
+        drain: ShutdownGate | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -51,11 +55,13 @@ class ToolAgent(AgentBase):
             output_as=output_as,
             input_schema=input_schema,
             output_schema=output_schema,
+            drain=drain,
         )
         self._available_tools = available_tools
         self._tool_name = tool_name
         self._parameters = dict(parameters)
         self._input_as = input_as
+        self._concurrency = concurrency
 
     async def _handle(self, request: ExecutionRequestMessage) -> dict[str, Any]:
         error: str | None = None
@@ -67,8 +73,17 @@ class ToolAgent(AgentBase):
             tool = self._available_tools.load_tool(self._tool_name)
             # Validate against tool's signature at execution time
             validate_callable_signature(tool, resolved_kwargs)
-            # Invoke
-            raw_output = tool(**resolved_kwargs)
+            # Invoke — the tool is a synchronous callable; it is executed on a
+            # worker thread (``asyncio.to_thread``) so a slow/local resource
+            # never freezes the node's loop (LEG-082). An execution is bounded
+            # by the shared per-tool semaphore when a cap is declared: a
+            # constrained tool waits (cooperative, rule-8 exception), never
+            # fails or drops the item.
+            if self._concurrency is None:
+                raw_output = await asyncio.to_thread(tool, **resolved_kwargs)
+            else:
+                async with self._concurrency.tool(self._tool_name):
+                    raw_output = await asyncio.to_thread(tool, **resolved_kwargs)
             logger.debug(
                 "tool executed ok agent=%s task=%s tool=%s",
                 self._agent_id,
