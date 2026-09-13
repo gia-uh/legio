@@ -7,9 +7,11 @@ agent, the same code path.
 
 A composite consumes **two physical queues** (§12.2/§12.3): its class inbox
 (``legio:queue:<class>``, only entry requests) and its own **gathering queue**
-(``legio:queue:gather:<agent_id>``, only fan-in results). Messages are
-partitioned by queue, never by message type, so there is no dispatch on
-``message_type`` anywhere. Its ``process_next`` is the two-cycle poll:
+(``legio:queue:gather:<agent_id>``, only fan-in results). In the legacy
+``process_next`` poll messages are partitioned by queue, never by message type;
+in the standing loop (LEG-082) the class inbox additionally carries authenticated
+``ControlMessage``s, dispatched on ``message_type == "control"`` between work
+steps by the shared ``_dispatch_standing_item``. A composite has
 
 1. **Intake (unconditional)** — poll the class inbox; every entry request is
    fanned out and its task annotated as pending.
@@ -135,6 +137,36 @@ class CompositeAgent(AgentBase):
                 await self._process_join_item(dict(gather_item.data))
                 handled = True
         return handled
+
+    async def _standing_tick(self) -> bool:
+        """The composite's standing cycle (LEG-082 over §12.3): the two-inlet
+        poll, then — when both inlets were idle — suspend on the class inbox
+        for the next item (control or work).
+
+        The inbox inlet uses the shared ``_dispatch_standing_item`` so a
+        ``ControlMessage`` is honored between dispatches exactly like an atomic
+        agent's; the gated collection (fan-in) keeps its textbook §12.3 cycle.
+        """
+        handled = False
+        try:
+            inbox_item = await self._queue.get(block=False)
+        except IndexError:
+            pass
+        else:
+            await self._dispatch_standing_item(dict(inbox_item.data))
+            handled = True
+        if await self._has_pending():
+            try:
+                gather_item = await self._gather_queue.get(block=False)
+            except IndexError:
+                pass
+            else:
+                await self._process_join_item(dict(gather_item.data))
+                handled = True
+        if handled:
+            return True
+        qitem = await self._queue.get(block=True)
+        return await self._dispatch_standing_item(dict(qitem.data))
 
     async def _has_pending(self) -> bool:
         """Whether any fanned-out task is still waiting on its fan-in (the gate).

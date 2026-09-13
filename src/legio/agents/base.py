@@ -21,6 +21,13 @@ additionally owns a second physical queue, its **gathering**
 overrides ``process_next`` with its two-inlet intake + gated collection cycle
 (§12.3).
 
+The **authenticated control channel** (LEG-082) lives on the class inbox as
+well: a signed ``ControlMessage`` (minted only by the node's Runtime) is the one
+kind of message that also arrives there, and ``standing_loop`` — the instance's
+long-lived interior loop — discriminates it from work and honors it **between
+dispatches** (§12.2 amended). An agent holds a verifier but never a key: it can
+validate, it cannot forge.
+
 The actual steps (linguistic, tool, composite) plug in via ``_handle``, which
 returns the new payload to route; ``ToolAgent`` (LEG-022) is one such subclass.
 How an agent **builds** its output is its own implementation: ``_handle``
@@ -58,7 +65,14 @@ from typing import Any
 from beaver import AsyncBeaverDB
 from pydantic import BaseModel, ValidationError
 
-from legio.flow import ExecutionRequestMessage, ExecutionResultMessage
+from legio.flow import (
+    CONTROL_MESSAGE_TYPE,
+    ControlAction,
+    ControlMessage,
+    ControlVerifier,
+    ExecutionRequestMessage,
+    ExecutionResultMessage,
+)
 from legio.naming import queue_key
 from legio.patterns.compile import compile_schema
 from legio.registry import ActivityState
@@ -99,6 +113,7 @@ class AgentBase:
         output_as: str = "",
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
+        control_verifier: ControlVerifier | None = None,
     ) -> None:
         self._agent_id = agent_id
         self._db = db
@@ -118,6 +133,18 @@ class AgentBase:
         # Runtime and READ by any depositor — a submit or an internal task.
         # This handle is read-only; the agent never writes a gate row.
         self._gates = db.dict("gates")
+        # The authenticated control channel (LEG-082): the verify-only handle
+        # injected at materialization (None → the loop still consumes and
+        # visibly drops control items — never silent, rule 9), the in-memory
+        # pause latch and the per-instance anti-replay sequence.
+        self._control_verifier = control_verifier
+        self._control_paused = False
+        self._last_control_seq = 0
+        self._control_instance: str | None = None
+        # While the loop is parked (a ``disable`` honored) inbox work is held
+        # in-memory — never requeued/re-popped (that would churn the queue),
+        # and released losslessly on ``enable``/``terminate_with_drain``.
+        self._paused_hold: list[dict[str, Any]] = []
 
     def set_hooks(self, *, monitor: Monitor | None = None) -> None:
         """Register the optional ``monitor`` observability hook."""
@@ -156,6 +183,165 @@ class AgentBase:
             logger.debug("agent idle agent=%s", self._agent_id)
             return False
         await self._process_inbox_item(dict(qitem.data))
+        return True
+
+    async def standing_loop(self, instance_id: str) -> None:
+        """The instance's long-lived interior loop (LEG-082): suspend on the
+        class queue and honor authenticated control between dispatches.
+
+        This is the loop the real bring-up (LEG-087) spawns: the agent lives
+        while it runs, and its return **is** the agent's cooperative exit.
+        It suspends on the class queue (beaver ``get(block=True)`` — the
+        sanctioned "the agent suspends in its own queue"; beaver's internal
+        producer-interleave yield is the queue's consumption mechanism, not an
+        engine timer — rule 8). Between dispatches a validated control message
+        is honored: ``disable`` parks the loop locally (inbox work is held
+        in-memory, lossless; the loop stays alive so ``enable`` can arrive),
+        ``enable`` releases the held work and resumes, and
+        ``terminate_with_drain`` releases any held work, finishes whatever is
+        in flight and returns — the agent's cooperative exit.
+        """
+        self._control_instance = instance_id
+        logger.info("agent standing up instance=%s class=%s", instance_id, self._agent_id)
+        try:
+            while await self._standing_tick():
+                pass
+        finally:
+            logger.info(
+                "agent standing down instance=%s class=%s", instance_id, self._agent_id
+            )
+
+    async def _standing_tick(self) -> bool:
+        """One interior cycle of the standing loop (blocking on the class inbox).
+
+        Atomic agents inherit this: wait for the next inbox item and dispatch
+        it (control or work). Returns ``False`` when ``terminate_with_drain``
+        was honored — the loop, and with it the agent, ends; ``True`` keeps the
+        loop living.
+        """
+        qitem = await self._queue.get(block=True)
+        return await self._dispatch_standing_item(dict(qitem.data))
+
+    async def _dispatch_standing_item(self, item: dict[str, Any]) -> bool:
+        """Dispatch one class-inbox item inside the standing loop (LEG-082).
+
+        A control message (``message_type == "control"``) takes the control
+        path; anything else is work (an ``ExecutionRequestMessage`` — partition
+        by queue §12.2/§12.3 still holds for results). While the loop is parked
+        (a ``disable`` honored) inbox work is held in-memory — never consumed,
+        never churned, released losslessly on ``enable``/``terminate`` — and
+        control keeps being consumed so ``enable`` can reach the agent.
+        """
+        if item.get("message_type") == CONTROL_MESSAGE_TYPE:
+            return await self._honor_control(item)
+        if self._control_paused:
+            self._paused_hold.append(dict(item))
+            logger.debug(
+                "agent paused hold instance=%s class=%s held=%d",
+                self._control_instance,
+                self._agent_id,
+                len(self._paused_hold),
+            )
+            return True
+        await self._process_inbox_item(item)
+        return True
+
+    async def _release_hold(self) -> None:
+        """Put every held inbox item back on the class queue (lossless)."""
+        hold, self._paused_hold = self._paused_hold, []
+        for item in hold:
+            await self._queue.put(dict(item), priority=0.0)
+        if hold:
+            logger.info(
+                "agent hold released instance=%s class=%s count=%d",
+                self._control_instance,
+                self._agent_id,
+                len(hold),
+            )
+
+    async def _honor_control(self, item: dict[str, Any]) -> bool:
+        """Validate and honor one control message between dispatches (LEG-082).
+
+        The checks are ordered and every rejection is a visible ``WARNING``,
+        never silent (rule 9): a missing verifier, an invalid schema, a failed
+        signature, a foreign target (requeued at the back — another instance of
+        the pool owns it) and a replay (``seq <= last-seen``, per-instance
+        monotonic—a rejected message never advances the counter). A valid
+        message updates the anti-replay sequence, drives the loop's pause latch
+        or ends the loop (``terminate_with_drain``).
+        """
+        verifier = self._control_verifier
+        if verifier is None:
+            logger.warning(
+                "control dropped no_verifier instance=%s class=%s",
+                self._control_instance,
+                self._agent_id,
+            )
+            return True
+        try:
+            message = ControlMessage.model_validate(item)
+        except ValidationError as exc:
+            logger.warning(
+                "control dropped invalid_schema instance=%s class=%s problems=%s",
+                self._control_instance,
+                self._agent_id,
+                self._summarize_errors(exc),
+            )
+            return True
+        if not verifier.verify(message):
+            logger.warning(
+                "control dropped bad_signature instance=%s class=%s seq=%s",
+                self._control_instance,
+                self._agent_id,
+                message.seq,
+            )
+            return True
+        if message.target_instance != self._control_instance:
+            await self._queue.put(dict(item), priority=0.0)
+            logger.debug(
+                "control requeued foreign instance=%s target=%s class=%s",
+                self._control_instance,
+                message.target_instance,
+                self._agent_id,
+            )
+            return True
+        if message.seq <= self._last_control_seq:
+            logger.warning(
+                "control dropped replay instance=%s class=%s seq=%s last=%s",
+                self._control_instance,
+                self._agent_id,
+                message.seq,
+                self._last_control_seq,
+            )
+            return True
+        self._last_control_seq = message.seq
+        action = message.action
+        if action is ControlAction.DISABLE:
+            self._control_paused = True
+            logger.info(
+                "agent disable instance=%s class=%s origin=%s",
+                self._control_instance,
+                self._agent_id,
+                message.origin.value,
+            )
+        elif action is ControlAction.ENABLE:
+            self._control_paused = False
+            await self._release_hold()
+            logger.info(
+                "agent enable instance=%s class=%s origin=%s",
+                self._control_instance,
+                self._agent_id,
+                message.origin.value,
+            )
+        elif action is ControlAction.TERMINATE_WITH_DRAIN:
+            await self._release_hold()
+            logger.info(
+                "agent terminate_with_drain instance=%s class=%s origin=%s",
+                self._control_instance,
+                self._agent_id,
+                message.origin.value,
+            )
+            return False
         return True
 
     async def _process_inbox_item(self, item: dict[str, Any]) -> None:

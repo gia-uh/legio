@@ -1377,11 +1377,14 @@ for an atomic starting agent, it is the agent's own `output_as`.
 
 - Every class has exactly **one inbox queue** (`legio:queue:<class>`); all of
   its agents (instances) poll and consume that same queue.
-- The class inbox carries **only entry requests** (`ExecutionRequestMessage`).
-  Results are never deposited onto an inbox: they land on the closer's queue
-  (`end_of_level_queue` — a final-result queue, or a composite's gathering
-  queue, §12.3). **Partition is by queue, never by message type**: nothing in
-  the dispatch inspects a `message_type` to decide a message's fate.
+- The class inbox carries **entry requests** (`ExecutionRequestMessage`) and —
+  since the authenticated control channel (LEG-082) — the node's signed
+  `ControlMessage`s. Results are never deposited onto an inbox: they land on
+  the closer's queue (`end_of_level_queue` — a final-result queue, or a
+  composite's gathering queue, §12.3). **Partition is by queue, never by
+  message type** for *results*; the one exception is the standing loop's
+  `message_type == "control"` dispatch, which separates an order from a work
+  item on the inbox (LEG-082).
 - Agents are **interchangeable, stateless** consumers of the unit of work the
   class knows; an agent learns *what to do, where it is, and where the level
   ends* **only from the message + token** it just consumed (Schema 2: position
@@ -1390,12 +1393,15 @@ for an atomic starting agent, it is the agent's own `output_as`.
 - The **agent's internal loop** (LEG-023, `AgentBase.run`) is the unit a
   brought-up agent executes per class: poll **one** due item from the class's
   inbox (`get(block=False)` → `IndexError` = idle, returns; rule 8) and process
-  it, repeating until idle. Operational control (pause / cancel / shutdown)
-  is checked **between dispatches** — never inside a step, and never by
-  parking, leasing or task-ifying the loop. The loop is the agent's own, the
-  vehicle of the fact the Runtime orders; an agent is
-  **not** a task and **not** a recorded Manager identity (its identity lives in
-  the catalog, §4.8).
+  it, repeating until idle. The **standing loop** (LEG-082) is the live agent's
+  long-lived variant: it suspends **in** its class queue (`get(block=True)` —
+  the "agent suspends in its own queue" decision; beaver's producer-interleave
+  yield is the queue's consumption mechanism, not an engine timer), honors an
+  authenticated `ControlMessage` **between dispatches** — never inside a step,
+  never by parking, leasing or task-ifying the loop — and its return **is** the
+  agent's cooperative exit. The loop is the agent's own, the vehicle of the
+  fact the Runtime orders; an agent is **not** a task and **not** a recorded
+  Manager identity (its identity lives in the catalog, §4.8).
 
 ### 12.3 A composite has one gathering queue; branches route by position and level
 
@@ -1552,6 +1558,10 @@ another class's queue. Rules (decoupled, local, no oracle):
 
 - Scheduling is a field on the Manager task record, never a
   sleep/delay in the flow.
-- Idle is `get(block=False)` → `IndexError` → the instance loop returns.
+- Idle is `get(block=False)` → `IndexError` → the instance loop (the ephemeral
+  `run`) returns. The standing loop (LEG-082) is the suspend-in-queue variant:
+  a live agent waits **in its own class queue** rather than returning; its
+  return is its own cooperative exit (a `terminate_with_drain` honored between
+  dispatches).
 - The instance loop is the agent's own (§6.1, §10 risks 3-5); the flow itself
   never sleeps, never loops waiting for a peer.
