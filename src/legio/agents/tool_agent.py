@@ -23,7 +23,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from legio.agents.base import AgentBase
-from legio.flow import ExecutionRequestMessage, build_payload
+from legio.flow import ControlVerifier, ExecutionRequestMessage, build_payload
 from legio.tools import AvailableToolsRegistry, resolve_parameters, validate_callable_signature
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ class ToolAgent(AgentBase):
         output_as: str = "",
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
+        control_verifier: ControlVerifier | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -51,6 +52,7 @@ class ToolAgent(AgentBase):
             output_as=output_as,
             input_schema=input_schema,
             output_schema=output_schema,
+            control_verifier=control_verifier,
         )
         self._available_tools = available_tools
         self._tool_name = tool_name

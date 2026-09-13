@@ -74,13 +74,25 @@ per-agent verifier with `standing_loop`'s instance binding, all fail-fast (rule 
 
 - Bring-up confirm by `running`; the record stays `running` while the agent
   lives; `terminate_with_drain` → record `success` (drain-first: in-flight
-  deposits before the exit); `manager.cancel` mid-life → `aclose` → the agent's
-  loop awaited → `failed(cancelled)`.
+  deposits before the exit). `manager.cancel` **mid-life is not a supported
+  path** (see re-scoping note below) — the record's structural terminal is the
+  agent's own cooperative exit, never a cancel.
 - Enable/disable/destroy verbs: message minted+signed, deposited on the target
   queue at control priority, honored by the agent, Registry updated posteriori.
 - Old Manager control-mode coupling removed from the instance verbs; existing
   runtime lifecycle tests updated to the message model.
 - Full suite + ruff + pyright green.
+
+> **§D re-scoped by the maintainer (session 85m).** The approved spec's
+> `manager.cancel mid-life → aclose → failed(cancelled)` test is **removed**: the
+> Manager's `cancel` is never the destroy path — the Runtime mints and deposits
+> `terminate_with_drain`, and the bring-up record's terminal is its structural
+> consequence (`success`). The one-shot conversation also established
+> (empirically) that `aclose()` on a generator suspended at an in-flight
+> `__anext__` awaiting the standing loop raises "asynchronous generator is
+> already running"; the real bring-up never relies on `aclose`, its `finally`
+> cancels `loop_task` when not done (a manager-level `cancel` while parked at the
+> first yield still strands nothing).
 
 ## Non-goals
 
@@ -92,5 +104,16 @@ per-agent verifier with `standing_loop`'s instance binding, all fail-fast (rule 
 
 - Enable/disable have no strong ack (by design: no acks in the protocol); the
   confirm is a bounded read. Documented, not debt.
+- **Executor occupancy:** a real bring-up's parked generator occupies its
+  dispatching executor for the agent's whole life. A node therefore runs **one
+  executor per live bring-up instance + spares for facts** (§6.1).
+- **Debt — `pool > 1`:** the mounted agent map holds **one agent object per
+  class**; two concurrent standing loops of the same class would share that
+  object's per-instance control state (`_control_instance`,
+  `_paused_hold`, `_last_control_seq`). Not handled: pool>1 real bring-up with
+  live control is unsupported until instances get per-instance control state or
+  per-instance agent objects. A visible `WARNING` when a second live loop spawns
+  on a shared agent is the minimum guard.
 - `AGENT_LIFECYCLE.md` §5.1 step 2 confirm, §6.1 bring-up row, and the §8 step-4
-  wording are amended to the parked-generator model.
+  wording are amended to the parked-generator model; the §5.3–§5.8 verbs are
+  amended to the message model.

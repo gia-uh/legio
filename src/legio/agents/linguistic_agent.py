@@ -26,7 +26,7 @@ from lingo.llm import Message
 from pydantic import BaseModel
 
 from legio.agents.base import AgentBase
-from legio.flow import ExecutionRequestMessage, build_payload
+from legio.flow import ControlVerifier, ExecutionRequestMessage, build_payload
 from legio.patterns.template import resolve_template
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ class LinguisticAgent(AgentBase):
         output_as: str = "",
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
+        control_verifier: ControlVerifier | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -55,6 +56,7 @@ class LinguisticAgent(AgentBase):
             output_as=output_as,
             input_schema=input_schema,
             output_schema=output_schema,
+            control_verifier=control_verifier,
         )
         self._lingo = lingo_client
         self._prompt = prompt_template

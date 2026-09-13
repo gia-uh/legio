@@ -31,6 +31,7 @@ client without its token is warned and left unregistered (visible, rule 9).
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -42,6 +43,7 @@ from legio.agents import AgentBase, CompositeAgent, LinguisticAgent, ToolAgent
 from legio.api import create_app
 from legio.config import LlmConfig, LoadedConfig
 from legio.errors import UnrecoverableError
+from legio.flow import ControlVerifier, derive_control_key
 from legio.patterns import (
     AgentKind,
     AgentSpec,
@@ -83,6 +85,7 @@ def _materialize_atom(
     db: AsyncBeaverDB,
     available_tools: AvailableToolsRegistry,
     lingo_client: Any,
+    control_verifier: ControlVerifier | None,
 ) -> AgentBase:
     """Materialize a single atomic agent (tool or linguistic) or raise."""
     if spec.kind is AgentKind.TOOL:
@@ -101,6 +104,7 @@ def _materialize_atom(
             output_as=spec.output.output_as,
             input_schema=spec.input.input_schema,
             output_schema=spec.output.output_schema,
+            control_verifier=control_verifier,
         )
 
     if spec.kind is AgentKind.LINGUISTIC:
@@ -119,6 +123,7 @@ def _materialize_atom(
             output_as=spec.output.output_as,
             input_schema=spec.input.input_schema,
             output_schema=spec.output.output_schema,
+            control_verifier=control_verifier,
         )
 
     raise UnrecoverableError(f"atomic agent {spec.name!r} has unknown kind: {spec.kind}")
@@ -130,6 +135,7 @@ def _materialize_composite(
     catalog: Catalog,
     db: AsyncBeaverDB,
     composite_classes: CompositeClasses,
+    control_verifier: ControlVerifier | None,
 ) -> AgentBase:
     """Materialize one composite through its concrete class, or raise."""
     composite_type = composite_classes.get(spec.name)
@@ -148,6 +154,7 @@ def _materialize_composite(
         output_as=spec.output.output_as,
         input_schema=spec.input.input_schema,
         output_schema=spec.output.output_schema,
+        control_verifier=control_verifier,
     )
 
 
@@ -160,6 +167,7 @@ def materialize_agents(
     llm_api_key: str | None = None,
     lingo_factory: LingoFactory | None = None,
     composite_classes: CompositeClasses | None = None,
+    control_verifiers: Mapping[str, ControlVerifier] | None = None,
     on_built: Callable[[str], None] | None = None,
 ) -> dict[str, AgentBase]:
     """Build the standing agent map from a validated catalog, in DAG order.
@@ -168,10 +176,13 @@ def materialize_agents(
     reference already-materialized atomics or other composites by name —
     LEG-070 DAG order). Every spec is validated at load, so an unmaterializable
     spec here is a *boot-time* failure — visible and naming the agent (rule 9).
+    ``control_verifiers`` (name → verify-only handle, LEG-082/LEG-087) is the
+    boot's injection seam: absent, the agents hold no verifier.
     """
     classes = composite_classes or {}
     lingo_client: Any | None = None
     agents: dict[str, AgentBase] = {}
+    verifiers = control_verifiers or {}
 
     def _lingo() -> Any:
         nonlocal lingo_client
@@ -195,6 +206,7 @@ def materialize_agents(
                     db=db,
                     available_tools=available_tools,
                     lingo_client=_lingo(),
+                    control_verifier=verifiers.get(spec.name),
                 )
             except UnrecoverableError as exc:
                 raise UnrecoverableError(
@@ -206,6 +218,7 @@ def materialize_agents(
                 db=db,
                 available_tools=available_tools,
                 lingo_client=None,
+                control_verifier=verifiers.get(spec.name),
             )
         agents[spec.name] = agent
         if on_built is not None:
@@ -216,7 +229,11 @@ def materialize_agents(
         if spec.type is not AgentType.COMPOSITE:
             continue
         agent = _materialize_composite(
-            spec, catalog=catalog, db=db, composite_classes=classes
+            spec,
+            catalog=catalog,
+            db=db,
+            composite_classes=classes,
+            control_verifier=verifiers.get(spec.name),
         )
         agents[spec.name] = agent
         if on_built is not None:
@@ -277,6 +294,7 @@ async def boot_node(
     db: AsyncBeaverDB | None = None,
     lingo_factory: LingoFactory | None = None,
     composite_classes: CompositeClasses | None = None,
+    control_key: bytes | None = None,
     on_built: Callable[[str], None] | None = None,
 ) -> BootedNode:
     """Boot a node from its LoadedConfig: connect → load → validate → materialize.
@@ -285,8 +303,11 @@ async def boot_node(
     load *and validate* (any invalid pattern refuses the boot before any agent
     binds), the Schema 3 tools register, and only then the standing agents
     materialize. ``db`` lets tests inject their database (the node's shared
-    substrate); otherwise the configured path is opened directly. The Runtime
-    (LEG-085), the HTTP app and the authenticated client store are built last.
+    substrate); otherwise the configured path is opened directly. ``control_key``
+    is the per-boot, in-process key the lifecycle facts mint with (LEG-082); a
+    boot without one derives it from an entropy draw (random per boot, rule 11).
+    The Runtime (LEG-085), the HTTP app and the authenticated client store are
+    built last.
     """
     cfg = loaded.config
 
@@ -304,6 +325,7 @@ async def boot_node(
             database,
             lingo_factory=lingo_factory,
             composite_classes=composite_classes,
+            control_key=control_key,
             on_built=on_built,
         )
     except BaseException:
@@ -319,11 +341,13 @@ async def _boot_on_database(
     *,
     lingo_factory: LingoFactory | None,
     composite_classes: CompositeClasses | None,
+    control_key: bytes | None,
     on_built: Callable[[str], None] | None,
 ) -> BootedNode:
     """Boot the node over an already-connected substrate (fail-fast, rule 9)."""
     cfg = loaded.config
-    engine = Runtime(database, node_id=cfg.node.id)
+    key = control_key if control_key is not None else derive_control_key(os.urandom(32))
+    engine = Runtime(database, node_id=cfg.node.id, control_key=key)
     pattern_dirs = {
         "tool": cfg.patterns.tool,
         "linguistic": cfg.patterns.linguistic,
@@ -332,6 +356,8 @@ async def _boot_on_database(
     catalog = load_pattern_dirs(pattern_dirs)
 
     registry = available_tools_from_config(loaded)
+    served = {name for name in catalog.specs if catalog.is_served(name)}
+    verifiers = {name: ControlVerifier(key) for name in served}
     agents = materialize_agents(
         catalog,
         db=database,
@@ -340,8 +366,10 @@ async def _boot_on_database(
         llm_api_key=loaded.secrets.llm_api_key,
         lingo_factory=lingo_factory,
         composite_classes=composite_classes,
+        control_verifiers=verifiers,
         on_built=on_built,
     )
+    engine.mount_agents(agents)
 
     client_store = _build_client_store(loaded)
     booted = BootedNode(

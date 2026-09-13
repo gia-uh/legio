@@ -66,7 +66,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from legio.agents.base import AgentBase
-from legio.flow import ExecutionRequestMessage, ExecutionResultMessage
+from legio.flow import ControlVerifier, ExecutionRequestMessage, ExecutionResultMessage
 from legio.naming import gathering_key, queue_key
 
 logger = logging.getLogger(__name__)
@@ -90,6 +90,7 @@ class CompositeAgent(AgentBase):
         output_as: str = "",
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
+        control_verifier: ControlVerifier | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -97,6 +98,7 @@ class CompositeAgent(AgentBase):
             output_as=output_as,
             input_schema=input_schema,
             output_schema=output_schema,
+            control_verifier=control_verifier,
         )
         # Each branch is a route of (class, input_as) — the branch's own
         # loader-resolved steps (re-keying info, §12.1).

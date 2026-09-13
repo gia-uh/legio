@@ -24,7 +24,12 @@ from beaver import AsyncBeaverDB
 from legio.agents.tool_agent import ToolAgent
 from legio.config import LifecycleConfig, LifecycleParams
 from legio.errors import InvalidNameError, RecoverableError
-from legio.flow import ExecutionResultMessage
+from legio.flow import (
+    ControlAction,
+    ControlMessage,
+    ControlVerifier,
+    ExecutionResultMessage,
+)
 from legio.manager import TaskStatus
 from legio.naming import queue_key, result_queue_key, validate_task_id
 from legio.patterns import load_patterns
@@ -114,8 +119,11 @@ def _runtime(
     *,
     node_id: str = NODE_ID,
     lifecycle: LifecycleConfig | None = None,
+    control_key: bytes | None = None,
 ) -> Runtime:
-    return Runtime(db, node_id=node_id, lifecycle=lifecycle)
+    return Runtime(
+        db, node_id=node_id, lifecycle=lifecycle, control_key=control_key
+    )
 
 
 def _start_executor(runtime: Runtime) -> asyncio.Task:
@@ -152,6 +160,35 @@ async def _expect_seed_success(runtime: Runtime, task_id: str) -> None:
             return
         await asyncio.sleep(0.01)
     pytest.fail(f"task {task_id} was never dispatched by the node executor")
+
+
+async def _expect_control_message(
+    db: AsyncBeaverDB, class_name: str, instance_id: str, *, key: bytes
+) -> ControlMessage:
+    """Read-poll the class queue for the greatest-seq signed control message
+    addressed to ``instance_id`` (the node executor must dispatch the fact first)."""
+    for _ in range(200):
+        queue = db.queue(queue_key(class_name))
+        controls: list[ControlMessage] = []
+        while True:
+            try:
+                item = await queue.get(block=False)
+            except IndexError:
+                break
+            data = dict(item.data)
+            if data.get("message_type") == "control":
+                try:
+                    controls.append(ControlMessage.model_validate(data))
+                except (ValueError, TypeError):
+                    pass
+        if controls:
+            message = max(controls, key=lambda m: m.seq)
+            verifier = ControlVerifier(key)
+            assert verifier.verify(message), "the deposited control must verify"
+            assert message.target_instance == instance_id
+            return message
+        await asyncio.sleep(0.01)
+    pytest.fail(f"no control message reached class={class_name} instance={instance_id}")
 
 
 # --- construction -------------------------------------------------------------
@@ -327,16 +364,24 @@ async def test_create_instance_ids_stay_monotonic_across_destroy(beaver_db) -> N
 
 
 @pytest.mark.asyncio
-async def test_disable_instance_pauses_and_records_disabled(beaver_db) -> None:
-    runtime = _runtime(beaver_db)
+async def test_disable_instance_mints_control_and_records_disabled(beaver_db) -> None:
+    """§5.5 (message model): disable is an order to the agent — a signed
+    ``ControlMessage(action=disable)`` at control priority on the class queue,
+    deposited by the ``disable_instance`` fact (origin=operator). No vehicle
+    control-mode coupling: the bring-up record stays a live vehicle; the
+    Registry records disabled posteriori."""
+    key = bytes(range(32))
+    runtime = _runtime(beaver_db, control_key=key)
     pump = _start_executor(runtime)
     name, spec = _load_atomic_spec("single-class")
     try:
         await runtime.create_class(spec, spec_yaml=_atomic_yaml("single-class"), pool=1)
         instance_id = "single-class-1"
-        task_id = await runtime.disable_instance(name, instance_id)
+        await runtime.disable_instance(name, instance_id)
 
-        assert await runtime.manager.control_mode(task_id) == "pause"
+        message = await _expect_control_message(beaver_db, name, instance_id, key=key)
+        assert message.action is ControlAction.DISABLE
+        assert message.seq == 1
         instance = await runtime.get_instance(name, instance_id)
         assert instance is not None and instance.state == ActivityState.DISABLED
         assert await runtime.class_state(name) == ActivityState.ENABLED
@@ -345,17 +390,22 @@ async def test_disable_instance_pauses_and_records_disabled(beaver_db) -> None:
 
 
 @pytest.mark.asyncio
-async def test_enable_instance_resumes_and_records_enabled(beaver_db) -> None:
-    runtime = _runtime(beaver_db)
+async def test_enable_instance_mints_control_and_records_enabled(beaver_db) -> None:
+    runtime = _runtime(beaver_db, control_key=bytes(range(32)))
     pump = _start_executor(runtime)
     name, spec = _load_atomic_spec("single-class")
     try:
         await runtime.create_class(spec, spec_yaml=_atomic_yaml("single-class"), pool=1)
         instance_id = "single-class-1"
         await runtime.disable_instance(name, instance_id)
-        task_id = await runtime.enable_instance(name, instance_id)
+        message = await _expect_control_message(beaver_db, name, instance_id, key=bytes(range(32)))
+        assert message.action is ControlAction.DISABLE
 
-        assert await runtime.manager.control_mode(task_id) == "run"
+        await runtime.enable_instance(name, instance_id)
+
+        message = await _expect_control_message(beaver_db, name, instance_id, key=bytes(range(32)))
+        assert message.action is ControlAction.ENABLE
+        assert message.seq == 2
         instance = await runtime.get_instance(name, instance_id)
         assert instance is not None and instance.state == ActivityState.ENABLED
     finally:
@@ -466,8 +516,13 @@ async def test_enable_class_brings_up_one_instance_when_none_exists(beaver_db) -
 
 
 @pytest.mark.asyncio
-async def test_destroy_instance_cancels_and_confirms_terminal(beaver_db) -> None:
-    runtime = _runtime(beaver_db)
+async def test_destroy_instance_mints_terminate_and_confirms_terminal(beaver_db) -> None:
+    """§5.7 (message model): destroy deposits a signed ``terminate_with_drain``
+    and confirms the **bring-up** record reads ``success`` — the structural
+    terminal of the agent's exit (the message ends the agent; the record's
+    terminal is its consequence; no ``manager.cancel`` on this path)."""
+    key = bytes(range(32))
+    runtime = _runtime(beaver_db, control_key=key)
     pump = _start_executor(runtime)
     name, spec = _load_atomic_spec("one-class")
     try:
@@ -477,12 +532,12 @@ async def test_destroy_instance_cancels_and_confirms_terminal(beaver_db) -> None
 
         await runtime.destroy_instance(name, instance_id)
 
-        # the one-shot bring-up fact is terminal (SUCCESS); a destroy that lands
-        # on a not-yet-dispatched bring-up lands failed(cancelled) — either is
-        # the visible terminal state of §5.7, never a live record.
+        message = await _expect_control_message(beaver_db, name, instance_id, key=key)
+        assert message.action is ControlAction.TERMINATE_WITH_DRAIN
+        assert message.seq == 1
         record = await beaver_db.dict("tasks").fetch(task_id)
         assert record is not None
-        assert record["status"] in (TaskStatus.SUCCESS.value, TaskStatus.FAILED.value)
+        assert record["status"] == TaskStatus.SUCCESS.value
         assert await runtime.get_instance(name, instance_id) is None
         assert (name, instance_id) not in runtime._instance_tasks
     finally:
@@ -496,7 +551,7 @@ async def test_destroy_after_reboot_is_pure_registry_fact(beaver_db) -> None:
 
     The Manager holds no vehicle for a legacy row after reboot (callables live
     in the Runtime object), so there is no cross-layer instance↔task identity
-    to reach (rule 13) — and nothing to cancel. The instance is removed, the
+    to reach (rule 13) — and nothing to terminate. The instance is removed, the
     last instance disables the class, and no ``RecoverableError`` is raised.
     """
     boot = _runtime(beaver_db)
@@ -543,36 +598,33 @@ async def test_destroy_last_instance_leaves_class_disabled_but_existing(
 
 
 @pytest.mark.asyncio
-async def test_destroy_instance_confirms_only_an_actual_terminal_cancel(
-    beaver_db,
-) -> None:
-    """§5.7 terminal confirmation, tightened: ``failed(cancelled)`` is the only
-    FAILED fact destroy accepts as confirmed.
+async def test_destroy_instance_confirms_only_the_agents_exit(beaver_db) -> None:
+    """§5.7 terminal confirmation, message model: destroy confirms the bring-up
+    record reads ``success`` — that the agent's exit was **structural** (it
+    honored the ``terminate_with_drain`` and its loop ended).
 
-    The one-shot bring-up lands SUCCESS (a replayed cancel is then a terminal
-    no-op, so SUCCESS is also confirmed); a still-pending cancel lands
-    ``failed(cancelled)``. A bring-up that FAILED for any *other* reason is NOT
-    a confirmed cancel — destroy refuses visibly (rule 9) instead of pretending
-    the cancel processed.
+    A still-live vehicle (record RUNNING: the message is deposited but the
+    agent hasn't finished draining yet) keeps the confirm waiting, bounded; a
+    bring-up that FAILED for any reason is NOT the structural exit — destroy
+    refuses visibly (rule 9) instead of pretending the termination processed.
     """
-    runtime = _runtime(beaver_db)
+    runtime = _runtime(beaver_db, control_key=bytes(range(32)))
     pump = _start_executor(runtime)
     a, spec_a = _load_atomic_spec("one-class")
     b, spec_b = _load_atomic_spec("two-class")
     try:
+        # a real-but-dying bring-up: SUCCESS after the message is confirmed
         await runtime.create_class(spec_a, spec_yaml=_atomic_yaml(a), pool=1)
-        await runtime.create_class(spec_b, spec_yaml=_atomic_yaml(b), pool=1)
-
-        # a live-cancelled bring-up (failed(cancelled)) is the confirmed fact
-        task_a = runtime._instance_tasks[(a, "one-class-1")]
-        record_a = await beaver_db.dict("tasks").fetch(task_a)
-        record_a["status"] = TaskStatus.FAILED.value
-        record_a["error"] = "cancelled"
-        await beaver_db.dict("tasks").set(task_a, record_a)
         await runtime.destroy_instance(a, "one-class-1")
+        message = await _expect_control_message(
+            beaver_db, a, "one-class-1", key=bytes(range(32))
+        )
+        assert message.action is ControlAction.TERMINATE_WITH_DRAIN
         assert await runtime.get_instance(a, "one-class-1") is None
 
-        # a bring-up that died for another reason is not a silent terminal
+        # a bring-up that died for another reason is not a structural exit:
+        # destroy refuses visibly and the instance is kept
+        await runtime.create_class(spec_b, spec_yaml=_atomic_yaml(b), pool=1)
         task_b = runtime._instance_tasks[(b, "two-class-1")]
         record_b = await beaver_db.dict("tasks").fetch(task_b)
         record_b["status"] = TaskStatus.FAILED.value

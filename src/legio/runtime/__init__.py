@@ -12,13 +12,17 @@ itself.
 
 Information ownership (§6): the **Manager holds the task reality** — the
 business submit rides ``Manager.submit_task`` as a ``seed`` task whose callable
-deposits the root ``ExecutionRequestMessage`` (ARCHITECTURE §7), and the
-lifecycle verbs ride bring-up / pause / resume / cancel facts (§6.1 table). The
-**Registry is the posterior mirror**, written only by the Runtime after each
-fact is confirmed. The **Runtime is the decision point** between them. It
-reaches the Manager **only through its public API** (``submit_task``/``status``/
-``control_mode``/``pause``/``resume``/``cancel``) and the Registry through its
-public surface — it never opens another layer's beaver scopes.
+deposits the root ``ExecutionRequestMessage`` (ARCHITECTURE §7), the bring-up
+rides the ``bring_up`` fact (one-shot default; a boot mounting real agents
+overrides it with the **parked async generator** that hosts each instance's
+standing loop, LEG-087), and the instance lifecycle verbs (enable / disable /
+destroy) ride the ``enable_instance`` / ``disable_instance`` / ``destroy_instance``
+facts, each of which mints a signed ``ControlMessage`` (LEG-082) at control
+priority on the target class queue. The **Registry is the posterior mirror**,
+written only by the Runtime after each fact is confirmed. The **Runtime is the
+decision point** between them. It reaches the Manager **only through its public
+API** (``submit_task``/``status``) and the Registry through its public surface
+— it never opens another layer's beaver scopes.
 
 Beaver footprint (rule 13): the Runtime owns exactly **one** direct scope — the
 class entry gate (``db.dict("gates")``, §12.5). The Manager owns
@@ -33,26 +37,41 @@ The **node owns the executor**: the Manager is driven by the node's polling loop
 (``manager.run()``), never pumped by the Runtime. The Runtime's confirms are
 bounded clock waits over the ``lifecycle`` config budgets (§5.8/§10.2, rule 8
 exception) — the same ``drain_timeout``/``drain_interval`` the queue drain uses.
-The bring-up fact is a one-shot callable (the agent is up, §5.1 step 2); a boot
-materializing real agents overwrites it with the real bring-up (step 4 seam).
+Each **real bring-up occupies one executor dispatch for the agent's life**
+(a parked generator awaiting its standing loop; §6.1's multi-executor is
+sanctioned): the record reads ``running`` while the agent lives and the Manager
+writes ``success`` at the exact structural moment the agent's loop ends — never
+a timer or a poll. A boot mounting real agents overwrites the one-shot bring-up
+with the real one (documented seam, step 4).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
+from contextlib import suppress
 from enum import Enum
 from typing import Any, Literal, cast
 
 from beaver import AsyncBeaverDB
 from pydantic import BaseModel
 
+from legio.agents import AgentBase
 from legio.config import LifecycleConfig, PoolsConfig
 from legio.errors import RecoverableError
-from legio.flow import ExecutionRequestMessage, ExecutionResultMessage, FlowToken
+from legio.flow import (
+    CONTROL_PRIORITY,
+    ControlAction,
+    ExecutionRequestMessage,
+    ExecutionResultMessage,
+    FlowToken,
+    derive_control_key,
+    sign_control,
+)
 from legio.manager import Manager, TaskRecord, TaskStatus
 from legio.naming import queue_key, result_queue_key, validate_node_id, validate_task_id
 from legio.patterns import Catalog, load_patterns
@@ -63,6 +82,9 @@ logger = logging.getLogger(__name__)
 
 BRING_UP_TASK = "bring_up"
 SEED_TASK = "seed"
+ENABLE_INSTANCE = "enable_instance"
+DISABLE_INSTANCE = "disable_instance"
+DESTROY_INSTANCE = "destroy_instance"
 
 
 class TaskState(str, Enum):
@@ -101,6 +123,7 @@ class Runtime:
         manager: Manager | None = None,
         registry: Registry | None = None,
         lifecycle: LifecycleConfig | None = None,
+        control_key: bytes | None = None,
     ) -> None:
         """Bind the runtime to the connected beaver substrate and its node id.
 
@@ -109,6 +132,9 @@ class Runtime:
         injected; otherwise defaults are built on the same substrate.
         ``lifecycle`` provides the bounded clock-wait budgets (drain and the
         lifecycle confirms, §5.8/§10.2); absent → built-in defaults.
+        ``control_key`` is the per-boot, in-process key the lifecycle facts
+        mint with (LEG-082/§2.2); absent → derived from an entropy draw
+        (random per boot, never persisted, never logged — rule 11).
         """
         if db is None:
             raise TypeError(
@@ -123,8 +149,20 @@ class Runtime:
         self._gates = db.dict("gates")
         self._instance_tasks: dict[tuple[str, str], str] = {}
         self._instance_sequence: dict[str, int] = {}
+        # The authenticated control channel (LEG-082): the Runtime is the only
+        # minting authority (origin=operator); the key is in-process, per-boot.
+        self._control_key = control_key if control_key is not None else derive_control_key(
+            os.urandom(32)
+        )
+        self._control_sequence: dict[tuple[str, str], int] = {}
+        # The standing agent map, mounted by the boot (LEG-087): the real
+        # bring-up binds ``standing_loop`` on an agent of the target class.
+        self._agents: dict[str, AgentBase] = {}
+        self._live_loops: dict[str, set[str]] = {}
         self.manager.register(BRING_UP_TASK, self._bring_up_impl)
         self.manager.register(SEED_TASK, self._seed_impl)
+        for fact in (ENABLE_INSTANCE, DISABLE_INSTANCE, DESTROY_INSTANCE):
+            self.manager.register(fact, self._instance_control_fact)
         logger.info("runtime up node=%s", node_id)
 
     # --- registered callables (the facts the Manager executes) ----------------
@@ -132,12 +170,102 @@ class Runtime:
     async def _bring_up_impl(self, class_name: str, instance_id: str, queue: str) -> str:
         """One-shot bring-up fact: the agent is up (§5.1 step 2).
 
-        A boot materializing real agents **overwrites this callable** with the
-        real bring-up (documented seam; the interior of the agent's own loop is
+        A boot mounting real agents **overwrites this callable** with the real
+        bring-up (documented seam; the interior of the agent's own loop is
         step 4). The Runtime confirms the terminal fact and records the instance
         posteriori — it never runs the agent itself.
         """
         return instance_id
+
+    def mount_agents(self, agents: Mapping[str, AgentBase]) -> None:
+        """Mount the materialized standing agents and the real bring-up (boot).
+
+        The boot (LEG-087) derives the per-boot control key, computes the
+        verify-only handles, materializes the agent map with them injected
+        (LEG-082 param) and hands it here: the Runtime then registers the **real
+        bring-up** — a parked async generator that spawns the instance's own
+        ``standing_loop`` — overriding the one-shot default.
+        """
+        self._agents = dict(agents)
+        self.manager.register(BRING_UP_TASK, self._real_bring_up)
+        logger.info("runtime agents mounted count=%d", len(self._agents))
+
+    async def _real_bring_up(
+        self, class_name: str, instance_id: str, queue: str
+    ) -> AsyncGenerator[str]:
+        """Real bring-up: a parked async generator hosting the agent's life.
+
+        Spawns ``standing_loop(instance_id)`` (LEG-082), yields the instance id
+        once and then **awaits the loop**: the Manager parks the generator and
+        the record reads ``running`` for the agent's whole life. The agent's
+        cooperative exit — a ``terminate_with_drain`` honored on its own queue —
+        finishes the loop; ``await`` returns, the generator falls out and the
+        Manager writes ``success`` at that same structural moment (no timers, no
+        polls, rule 8). Closing the generator early (a manager-level cancel while
+        parked at the yield) runs the ``finally``: the standing loop is cancelled
+        before a ``failed(cancelled)`` is written — the listener never leaks.
+        """
+        try:
+            agent = self._agents[class_name]
+        except KeyError as exc:
+            logger.error("runtime bring_up no_agent class=%s", class_name)
+            raise RecoverableError(
+                f"no standing agent mounted for class {class_name!r}; re-boot binds it"
+            ) from exc
+        previous = self._live_loops.get(class_name)
+        if previous:
+            logger.warning(
+                "runtime real bring_up shared_agent second_loop class=%s "
+                "instances=%s (pool>1 control state is documented debt)",
+                class_name,
+                ",".join(sorted(previous)),
+            )
+        self._live_loops.setdefault(class_name, set()).add(instance_id)
+        loop_task = asyncio.create_task(agent.standing_loop(instance_id))
+        logger.info("runtime real bring_up class=%s instance=%s", class_name, instance_id)
+        try:
+            yield instance_id
+            await loop_task
+        finally:
+            if not loop_task.done():
+                loop_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await loop_task
+            loops = self._live_loops.get(class_name)
+            if loops is not None:
+                loops.discard(instance_id)
+                if not loops:
+                    self._live_loops.pop(class_name, None)
+
+    # --- instance lifecycle facts (the Runtime mints, the Manager executes) ---
+
+    async def _instance_control_fact(
+        self, class_name: str, instance_id: str, action: str
+    ) -> dict[str, Any]:
+        """The enable/disable/destroy fact: mint a signed control message (LEG-082)
+        with the per-boot key and deposit it at control priority on the target
+        instance's class queue. The Runtime (operator origin) is the only
+        minting authority; the message is honored between the agent's dispatches.
+        """
+        seq = self._control_sequence.get((class_name, instance_id), 0) + 1
+        self._control_sequence[(class_name, instance_id)] = seq
+        message = sign_control(
+            self._control_key,
+            target_instance=instance_id,
+            action=ControlAction(action),
+            seq=seq,
+        )
+        await self._db.queue(queue_key(class_name)).put(
+            message.model_dump(mode="json"), priority=CONTROL_PRIORITY
+        )
+        logger.info(
+            "runtime control minted class=%s instance=%s action=%s seq=%s",
+            class_name,
+            instance_id,
+            action,
+            seq,
+        )
+        return message.model_dump(mode="json")
 
     async def _seed_impl(
         self, client_id: str, token: dict[str, Any], payload: dict[str, Any]
@@ -209,28 +337,21 @@ class Runtime:
             f"{what}: could not confirm task {task_id!r} within {timeout}s (last state: {state})"
         )
 
-    async def _confirm_control(
-        self, task_id: str, mode: str, *, what: str, class_name: str
+    async def _confirm_vehicle_alive(
+        self, task_id: str, *, what: str, class_name: str
     ) -> None:
-        """Read-poll until the task is alive and its control mode is set (bounded)."""
-        timeout, interval = await self._lifecycle_budget(class_name)
-        deadline = time.monotonic() + timeout
-        last_record: TaskRecord | None = None
-        last_control: str | None = None
-        while time.monotonic() < deadline:
-            record = await self.manager.status(task_id)
-            control = await self.manager.control_mode(task_id)
-            last_record, last_control = record, control
-            if record is not None and record.status == TaskStatus.FAILED:
-                error = record.error or "unknown error"
-                raise RecoverableError(f"{what}: task {task_id!r} failed: {error}")
-            if record is not None and control == mode:
-                return
-            await asyncio.sleep(interval)
-        state = last_record.status.value if last_record is not None else "missing"
-        raise RecoverableError(
-            f"{what}: could not confirm control mode {mode!r} for task {task_id!r} "
-            f"within {timeout}s (last state: {state}, control: {last_control})"
+        """Read-poll the bring-up record until the vehicle is alive (bounded).
+
+        A real bring-up reads ``running`` while the agent lives; the one-shot
+        fact lands ``success`` instantly — both are "the vehicle is up" for the
+        weak, ack-free enable/disable confirm (§5.8: **no protocol acks by
+        design**, the agent honors the order between its dispatches).
+        """
+        await self._await_observable_state(
+            task_id,
+            lambda record: record.status in (TaskStatus.RUNNING, TaskStatus.SUCCESS),
+            what=what,
+            class_name=class_name,
         )
 
     # --- bring-up vehicle -----------------------------------------------------
@@ -264,7 +385,7 @@ class Runtime:
         self._instance_tasks[(class_name, instance_id)] = task_id
         await self._await_observable_state(
             task_id,
-            lambda record: record.status == TaskStatus.SUCCESS,
+            lambda record: record.status in (TaskStatus.RUNNING, TaskStatus.SUCCESS),
             what=f"bring_up class={class_name} instance={instance_id}",
             class_name=class_name,
         )
@@ -535,8 +656,11 @@ class Runtime:
         return 1 if resolved is None else resolved
 
     async def enable_class(self, name: str) -> None:
-        """Enable a class (§5.4): bring an instance up if none exists, resume all
-        instances, then open the gate and record the enabled state."""
+        """Enable a class (§5.4): bring an instance up if none exists, order every
+        instance enabled (a deposit of ``enable`` at control priority), open the
+        gate and record the enabled state. Class enable is the only class-level
+        verb that touches instance rows — the faithful translation of the legacy
+        "resume every instance" (disable keeps instances draining, policy A)."""
         if await self.registry.class_state(name) is None:
             raise KeyError(f"unknown class {name!r}")
         if await self.registry.class_state(name) == ActivityState.ENABLED:
@@ -545,10 +669,16 @@ class Runtime:
         if not await self.registry.list_instances(name):
             await self.create_instance(name, count=1)
         for instance in await self.registry.list_instances(name):
+            await self.manager.submit_task(
+                ENABLE_INSTANCE,
+                name,
+                instance.instance_id,
+                action=ControlAction.ENABLE.value,
+            )
             task_id = self._require_bring_up_task(name, instance.instance_id)
-            await self.manager.resume(task_id)
-            await self._confirm_control(
-                task_id, "run", what=f"enable instance class={name} instance={instance.instance_id}",
+            await self._confirm_vehicle_alive(
+                task_id,
+                what=f"enable instance class={name} instance={instance.instance_id}",
                 class_name=name,
             )
             await self.registry.set_instance_state(
@@ -656,7 +786,10 @@ class Runtime:
         return created
 
     async def enable_instance(self, name: str, instance_id: str) -> str:
-        """Enable one instance (§5.4): resume its vehicle and record enabled."""
+        """Enable one instance (§5.4): deposit an ``enable`` control message on
+        its class queue, confirm the vehicle is alive (weak read, no ack) and
+        record enabled posteriori. Returns the bring-up task id (unchanged
+        signature)."""
         instance = await self._require_instance(name, instance_id)
         task_id = self._require_bring_up_task(name, instance_id)
         if instance.state == ActivityState.ENABLED:
@@ -666,9 +799,12 @@ class Runtime:
                 instance_id,
             )
             return task_id
-        await self.manager.resume(task_id)
-        await self._confirm_control(
-            task_id, "run", what=f"enable instance class={name} instance={instance_id}",
+        await self.manager.submit_task(
+            ENABLE_INSTANCE, name, instance_id, action=ControlAction.ENABLE.value
+        )
+        await self._confirm_vehicle_alive(
+            task_id,
+            what=f"enable instance class={name} instance={instance_id}",
             class_name=name,
         )
         await self.registry.set_instance_state(name, instance_id, ActivityState.ENABLED)
@@ -676,7 +812,10 @@ class Runtime:
         return task_id
 
     async def disable_instance(self, name: str, instance_id: str) -> str:
-        """Disable one instance (§5.5): pause its vehicle and record disabled."""
+        """Disable one instance (§5.5): deposit a ``disable`` control message on
+        its class queue (the agent parks its own loop between dispatches),
+        confirm the vehicle is alive and record disabled posteriori. Returns the
+        bring-up task id (unchanged signature)."""
         instance = await self._require_instance(name, instance_id)
         task_id = self._require_bring_up_task(name, instance_id)
         if instance.state == ActivityState.DISABLED:
@@ -686,9 +825,12 @@ class Runtime:
                 instance_id,
             )
             return task_id
-        await self.manager.pause(task_id)
-        await self._confirm_control(
-            task_id, "pause", what=f"disable instance class={name} instance={instance_id}",
+        await self.manager.submit_task(
+            DISABLE_INSTANCE, name, instance_id, action=ControlAction.DISABLE.value
+        )
+        await self._confirm_vehicle_alive(
+            task_id,
+            what=f"disable instance class={name} instance={instance_id}",
             class_name=name,
         )
         await self.registry.set_instance_state(name, instance_id, ActivityState.DISABLED)
@@ -696,14 +838,16 @@ class Runtime:
         return task_id
 
     async def destroy_instance(self, name: str, instance_id: str) -> None:
-        """Destroy one instance (§5.7): cancel its vehicle (cooperative, terminal),
-        confirm a terminal state, then remove the instance. Destroying the last
-        instance leaves the class disabled but existing.
+        """Destroy one instance (§5.7): deposit a ``terminate_with_drain``
+        control message on its class queue and confirm the **bring-up** record
+        reaches ``success`` — the structural terminal of the agent's exit (the
+        message ends the agent sequentially; no ``manager.cancel`` anywhere on
+        this path). Destroying the last instance leaves the class disabled but
+        existing.
 
         The vehicle is only knowable in-process (§4.8); a destroy on a legacy
         row with no in-process task (reboot) is a pure Registry fact removal —
-        the Manager holds no vehicle to cancel, so no cross-layer identity is
-        reached (rule 13).
+        the Manager holds no vehicle to reach (rule 13).
         """
         instance = await self.registry.get_instance(name, instance_id)
         if instance is None:
@@ -713,11 +857,15 @@ class Runtime:
             return
         task_id = self._instance_tasks.get((name, instance_id))
         if task_id is not None:
-            await self.manager.cancel(task_id)
+            await self.manager.submit_task(
+                DESTROY_INSTANCE,
+                name,
+                instance_id,
+                action=ControlAction.TERMINATE_WITH_DRAIN.value,
+            )
             await self._await_observable_state(
                 task_id,
-                lambda record: record.status == TaskStatus.SUCCESS
-                or (record.status == TaskStatus.FAILED and record.error == "cancelled"),
+                lambda record: record.status == TaskStatus.SUCCESS,
                 what=f"destroy instance class={name} instance={instance_id}",
                 class_name=name,
             )
@@ -790,4 +938,11 @@ class Runtime:
         return await self.registry.class_kind(name)
 
 
-__all__ = ["BRING_UP_TASK", "SEED_TASK", "Runtime"]
+__all__ = [
+    "BRING_UP_TASK",
+    "DESTROY_INSTANCE",
+    "DISABLE_INSTANCE",
+    "ENABLE_INSTANCE",
+    "SEED_TASK",
+    "Runtime",
+]
