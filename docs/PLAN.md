@@ -374,6 +374,19 @@ are red for the yet-unimplemented surface.
     only minter); intents → Runtime decides → Manager fact mints + deposits;
     naming never collides with the Manager's `control` scope; the CLI (LEG-081)
     reaches the verbs through `node_ops`.
+- **LEG-095** Instance state report (`state_report` intake) — the control
+  channel's **out-side**. The agent deposits an unsigned `AgentStateReport`
+  (instance, action, seq of the honored control, resulting state) on a
+  node-internal intake queue; a Runtime fact validates it by correlation with
+  its own pending mint ledger and only then writes Registry/gate state. Removes
+  the optimistic posteriori writes and the "no ack by design" clauses in LEG-087
+  (§5.8) / AGENT_LIFECYCLE §5.3/§5.5-§5.6; `destroy` confirm stays structural.
+  - **Accept**: `enable_instance`/`disable_instance` confirm only after the
+    matching report is consumed and the Registry reads the target state (bounded
+    read, no timers elsewhere); a control is honored → exactly one report with
+    its `seq`; a rejected/foreign control emits none; a report without a
+    pending mint is a visible WARNING, never applied; missing report within the
+    budget → visible `RecoverableError`, never a silent state.
 
 ### R-9 — Federation
 
