@@ -248,11 +248,14 @@ composite:
   distinction. Any node may act as *author* (triggers work, owns results) and as
   *acceptor* (executes delegated work), depending on the task. Same codebase,
   different roster and starting agents via configuration only.
+- **Two surfaces, two rules.** The `main` flag is an **L2-only** concept: it
+  marks the agents an *external user* may start on the node via the local
+  `submit` (entry points). Inside the federation (L1) a peer uses **every
+  served agent** of any node — `main: true` never excludes an agent from remote
+  work-items, and `main` is not a hierarchy: a composite may contain another
+  `main` agent (or a non-`main` one) as a step in its flow (session 85u).
 - **Every served agent is a capability agent and is delegable**: delegation
-  applies to the whole roster. `main: true` only marks an agent as an *entry
-  point* of its own node — startable by the node's own Runtime/clients via the
-  local submit — it never excludes that agent from remote work-items (session
-  85u).
+  applies to the whole roster.
 - Because agent resolution happens *before* deposit (in the author, against the
   catalog), an acceptor's agents never receive work for a pattern they do not
   serve.
