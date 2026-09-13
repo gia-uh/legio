@@ -248,9 +248,11 @@ composite:
   distinction. Any node may act as *author* (triggers work, owns results) and as
   *acceptor* (executes delegated work), depending on the task. Same codebase,
   different roster and starting agents via configuration only.
-- **Starting agents are entry points** of their own node: only the node's own
-  Runtime invokes them. They are not delegable; delegation applies to
-  capability agents.
+- **Every served agent is a capability agent and is delegable**: delegation
+  applies to the whole roster. `main: true` only marks an agent as an *entry
+  point* of its own node — startable by the node's own Runtime/clients via the
+  local submit — it never excludes that agent from remote work-items (session
+  85u).
 - Because agent resolution happens *before* deposit (in the author, against the
   catalog), an acceptor's agents never receive work for a pattern they do not
   serve.

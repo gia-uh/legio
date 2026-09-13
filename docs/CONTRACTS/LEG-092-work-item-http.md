@@ -65,8 +65,10 @@ surface.
   existing "already exists" rejection is translated into a deduplicated receipt
   (`deposited=False, deduplicated=True`) — the work is never run twice.
 - Route for the work item: a served agent (atomic or composite) is addressed by
-  its own `(class, input_as)` — delegation targets *capability* agents, not
-  entry points (ARCH §9); no `main` requirement.
+  its own `(class, input_as)` — delegation applies to the whole roster
+  (ARCH §9): every served agent is a capability agent, and `main: true` (an
+  entry point) never excludes it from remote work-items (maintainer session
+  85u); no `main` requirement.
 - The author's node id (the owner) is the task_id origin (`<node_id>` part),
   truthful and domain-free (rule 7).
 

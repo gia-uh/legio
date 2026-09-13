@@ -406,7 +406,9 @@ class BootedNode:
         """The HTTP app exposing the Runtime's submit/status over REST (LEG-025).
 
         When a federation token is configured (LEG-017 L1 secret), the app also
-        serves ``GET /catalog`` (LEG-090) guarded by that shared token.
+        serves the federation surface guarded by that shared token: ``GET
+        /catalog`` (LEG-090), ``POST /work-items/{agent}`` (LEG-092) and the
+        outbox verbs ``GET``/``DELETE /outbox/{task_id}`` (LEG-093).
         """
         return create_app(
             runtime=self.runtime,
