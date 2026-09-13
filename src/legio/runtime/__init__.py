@@ -18,14 +18,20 @@ overrides it with the **parked async generator** that hosts each instance's
 standing loop, LEG-087), and the instance lifecycle verbs (enable / disable /
 destroy) ride the ``enable_instance`` / ``disable_instance`` / ``destroy_instance``
 facts, each of which mints a signed ``ControlMessage`` (LEG-082) at control
-priority on the target class queue. The **Registry is the posterior mirror**,
-written only by the Runtime after each fact is confirmed. The **Runtime is the
-decision point** between them. It reaches the Manager **only through its public
-API** (``submit_task``/``status``) and the Registry through its public surface
-— it never opens another layer's beaver scopes.
+priority on the target class queue. Operator lifecycle orders (CLI/API/peer,
+LEG-081) enter through the Runtime's own ``node_ops`` intake and are drained by
+the ``NODE_OP`` polling fact, which relays each validated intent to its
+lifecycle verb (LEG-088) — the Runtime keeps deciding, the Manager keeps
+executing, the Registry keeps mirroring. The **Registry is the posterior
+mirror**, written only by the Runtime after each fact is confirmed. The
+**Runtime is the decision point** between them. It reaches the Manager **only
+through its public API** (``submit_task``/``status``) and the Registry through
+its public surface — it never opens another layer's beaver scopes.
 
-Beaver footprint (rule 13): the Runtime owns exactly **one** direct scope — the
-class entry gate (``db.dict("gates")``, §12.5). The Manager owns
+Beaver footprint (rule 13): the Runtime owns exactly **two** direct scopes —
+the class entry gate (``db.dict("gates")``, §12.5) and the operator control
+intake (``db.queue("node_ops")``, LEG-088 — the ``origin: operator`` source,
+drained **via the ``NODE_OP`` Manager fact**, never pumped). The Manager owns
 ``tasks``/``pending_tasks``/``control`` (business seeds land there as Manager
 tasks); the Registry owns ``catalog``/``instances``/``yaml_cache``. Class/result
 queues (``legio:queue:<...>``) are the flow's shared message medium, deposited
@@ -58,7 +64,7 @@ from enum import Enum
 from typing import Any, Literal, cast
 
 from beaver import AsyncBeaverDB
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from legio.agents import AgentBase
 from legio.config import LifecycleConfig, PoolsConfig
@@ -86,6 +92,40 @@ ENABLE_INSTANCE = "enable_instance"
 DISABLE_INSTANCE = "disable_instance"
 DESTROY_INSTANCE = "destroy_instance"
 
+# LEG-088 — the node control intake: a Runtime-owned queue of typed operator
+# intents, drained via the ``NODE_OP`` Manager fact (naming deliberately
+# distinct from the Manager's ``control`` task-control scope — the Manager
+# controls *tasks*, ``node_ops`` carries *operator intents*).
+NODE_OP_TASK = "node_op"
+NODE_OPS_SCOPE = "node_ops"
+CLASS_OP_VERBS = frozenset({"enable_class", "disable_class", "destroy_class"})
+INSTANCE_OP_VERBS = frozenset({"enable_instance", "disable_instance", "destroy_instance"})
+NODE_OP_VERBS = CLASS_OP_VERBS | INSTANCE_OP_VERBS
+
+_NODE_OP_VERB = Literal[
+    "enable_class",
+    "disable_class",
+    "destroy_class",
+    "enable_instance",
+    "disable_instance",
+    "destroy_instance",
+]
+
+
+class NodeOp(BaseModel):
+    """A typed operator intent on the node's intake (LEG-088 §A).
+
+    Small, domain-free payload: the lifecycle verb and the class/instance it
+    addresses. The Runtime decides which intents a caller may deposit through
+    the intake; the ``NODE_OP`` drain relays a validated intent to the
+    corresponding lifecycle verb, which mints and deposits the signed control
+    message (LEG-087).
+    """
+
+    verb: _NODE_OP_VERB
+    class_name: str
+    instance_id: str | None = None
+
 
 class TaskState(str, Enum):
     """Lifecycle state of a business task (the semantics of §7.7)."""
@@ -109,10 +149,11 @@ class TaskEntry(BaseModel):
 class Runtime:
     """The orchestrator and public face of the runtime triangle (§0/§6).
 
-    ``Runtime`` owns the class entry gate (§12.5), the business
-    ``submit``/``status`` (mounted on ``Manager.submit_task``, §7.1) and the
-    class/instance lifecycle verbs. It orchestrates the injected (or default)
-    ``Manager`` and ``Registry`` and never runs agent work itself.
+    ``Runtime`` owns the class entry gate (§12.5), the operator control intake
+    (``node_ops``, LEG-088 — drained via the ``NODE_OP`` Manager fact), the
+    business ``submit``/``status`` (mounted on ``Manager.submit_task``, §7.1)
+    and the class/instance lifecycle verbs. It orchestrates the injected (or
+    default) ``Manager`` and ``Registry`` and never runs agent work itself.
     """
 
     def __init__(
@@ -147,6 +188,11 @@ class Runtime:
         self.registry = registry if registry is not None else Registry(db)
         self._lifecycle = lifecycle if lifecycle is not None else LifecycleConfig()
         self._gates = db.dict("gates")
+        # LEG-088: the node control intake ('node_ops') — the Runtime's second
+        # scope. Operator intents land here; the ``NODE_OP`` Manager fact drains
+        # it (never the Runtime pumping). The Manager owns ``control`` and
+        # ``pending_tasks``; this ownership split never collides (rule 13).
+        self._node_ops = db.queue(NODE_OPS_SCOPE)
         self._instance_tasks: dict[tuple[str, str], str] = {}
         self._instance_sequence: dict[str, int] = {}
         # The authenticated control channel (LEG-082): the Runtime is the only
@@ -163,6 +209,7 @@ class Runtime:
         self.manager.register(SEED_TASK, self._seed_impl)
         for fact in (ENABLE_INSTANCE, DISABLE_INSTANCE, DESTROY_INSTANCE):
             self.manager.register(fact, self._instance_control_fact)
+        self.manager.register(NODE_OP_TASK, self._node_op_fact)  # LEG-088 intake drain
         logger.info("runtime up node=%s", node_id)
 
     # --- registered callables (the facts the Manager executes) ----------------
@@ -301,6 +348,141 @@ class Runtime:
             flow_token.end_of_level_queue,
         )
         return flow_token.model_dump(mode="json")
+
+    # --- node control intake (LEG-088) -------------------------------------------
+
+    async def deposit_node_op(
+        self, verb: str, class_name: str, instance_id: str | None = None
+    ) -> str:
+        """Deposit an operator lifecycle intent on the ``node_ops`` intake.
+
+        The Runtime decides which intents a caller may deposit (§A): the verb
+        must be a known lifecycle verb, the class must live in the catalog, and
+        an instance verb must address a live instance. On the way in, the intake
+        **only** queues the typed payload and schedules a ``NODE_OP`` drain —
+        nothing is minted and no agent queue is touched (the drain relays the
+        validated intent to the lifecycle verb, which mints/deposits/records).
+        Returns the drain task id, so the operator can read the intent's
+        outcome. Rejections are visible (rule 9) and never mint anything.
+        """
+        op = self._validate_node_op(verb, class_name, instance_id)
+        if await self.registry.class_state(op.class_name) is None:
+            logger.warning(
+                "runtime node_op deny verb=%s class=%s (unknown class)",
+                op.verb,
+                op.class_name,
+            )
+            raise RecoverableError(f"unknown class {op.class_name!r}")
+        if op.verb in INSTANCE_OP_VERBS and op.instance_id is not None:
+            instance = await self.registry.get_instance(op.class_name, op.instance_id)
+            if instance is None:
+                logger.warning(
+                    "runtime node_op deny verb=%s class=%s instance=%s (unknown instance)",
+                    op.verb,
+                    op.class_name,
+                    op.instance_id,
+                )
+                raise RecoverableError(
+                    f"unknown instance {op.instance_id!r} of class {op.class_name!r}"
+                )
+        await self._node_ops.put(op.model_dump(mode="json"), priority=0.0)
+        task_id = await self.manager.submit_task(NODE_OP_TASK)
+        logger.info(
+            "runtime node_op deposit verb=%s class=%s instance=%s task=%s",
+            op.verb,
+            op.class_name,
+            op.instance_id or "-",
+            task_id,
+        )
+        return task_id
+
+    async def _node_op_fact(self) -> dict[str, Any]:
+        """The intake drain fact (LEG-088 §B): pop one intent off ``node_ops``,
+        relay it through the Runtime's decision logic to the lifecycle verb,
+        and schedule one more drain while work remains. It is a drain loop whose
+        scheduling **field** is the presence of work on the intake — a data
+        read, never a sleep (rule 8).
+        """
+        try:
+            item = await self._node_ops.get(block=False)
+        except IndexError:
+            return {"processed": 0, "replenished": False}
+        try:
+            op = NodeOp.model_validate(item.data)
+        except ValidationError as exc:
+            raise RecoverableError(
+                f"invalid node op on intake {item.data!r}: {exc}"
+            ) from exc
+        await self._apply_node_op(op)
+        replenished = await self._node_ops.count() > 0
+        if replenished:
+            await self.manager.submit_task(NODE_OP_TASK)
+        logger.info(
+            "runtime node_op intake applied verb=%s class=%s instance=%s replenished=%s",
+            op.verb,
+            op.class_name,
+            op.instance_id or "-",
+            replenished,
+        )
+        return {"processed": 1, "replenished": replenished}
+
+    async def _apply_node_op(self, op: NodeOp) -> str:
+        """The Runtime's decision logic for a drained intent: relay it to the
+        corresponding lifecycle verb — which mints the signed control message,
+        confirms, and records the Registry posteriori (LEG-087). The Runtime
+        keeps deciding; the Manager keeps executing; the Registry keeps
+        mirroring. An unknown verb fails the drain visibly (rule 9) and never
+        mints anything.
+        """
+        if op.verb == "enable_class":
+            await self.enable_class(op.class_name)
+        elif op.verb == "disable_class":
+            await self.disable_class(op.class_name)
+        elif op.verb == "destroy_class":
+            await self.destroy_class(op.class_name)
+        elif op.verb == "enable_instance":
+            await self.enable_instance(op.class_name, self._require_op_instance(op))
+        elif op.verb == "disable_instance":
+            await self.disable_instance(op.class_name, self._require_op_instance(op))
+        elif op.verb == "destroy_instance":
+            await self.destroy_instance(op.class_name, self._require_op_instance(op))
+        else:
+            raise RecoverableError(f"unknown node op verb {op.verb!r}")
+        logger.info(
+            "runtime node_op applied verb=%s class=%s instance=%s",
+            op.verb,
+            op.class_name,
+            op.instance_id or "-",
+        )
+        return op.verb
+
+    @staticmethod
+    def _require_op_instance(op: NodeOp) -> str:
+        """An instance verb must address an instance (defensive rule 9: the
+        drain re-checks an intent's shape even after a deposit-side check)."""
+        if op.instance_id is None:
+            raise RecoverableError(
+                f"node op verb {op.verb!r} requires an instance (intent shape broken)"
+            )
+        return op.instance_id
+
+    def _validate_node_op(self, verb: str, class_name: str, instance_id: str | None) -> NodeOp:
+        """Build and shape-check an intent (§A): an unknown verb is refused
+        visibly at the intake; instance verbs require an instance and class
+        verbs forbid one."""
+        try:
+            op = NodeOp(verb=cast(_NODE_OP_VERB, verb), class_name=class_name, instance_id=instance_id)
+        except ValidationError as exc:
+            raise RecoverableError(f"unknown node op verb {verb!r}") from exc
+        if op.verb in INSTANCE_OP_VERBS and op.instance_id is None:
+            raise RecoverableError(
+                f"node op verb {op.verb!r} requires an instance"
+            )
+        if op.verb in CLASS_OP_VERBS and op.instance_id is not None:
+            raise RecoverableError(
+                f"node op verb {op.verb!r} is a class verb and does not take an instance"
+            )
+        return op
 
     # --- bounded clock waits over the lifecycle budgets (§5.8/§10.2) ---------------
 
@@ -940,9 +1122,15 @@ class Runtime:
 
 __all__ = [
     "BRING_UP_TASK",
+    "CLASS_OP_VERBS",
     "DESTROY_INSTANCE",
     "DISABLE_INSTANCE",
     "ENABLE_INSTANCE",
+    "INSTANCE_OP_VERBS",
+    "NODE_OPS_SCOPE",
+    "NODE_OP_TASK",
+    "NODE_OP_VERBS",
     "SEED_TASK",
+    "NodeOp",
     "Runtime",
 ]

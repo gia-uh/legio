@@ -51,3 +51,18 @@ never mints a message.
 ## Notes / debt
 
 - `AGENT_LIFECYCLE.md` §6.1 footprint table is amended to the `node_ops` line.
+- Implementation (session 85o): intents are the typed `NodeOp` payload
+  (`{verb, class_name, instance_id}` — the `class`/`instance` names of §A are
+  mapped to pydantic-safe field names). `Runtime.deposit_node_op(...)` is the
+  intake surface (returns the drain task id); each deposit queues the intent
+  and schedules one `NODE_OP` drain.
+- The `node_ops` drain (`_node_op_fact`) pops **one** intent per dispatch,
+  relays it to the lifecycle verb, and **re-submits itself while the intake is
+  non-empty**: the scheduling decision is the presence of work on the queue (a
+  `count()` field read), never a sleep — rule 8. A drained intent that fails
+  validation (e.g. a tampered unknown verb) surfaces visbly as a `failed`
+  `NODE_OP` task and never mints anything (rule 9).
+- Executor occupancy: a `NODE_OP` drain awaits the lifecycle confirm, so it
+  occupies its executor for the lifetime of one intent — the intake depends on
+  the §6.1 multi-executor topology (one executor per occupant + spares), the
+  same LEG-087 doctrine a booted node already follows.

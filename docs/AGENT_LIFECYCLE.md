@@ -1073,7 +1073,24 @@ Manager's own
 The Manager-owned scopes carry **only generic task records** (and the task ids /
 control facts that belong to them) — including the business `seed` task, created
 **through** `submit_task`, never by another layer opening `tasks`. The Runtime
-owns only the `gates` scope (§12.5); layers never write one another's scopes.
+owns exactly two scopes: the `gates` scope (§12.5) and the **node control
+intake `node_ops`** (LEG-088 — the `origin: operator` source, deliberately
+distinct from the Manager's `control` task-control scope); layers never write
+one another's scopes.
+
+**The operator surface (LEG-088/LEG-081).** Operator lifecycle orders
+(CLI/API/peer) never reach the Manager or an agent queue directly — they are
+**deposited as intents** on the Runtime's own `node_ops` queue (typed payloads:
+`{verb, class, instance}`, validated by the Runtime: known verb, live class,
+live instance when the verb addresses one). Deposition **only** queues the
+intent and schedules a drain — it mints nothing and never touches an agent
+queue. The intake is drained via the `NODE_OP` Manager fact: each dispatch pops
+one intent, relays it through the Runtime's decision logic to the corresponding
+lifecycle verb (which mints the signed `ControlMessage`, confirms, and records
+the Registry posteriori). It is a drain loop whose scheduling **field** is the
+presence of work on the intake queue — a data read, never a sleep (rule 8);
+a `NODE_OP` drain occupies its executor while it awaits the lifecycle confirm,
+so the node runs 2+ executors (the §6.1 executor-occupancy topology).
 
 Result/error travel **inside the task record** — consumers poll
 `status(task_id)`. There is no result queue: polling-only (rule 8). There is no
