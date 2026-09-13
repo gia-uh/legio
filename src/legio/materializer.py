@@ -403,11 +403,16 @@ class BootedNode:
 
     @property
     def app(self) -> FastAPI:
-        """The HTTP app exposing the Runtime's submit/status over REST (LEG-025)."""
+        """The HTTP app exposing the Runtime's submit/status over REST (LEG-025).
+
+        When a federation token is configured (LEG-017 L1 secret), the app also
+        serves ``GET /catalog`` (LEG-090) guarded by that shared token.
+        """
         return create_app(
             runtime=self.runtime,
             clients=self.client_store,
             pattern_catalog=self.catalog,
+            federation_token=self.config.secrets.federation_token,
         )
 
     @property

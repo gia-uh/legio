@@ -16,6 +16,12 @@ from the request) for embedded/unauthenticated contexts.
 An optional ``pattern_catalog`` can be provided to derive the starting route
 from the pattern catalog (LEG-021). If not provided, the agent name is used as
 a single-agent route.
+
+Federation (LEG-090): when ``federation_token`` is provided, the app also
+serves ``GET /catalog`` guarded by the shared federation token (L1, LEG-017) —
+the roster of the node's served capacity (``pattern_catalog.served()``). A peer
+reads this to author remote work (LEG-091/092). Without a federation token the
+endpoint is not mounted (404): no federation surface.
 """
 
 from __future__ import annotations
@@ -29,10 +35,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from legio.errors import RecoverableError, UnknownAgentError, UnrecoverableError
-from legio.flow import FlowToken
+from legio.flow import SCHEMA_VERSION, FlowToken
 from legio.patterns import Catalog, starting_route
 from legio.runtime import Runtime, TaskEntry, TaskState
-from legio.security import ClientTokenStore
+from legio.security import ClientTokenStore, FederationTokenStore
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +70,53 @@ class StatusResponse(BaseModel):
     token: FlowToken
     output: dict[str, Any] | None = None
     result_key: str | None = None
+
+
+class CatalogAgentInterface(BaseModel):
+    """The versioned capability a node advertises for one served agent."""
+
+    capability: str
+    schema_version: int
+
+
+class CatalogAgentEntry(BaseModel):
+    """One served agent in the node's catalog (LEG-090)."""
+
+    agent: str
+    interface: CatalogAgentInterface
+    kind: str
+
+
+class CatalogResponse(BaseModel):
+    """The node's roster of served capacity (LEG-090)."""
+
+    schema_version: int
+    agents: list[CatalogAgentEntry]
+
+
+def _to_catalog_response(catalog: Catalog) -> CatalogResponse:
+    """Derive the node's capacity roster from its served pattern catalog.
+
+    Capacity is *not* a separate register: the node can execute exactly what
+    its served pattern catalog materializes (LEG-070/081). Each served agent is
+    advertised under its name with the node's flow schema version; ``kind`` is
+    the agent kind (tool/linguistic) or ``composite`` for flows.
+    """
+    entries: list[CatalogAgentEntry] = []
+    for name in sorted(catalog.served()):
+        spec = catalog.specs[name]
+        kind = spec.kind.value if spec.kind is not None else "composite"
+        entries.append(
+            CatalogAgentEntry(
+                agent=name,
+                interface=CatalogAgentInterface(
+                    capability=name,
+                    schema_version=SCHEMA_VERSION,
+                ),
+                kind=kind,
+            )
+        )
+    return CatalogResponse(schema_version=SCHEMA_VERSION, agents=entries)
 
 
 def _to_status_response(entry: TaskEntry) -> StatusResponse:
@@ -128,6 +181,7 @@ def create_app(
     runtime: Runtime,
     clients: ClientTokenStore | None = None,
     pattern_catalog: Catalog | None = None,
+    federation_token: str | None = None,
 ) -> FastAPI:
     """Build the FastAPI application exposing the Runtime's submit/status over REST.
 
@@ -142,6 +196,9 @@ def create_app(
     derived from the pattern catalog (the agent must be marked ``main: true``);
     an unknown, non-``main`` or invalidated starting agent is refused with a
     typed error. If not provided, the agent name is used as a single-agent route.
+
+    When ``federation_token`` is provided, the app serves ``GET /catalog``
+    (LEG-090) guarded by the shared token; absent the endpoint is not mounted.
     """
     app = FastAPI(title="legio", version="0.1.0")
 
@@ -207,7 +264,31 @@ def create_app(
             return JSONResponse(status_code=409, content={"code": "task_failed"})
         return _to_status_response(entry)
 
+    if federation_token is not None:
+        federation_store = FederationTokenStore(federation_token)
+
+        @app.get("/catalog", response_model=CatalogResponse)
+        async def catalog(
+            authorization: str | None = Header(default=None),
+        ) -> CatalogResponse | JSONResponse:
+            token = _bearer_token(authorization)
+            if token is None or not federation_store.is_valid(token):
+                logger.warning("api catalog unauthorized")
+                return _unauthorized()
+            if pattern_catalog is None:
+                logger.error("api catalog no capacity")
+                return JSONResponse(status_code=503, content={"code": "no_capacity"})
+            return _to_catalog_response(pattern_catalog)
+
     return app
 
 
-__all__ = ["StatusResponse", "SubmitRequest", "SubmitResponse", "create_app"]
+__all__ = [
+    "CatalogAgentEntry",
+    "CatalogAgentInterface",
+    "CatalogResponse",
+    "StatusResponse",
+    "SubmitRequest",
+    "SubmitResponse",
+    "create_app",
+]
