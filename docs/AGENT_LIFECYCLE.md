@@ -849,21 +849,32 @@ cascade.
 
 How: **Runtime** creates the type's queue (fact) → `record_class` + `cache_spec`
 (posteriori to the queue, **once per class**) → for each agent of the pool, asks
-the **Manager** to submit the bring-up fact (one at a time) and
-confirms `running` → on each success **Runtime** → **Registry**
+the **Manager** to submit the bring-up fact (one at a time) and confirms
+`running` → on each success **Runtime** → **Registry**
 `record_instance` (posteriori). The catalog count is the **sum of real facts**,
 never a `pool_size` promise.
+
+In a booted node the bring-up is a **parked async generator** (LEG-087) that
+spawns the instance's own `standing_loop` and awaits it, so `running` is not a
+transient state: the record reads `running` for the agent's whole life, and the
+moment the agent honors a `terminate_with_drain` and exits its own loop the
+record reaches `success` at that same structural moment — never a timer or a
+poll (rule 8). The bring-up itself consumes no queue work; the agent suspends in
+its own class queue.
 
 ### 5.3 Enable instance
 Precondition: the instance exists and is disabled.
 
 | # | Action | Class | Instance |
 |---|---|---|---|
-| 1 | Resume the agent's loop | unchanged | `created / enabled` |
+| 1 | Release the agent's loop (`enable` control honored) | unchanged | `created / enabled` |
 
-How: **Runtime** → **Manager** resumes that agent's task
-(`resume(task_id)`) and confirms the running/paused state (Manager read; fact) →
-on success **Runtime** → **Registry** `set_instance_state(enabled)` (posteriori).
+How: **Runtime** (as the only minting authority) deposits a signed
+`ControlMessage(action=enable)` at control priority on the instance's class queue
+(the `ENABLE_INSTANCE` fact, LEG-087) → confirms the bring-up record is alive
+(bounded Manager read — **deliberately no ack**, §5.8) → on success **Runtime** →
+**Registry** `set_instance_state(enabled)` (posteriori). A no-op when the instance
+is already enabled.
 
 ### 5.4 Enable class
 Precondition: the class exists and is disabled. Enabling is a **conscious**
@@ -874,31 +885,35 @@ accepts the risk of a queue filling without anything processing it (§4.2).
 |---|---|---|---|
 | 1 | Check the class has at least one instance; if none, bring one up | — | created / disabled (then enabled) |
 | 2 | Mark the class enabled (queue accepts new items again) | `created / enabled` | — |
-| 3 | Resume **all** the class's instances | unchanged | enabled, draining |
+| 3 | Order **all** the class's instances enabled (`enable` control for each) | unchanged | enabled, draining |
 
-Rule (§4.2/§4.3, symmetric): `enable_class` resumes **all** the class's
-instances. The registry does not record *why* an instance was paused (§7), so an
+Rule (§4.2/§4.3, symmetric): `enable_class` orders **all** the class's instances
+enabled. The registry does not record *why* an instance is disabled (§7), so an
 explicit `disable_instance` of a single agent is a one-shot pause that the next
 `enable_class` clears.
 
-How: **Runtime** (conscious decision) → ensures an agent exists (via **Manager**,
-confirmed `running`, recorded **posteriori** in **Registry**) → resumes
-**all** instances (per-instance `resume`, confirmed paused/exited) →
-**Registry** `set_instance_state(enabled)` for each + `set_class_state(enabled)`
-after the facts hold.
+How: **Runtime** (conscious decision) → ensures an agent exists (via the
+bring-up, confirmed `running`, recorded **posteriori** in **Registry**) → orders
+**all** instances enabled (a signed `enable` control deposit per instance,
+confirmed by a weak alive-read of each bring-up) → **Registry**
+`set_instance_state(enabled)` for each + `set_class_state(enabled)` after the
+facts hold.
 
 ### 5.5 Disable instance
 Precondition: the instance exists and is enabled.
 
 | # | Action | Class | Instance |
 |---|---|---|---|
-| 1 | Pause the agent | unchanged | `created / disabled` |
+| 1 | Order the agent disabled (`disable` control honored; its loop parks locally) | unchanged | `created / disabled` |
 
-How: **Runtime** → **Manager** pauses that single agent's task
-(`pause(task_id)`) and confirms the paused/exited state (Manager read; fact) →
-on success **Runtime** → **Registry**
-`set_instance_state(disabled)` (posteriori). Unlike disable-class, here **one
-specific agent is stopped**.
+How: **Runtime** (the only minting authority) deposits a signed
+`ControlMessage(action=disable)` at control priority on the instance's class
+queue (the `DISABLE_INSTANCE` fact, LEG-087) → confirms the bring-up record is
+alive (bounded Manager read — **no strong ack**, §5.8) → on success **Runtime** →
+**Registry** `set_instance_state(disabled)` (posteriori). The agent's own loop
+parks — inbox work is held in-memory, losslessly released on `enable` — and stays
+alive so `enable` can reach it. Unlike disable-class, here **one specific agent
+is stopped**. A no-op when the instance is already disabled.
 
 ### 5.6 Disable class (policy A)
 Precondition: the class exists and is enabled.
@@ -922,14 +937,21 @@ Precondition: the instance exists.
 
 | # | Action | Class | Instance |
 |---|---|---|---|
-| 1 | Terminate the agent | unchanged | `does not exist` |
+| 1 | Order the agent to terminate (`terminate_with_drain` honored: drain then exit) | unchanged | `does not exist` |
 | 2 | (corollary) if it was the last instance, the class becomes disabled | `created / disabled` | — |
 
-How: **Runtime** → **Manager** cancels that agent's task (`cancel(task_id)`)
-and confirms a terminal state (`failed(cancelled)`)
-(Manager read; fact) → on success **Runtime** → **Registry** `remove_instance`
-(posteriori); if it was the last instance, `set_class_state(disabled)` — and reads
-report it via the **effective state** (§4.4) even across the two records.
+How: **Runtime** (the only minting authority) deposits a signed
+`ControlMessage(action=terminate_with_drain)` at control priority on the
+instance's class queue (the `DESTROY_INSTANCE` fact, LEG-087) → confirms the
+**bring-up** record reaches `success` — the structural terminal of the agent's
+exit (the message ends the agent's own loop; the record's terminal is its
+consequence; **no `manager.cancel` anywhere on this path**) → on success
+**Runtime** → **Registry** `remove_instance` (posteriori); if it was the last
+instance, `set_class_state(disabled)` — and reads report it via the **effective
+state** (§4.4) even across the two records. A destroy of the **last instance
+after a reboot** (no in-process vehicle) is a pure Registry fact removal (§4.8);
+a bring-up that FAILED for any reason is not a structural exit — destroy refuses
+visibly (rule 9).
 
 ### 5.8 Destroy class (armageddon)
 Precondition: the class exists. Always in hot. Parameter `now` or `drain`
@@ -951,9 +973,10 @@ Notes:
   cascade.
 
 How: **Runtime** resolves `mode` (`drain` waits until queue empty; `now`
-proceeds) → for each agent: **Manager** `cancel(task_id)` and confirm
-terminal (fact) → **Registry** `remove_instance` (posteriori) → the Runtime
-removes the queue and its entry gate and the **Registry** `remove_class`
+proceeds) → for each instance: deposit a signed `terminate_with_drain` control
+and confirm its bring-up record reaches `success` (the structural terminal, §5.7)
+→ **Registry** `remove_instance` (posteriori) → the Runtime removes the queue and
+its entry gate and the **Registry** `remove_class`
 (the YAML stays in the Registry's cache) → cascade-disable dependents (Runtime
 gate + Registry `set_class_state(disabled)`; their agents keep draining).
 **Down (dependencies) is never touched.** Irreversible.
@@ -1103,6 +1126,11 @@ task queue:
   crashed task is surfaced visibly rather than silently re-run.
 - **Multi-process concurrency**: several Manager task executors (any process)
   drain the same queue; `get()` is destructive/atomic, so a task executes once.
+- **Executor occupancy (LEG-087):** a real bring-up is a parked async generator
+  whose dispatcher awaits the agent's standing loop — that executor is
+  dedicated to the agent for its whole life. A booted node therefore runs **one
+  executor per live bring-up instance plus spares for facts** (§6.1); the spares
+  drain `pending_tasks` exactly like the dedicated ones.
 
 **Lifecycle verbs → task language.** The Manager executes these facts; the
 Runtime decides them and records them in the `Registry` **after** each is
@@ -1110,12 +1138,12 @@ confirmed (registration-is-a-mirror):
 
 | Runtime verb | Manager fact (task language) | Observable Manager state | Registry record (posteriori) |
 |---|---|---|---|
-| create_instance | `submit_task(...)` (bring-up task) | `running` | `record_instance` |
-| destroy_instance | `cancel(task_id)` | `cancelling → failed(cancelled)` | `remove_instance` |
-| disable_instance | `pause(task_id)` | paused/exited | `set_instance_state(disabled)` |
-| enable_instance | `resume(task_id)` | running | `set_instance_state(enabled)` |
+| create_instance | `submit_task(...)` (bring-up task; real bring-up is a **parked async generator** spawning the agent's own standing loop, §5.2/§6.1) | `running` while the agent lives (structural terminal on its exit) | `record_instance` |
+| destroy_instance | `DESTROY_INSTANCE` fact: **mints + deposits a signed `terminate_with_drain` control message** on the instance's class queue (LEG-082/LEG-087) | bring-up record reaches `success` — the agent's structural exit (no `cancel` on this path) | `remove_instance` |
+| disable_instance | `DISABLE_INSTANCE` fact: **mints + deposits a signed `disable` control** on the class queue (the agent parks its own loop between dispatches) | weak bounded read: bring-up record alive (`running`/`success`) — **no strong ack by design** | `set_instance_state(disabled)` |
+| enable_instance | `ENABLE_INSTANCE` fact: **mints + deposits a signed `enable` control** on the class queue | weak bounded read: bring-up record alive — no strong ack | `set_instance_state(enabled)` |
 | create_class (pool N) | N × `submit_task(...)` | N tasks `running` | `record_class` + N×`record_instance` + `cache_spec` |
-| destroy_class | N × `cancel(...)` | all tasks terminated | N×`remove_instance` + `remove_class` |
+| destroy_class | N × `DESTROY_INSTANCE` (terminate-with-drain deposits) | all bring-up records `success` | N×`remove_instance` + `remove_class` |
 
 **What the Manager does NOT own** (decoupling boundaries):
 - The **entry gate of a class queue** (what §0/§5.6/§5.8/§6 name "dispatch"):
@@ -1193,7 +1221,8 @@ agent was actually brought up / the spec was actually read) is confirmed.
    flagged).
 7. The agents are already running their own internal loops (each was brought up
    in step 3, §6.1); the node's task executors are up and drain the Manager
-   queue.
+   queue — one executor per live bring-up plus spares for facts (§6.1
+   executor occupancy).
 
 **Result:** the **initial catalog state** plus the **initial YAML cache** exist in
 the `Registry`; agents are idle (nothing pending on their class queues);
