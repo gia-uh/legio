@@ -146,6 +146,21 @@ class TaskEntry(BaseModel):
     result_key: str | None = None
 
 
+class WorkItemReceipt(BaseModel):
+    """The acceptor's answer to a deposited work item (LEG-092).
+
+    ``id`` is the author's own task id. ``deposited`` is true when the acceptor
+    minted a genuine business task for it; ``deduplicated`` is true when the
+    same id is already known — the work is never executed twice (LEG-093
+    prerequisite). Both fields may not be true together; a deduplicated receipt
+    is a decision, never an error.
+    """
+
+    id: str
+    deposited: bool
+    deduplicated: bool = False
+
+
 class Runtime:
     """The orchestrator and public face of the runtime triangle (§0/§6).
 
@@ -633,6 +648,75 @@ class Runtime:
             result_queue,
         )
         return task_id
+
+    async def submit_work_item(
+        self,
+        author: str,
+        route: tuple[tuple[str, str], ...],
+        payload: dict[str, Any],
+        *,
+        task_id: str,
+    ) -> WorkItemReceipt:
+        """Deposit a federated work item keyed by the *author's* task id (LEG-092).
+
+        Mirrors ``submit`` (same entry gate, same root flow token, same seed
+        fact) but the invitee is a remote peer: the task id is minted by the
+        author — ``<node_id>:<uuid>`` at the origin — so the result lands where
+        the author reads it and so a retried delivery is idempotent. The author
+        derived the step against this node's roster (LEG-091); the acceptor
+        double-checks nothing but the gate here — interface/scope were resolved
+        author-side and re-checked by the HTTP shell around this seam.
+
+        A ``task_id`` the acceptor already knows is **not an error**: the
+        Manager rejects the duplicate visibly and this seam translates it into a
+        deduplicated receipt — write-before-ack makes a repeated hand-off a
+        no-op, never a second execution (LEG-093).
+        """
+        if not route:
+            raise ValueError("route must contain at least one agent")
+        first_class, first_input_as = route[0]
+        gate = await self._gates.fetch(first_class)
+        if gate is not None and gate.get("state") == ActivityState.DISABLED.value:
+            logger.warning("runtime work_item denied class=%s by=peer", first_class)
+            raise RecoverableError(f"class {first_class!r} is disabled (entry gate closed)")
+        validate_task_id(task_id)
+        result_queue = result_queue_key(task_id)
+        rekeyed_payload = {first_input_as: payload}
+        root_branch_id = str(uuid.uuid4())
+        token = FlowToken(
+            level_route=route,
+            current_index=0,
+            end_of_level_queue=result_queue,
+            level=1,
+            launcher_class=first_class,
+            task_id=task_id,
+            branch_id=root_branch_id,
+            root=True,
+        )
+        try:
+            await self.manager.submit_task(
+                SEED_TASK,
+                task_id=task_id,
+                client_id=author,
+                token=token.model_dump(mode="json"),
+                payload=rekeyed_payload,
+            )
+        except ValueError as exc:
+            logger.info(
+                "runtime work_item dedup task=%s class=%s reason=%s",
+                task_id,
+                first_class,
+                exc,
+            )
+            return WorkItemReceipt(id=task_id, deposited=False, deduplicated=True)
+        logger.info(
+            "runtime work_item task=%s owner=%s class=%s result_queue=%s deposited=true",
+            task_id,
+            author,
+            first_class,
+            result_queue,
+        )
+        return WorkItemReceipt(id=task_id, deposited=True)
 
     async def status(self, task_id: str, client_id: str | None) -> TaskEntry:
         """Return the business task entry if ``client_id`` owns it, else raise.
@@ -1133,4 +1217,7 @@ __all__ = [
     "SEED_TASK",
     "NodeOp",
     "Runtime",
+    "TaskEntry",
+    "TaskState",
+    "WorkItemReceipt",
 ]

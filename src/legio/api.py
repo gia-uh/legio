@@ -34,8 +34,14 @@ from fastapi import FastAPI, Header, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from legio.errors import RecoverableError, UnknownAgentError, UnrecoverableError
+from legio.errors import (
+    InvalidNameError,
+    RecoverableError,
+    UnknownAgentError,
+    UnrecoverableError,
+)
 from legio.flow import SCHEMA_VERSION, FlowToken
+from legio.naming import validate_task_id
 from legio.patterns import Catalog, starting_route
 from legio.runtime import Runtime, TaskEntry, TaskState
 from legio.security import ClientTokenStore, FederationTokenStore
@@ -92,6 +98,32 @@ class CatalogResponse(BaseModel):
 
     schema_version: int
     agents: list[CatalogAgentEntry]
+
+
+class WorkItemRequest(BaseModel):
+    """Body of ``POST /work-items/{agent}`` (LEG-092).
+
+    The author mints ``task_id`` (``<node_id>:<uuid>``) so the result lands
+    where it reads it and so a retried delivery is idempotent; ``payload`` is
+    the work's inputs; ``schema_version`` is the flow schema version the author
+    advertised for this agent in its roster read (LEG-090). Extra fields are
+    forbidden — a lifecycle verb is simply not part of the work-item contract
+    (federation transports work, never lifecycle, session 85q).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    task_id: str = Field(min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    schema_version: int
+
+
+class WorkItemResponse(BaseModel):
+    """The acceptor's receipt for a deposited work item (LEG-092)."""
+
+    id: str
+    deposited: bool
+    deduplicated: bool = False
 
 
 def _to_catalog_response(catalog: Catalog) -> CatalogResponse:
@@ -198,7 +230,8 @@ def create_app(
     typed error. If not provided, the agent name is used as a single-agent route.
 
     When ``federation_token`` is provided, the app serves ``GET /catalog``
-    (LEG-090) guarded by the shared token; absent the endpoint is not mounted.
+    (LEG-090) and ``POST /work-items/{agent}`` (LEG-092) guarded by the shared
+    token; absent the endpoints are not mounted (no federation surface).
     """
     app = FastAPI(title="legio", version="0.1.0")
 
@@ -280,6 +313,57 @@ def create_app(
                 return JSONResponse(status_code=503, content={"code": "no_capacity"})
             return _to_catalog_response(pattern_catalog)
 
+        @app.post("/work-items/{agent}", response_model=WorkItemResponse)
+        async def work_item(
+            agent: str,
+            body: WorkItemRequest,
+            authorization: str | None = Header(default=None),
+        ) -> WorkItemResponse | JSONResponse:
+            token = _bearer_token(authorization)
+            if token is None or not federation_store.is_valid(token):
+                logger.warning("api work_item unauthorized agent=%s", agent)
+                return _unauthorized()
+            if pattern_catalog is None:
+                logger.error("api work_item no capacity agent=%s", agent)
+                return JSONResponse(status_code=503, content={"code": "no_capacity"})
+            if not pattern_catalog.is_served(agent):
+                logger.warning("api work_item unknown agent=%s", agent)
+                return JSONResponse(status_code=404, content={"code": "unknown_agent"})
+            if body.schema_version != SCHEMA_VERSION:
+                logger.warning(
+                    "api work_item interface_mismatch agent=%s schema=%s",
+                    agent,
+                    body.schema_version,
+                )
+                return JSONResponse(status_code=409, content={"code": "interface_mismatch"})
+            try:
+                validate_task_id(body.task_id)
+            except InvalidNameError as exc:
+                logger.warning("api work_item invalid_id agent=%s reason=%s", agent, exc)
+                return JSONResponse(status_code=422, content={"code": "invalid_request"})
+            author = body.task_id.split(":", 1)[0]
+            route = starting_route(pattern_catalog.specs[agent])
+            try:
+                receipt = await runtime.submit_work_item(
+                    author, route, body.payload, task_id=body.task_id
+                )
+            except RecoverableError as exc:
+                logger.warning("api work_item denied agent=%s reason=%s", agent, exc)
+                return JSONResponse(status_code=409, content={"code": "class_disabled"})
+            logger.info(
+                "api work_item task=%s owner=%s agent=%s deposited=%s deduplicated=%s",
+                receipt.id,
+                author,
+                agent,
+                receipt.deposited,
+                receipt.deduplicated,
+            )
+            return WorkItemResponse(
+                id=receipt.id,
+                deposited=receipt.deposited,
+                deduplicated=receipt.deduplicated,
+            )
+
     return app
 
 
@@ -290,5 +374,7 @@ __all__ = [
     "StatusResponse",
     "SubmitRequest",
     "SubmitResponse",
+    "WorkItemRequest",
+    "WorkItemResponse",
     "create_app",
 ]
