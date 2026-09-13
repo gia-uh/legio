@@ -321,10 +321,59 @@ are red for the yet-unimplemented surface.
   disabled; a dependency cycle is rejected before anything is recorded (§8
   step 6); `spec_yamls` feed the runtime YAML cache (§8 step 3). Pool size is
   intent — the catalog records the real count of instances brought up.
-  - **Accept**: dependents born enabled from a satisfying graph; pool resolution
-    precedence tested; cycle rejection leaves no recorded class; per-class
-    instances reflect the resolved pool; single-queue concurrent processing of
-    LEG-080 is the agent-loop interior, pending a maintainer decision.
+- **Accept**: dependents born enabled from a satisfying graph; pool resolution
+     precedence tested; cycle rejection leaves no recorded class; per-class
+     instances reflect the resolved pool. The "single-queue concurrent processing"
+     interior of LEG-080 is resolved by the standing agent loop of LEG-082
+     (N instance loops, one class queue, asyncio interleave; maintainer decision,
+     session 85m).
+- **LEG-082** Authenticated control channel + standing agent loop. The **only**
+  way to talk to an agent is its queue: lifecycle orders arrive as signed
+  `ControlMessage`s minted **only** by the node's Runtime and honored by the
+  agent **between its dispatches**. Replaces the Manager control-mode coupling
+  of LEG-083 for instances.
+  - **Accept**: `legio.flow.control` — `ControlMessage` (frozen: target_instance,
+    action `enable|disable|terminate_with_drain`, origin `operator|automatic`,
+    seq, HMAC signature); per-boot in-process node key (never persisted);
+    verifier is a pure function the agent holds (verify-only, cannot mint);
+    control deposits use priority `-1.0` (beaver `ORDER BY priority ASC`, work
+    stays `0.0`) so control jumps work; `seq` monotonic per instance (anti-replay,
+    restart resets the key so old signatures never validate).
+  - **Accept**: `AgentBase.standing_loop()` — long-lived interior loop that
+    suspends on the class queue (beaver `get(block=True)`, the sanctioned agent
+    suspension); an item whose `message_type == control` is validated (None
+    verifier → visible WARNING, never silent) and honored **between dispatches**:
+    `enable` resumes consuming, `disable` parks locally (loop alive, work
+    requeued at the back), `terminate_with_drain` finishes in-flight work then
+    returns (the agent exits its own loop); a control addressed to another
+    instance of the pool is requeued at the back (best-effort, §12.5.4-style
+    race accepted); `run()`/`process_next()` unchanged. The class inbox now
+    carries control messages too (§12.2 amended); results still partition by
+    queue.
+- **LEG-087** Real bring-up (parked async generator) + lifecycle facts minting
+  control. The one-shot bring-up seam becomes the real one: an **async
+  generator** registered with the Manager (parked by `_drive_parked`), which
+  spawns the instance's `standing_loop` and yields at between-dispatch
+  checkpoints; the record reads `running` while the generator is parked and a
+  terminal state only when the agent exited its own loop (`finally: await
+  loop_task`).
+  - **Accept**: the Manager knows an agent stopped **structurally** — no timers,
+    no polls; the bring-up confirm waits `running` (§5.1 step 2, updated), not
+    SUCCESS; instance `enable`/`disable`/`destroy` verbs ride new lifecycle
+    facts that mint the signed `ControlMessage` deposit on the target instance's
+    queue, confirmed by bounded Manager reads (§5.8); destroy no longer uses
+    `manager.cancel` — the message ends the agent and the record terminal
+    follows; per-agent control verifiers injected at boot; boot registers the
+    real bring-up generator (multi-executor per §6.1).
+- **LEG-088** Node control intake (`node_ops`) + Runtime wiring. The Runtime's
+  own intake queue for operator intents (CLI/API/peer) — the **source** of the
+  `origin: operator` lifespan, drained **via Manager facts**, never pumped by
+  the Runtime.
+  - **Accept**: the Runtime's footprint extends from only `gates` to
+    `gates` + the `node_ops` intake (owner/signer of every control message, the
+    only minter); intents → Runtime decides → Manager fact mints + deposits;
+    naming never collides with the Manager's `control` scope; the CLI (LEG-081)
+    reaches the verbs through `node_ops`.
 
 ### R-9 — Federation
 
