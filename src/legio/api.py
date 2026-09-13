@@ -17,11 +17,14 @@ An optional ``pattern_catalog`` can be provided to derive the starting route
 from the pattern catalog (LEG-021). If not provided, the agent name is used as
 a single-agent route.
 
-Federation (LEG-090): when ``federation_token`` is provided, the app also
-serves ``GET /catalog`` guarded by the shared federation token (L1, LEG-017) —
-the roster of the node's served capacity (``pattern_catalog.served()``). A peer
-reads this to author remote work (LEG-091/092). Without a federation token the
-endpoint is not mounted (404): no federation surface.
+Federation (LEG-090/092/093): when ``federation_token`` is provided, the app
+also serves ``GET /catalog`` (the node's roster of served capacity, guarded by
+the shared federation token), ``POST /work-items/{agent}`` (remote deposit) and
+the outbox verbs ``GET``/``DELETE /outbox/{task_id}`` (result readback/ack for
+remote work). A peer reads ``/catalog`` to author remote work (LEG-091/092);
+results land on the task's outbox (the result queue) and the author polls and
+acks them here (LEG-093). Without a federation token none of the endpoints are
+mounted (404): no federation surface.
 """
 
 from __future__ import annotations
@@ -126,6 +129,31 @@ class WorkItemResponse(BaseModel):
     deduplicated: bool = False
 
 
+class OutboxPollResponse(BaseModel):
+    """The author's non-blocking poll of a work item's outbox (LEG-093).
+
+    ``ready`` is true once the acceptor's flow has written the
+    ``ExecutionResultMessage`` to the task's result queue — the write always
+    precedes any ack (write-before-ack is structural), and this poll never
+    blocks or pushes (rule 8).
+    """
+
+    id: str
+    ready: bool
+    result: dict[str, Any] | None = None
+
+
+class OutboxAckResponse(BaseModel):
+    """The author's destructive ack of a work item's outbox (LEG-093).
+
+    ``acked`` is true when the result was consumed; false when the outbox was
+    already empty (idempotent ack — never an error).
+    """
+
+    id: str
+    acked: bool
+
+
 def _to_catalog_response(catalog: Catalog) -> CatalogResponse:
     """Derive the node's capacity roster from its served pattern catalog.
 
@@ -176,6 +204,28 @@ def _unauthorized() -> JSONResponse:
 
 def _forbidden() -> JSONResponse:
     return JSONResponse(status_code=403, content={"code": "forbidden"})
+
+
+def _guard_outbox(
+    task_id: str,
+    federation_store: FederationTokenStore | None,
+    token: str | None,
+) -> str | JSONResponse:
+    """L1 + identifier guard shared by both outbox verbs (LEG-093).
+
+    Both ``GET``/``DELETE /outbox/{task_id}`` need the shared federation token
+    (401) and a well-formed author task id (422) before touching the result
+    queue. Returns the validated ``task_id`` or a JSON error.
+    """
+    if federation_store is None or token is None or not federation_store.is_valid(token):
+        logger.warning("api outbox unauthorized task=%s", task_id)
+        return _unauthorized()
+    try:
+        validate_task_id(task_id)
+    except InvalidNameError as exc:
+        logger.warning("api outbox invalid_id task=%s reason=%s", task_id, exc)
+        return JSONResponse(status_code=422, content={"code": "invalid_request"})
+    return task_id
 
 
 def _resolve_route(agent_name: str, catalog: Catalog | None) -> tuple[tuple[str, str], ...]:
@@ -230,7 +280,8 @@ def create_app(
     typed error. If not provided, the agent name is used as a single-agent route.
 
     When ``federation_token`` is provided, the app serves ``GET /catalog``
-    (LEG-090) and ``POST /work-items/{agent}`` (LEG-092) guarded by the shared
+    (LEG-090), ``POST /work-items/{agent}`` (LEG-092) and the outbox verbs
+    ``GET``/``DELETE /outbox/{task_id}`` (LEG-093), all guarded by the shared
     token; absent the endpoints are not mounted (no federation surface).
     """
     app = FastAPI(title="legio", version="0.1.0")
@@ -364,6 +415,31 @@ def create_app(
                 deduplicated=receipt.deduplicated,
             )
 
+        @app.get("/outbox/{task_id}", response_model=OutboxPollResponse)
+        async def outbox_poll(
+            task_id: str,
+            authorization: str | None = Header(default=None),
+        ) -> OutboxPollResponse | JSONResponse:
+            auth_data = _guard_outbox(task_id, federation_store, _bearer_token(authorization))
+            if isinstance(auth_data, JSONResponse):
+                return auth_data
+            payload = await runtime.read_outbox(task_id)
+            ready = payload is not None
+            logger.info("api outbox poll task=%s ready=%s", task_id, ready)
+            return OutboxPollResponse(id=task_id, ready=ready, result=payload)
+
+        @app.delete("/outbox/{task_id}", response_model=OutboxAckResponse)
+        async def outbox_ack(
+            task_id: str,
+            authorization: str | None = Header(default=None),
+        ) -> OutboxAckResponse | JSONResponse:
+            auth_data = _guard_outbox(task_id, federation_store, _bearer_token(authorization))
+            if isinstance(auth_data, JSONResponse):
+                return auth_data
+            acked = await runtime.ack_outbox(task_id)
+            logger.info("api outbox ack task=%s acked=%s", task_id, acked)
+            return OutboxAckResponse(id=task_id, acked=acked)
+
     return app
 
 
@@ -371,6 +447,8 @@ __all__ = [
     "CatalogAgentEntry",
     "CatalogAgentInterface",
     "CatalogResponse",
+    "OutboxAckResponse",
+    "OutboxPollResponse",
     "StatusResponse",
     "SubmitRequest",
     "SubmitResponse",

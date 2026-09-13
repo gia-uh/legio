@@ -718,6 +718,39 @@ class Runtime:
         )
         return WorkItemReceipt(id=task_id, deposited=True)
 
+    async def ack_outbox(self, task_id: str) -> bool:
+        """Consume the result of a completed work item from its outbox queue.
+
+        The outbox is the task's result queue (``result_queue_key(task_id)``),
+        where the agent flow written the ``ExecutionResultMessage`` during
+        execution (LEG-093). The ack is a destructive drain: after it, a poll
+        reads empty (read-after-ack = empty). An already-empty outbox is a
+        no-op (`False`), never an error.
+        """
+        outbox = self._db.queue(queue_key(result_queue_key(task_id)))
+        try:
+            await outbox.get(block=False)
+        except IndexError:
+            return False
+        logger.info("runtime ack_outbox task=%s", task_id)
+        return True
+
+    async def read_outbox(self, task_id: str) -> dict[str, Any] | None:
+        """Peek the result queue for a completed work item (LEG-093).
+
+        Returns the ``ExecutionResultMessage`` payload when the flow has
+        already written it, else ``None`` — a non-blocking poll (rule 8). The
+        write happened at execution time, independent of any ack; the message
+        is left in place for ``ack_outbox`` to consume.
+        """
+        outbox = self._db.queue(queue_key(result_queue_key(task_id)))
+        item = await outbox.peek()
+        if item is None:
+            return None
+        result = ExecutionResultMessage.model_validate(item.data)
+        logger.info("runtime read_outbox task=%s ready=true", task_id)
+        return dict(result.payload)
+
     async def status(self, task_id: str, client_id: str | None) -> TaskEntry:
         """Return the business task entry if ``client_id`` owns it, else raise.
 
