@@ -37,6 +37,12 @@ from .messages import SCHEMA_VERSION
 CONTROL_PRIORITY = -1.0
 CONTROL_MESSAGE_TYPE = "control"
 
+# The state-report out-side (LEG-095): the agent's own, unsigned statement that
+# one control was honored. It lands on a node-internal intake — one beaver queue
+# by name, exactly the ``node_ops`` pattern (not a ``legio:queue:`` member).
+STATE_REPORT_MESSAGE_TYPE = "state_report"
+STATE_REPORT_SCOPE = "state_report"
+
 _CONTROL_KEY_DOMAIN = b"legio:node-control-key:v1"
 
 
@@ -140,13 +146,51 @@ class ControlVerifier:
         return hmac.compare_digest(expected, message.signature)
 
 
+class ReportedState(str, Enum):
+    """The state an honored control leaves the instance in, as seen by the agent."""
+
+    PARKED = "parked"
+    READY = "ready"
+    TERMINATING = "terminating"
+
+
+class AgentStateReport(BaseModel):
+    """An agent's own, unsigned statement of one honored control (LEG-095).
+
+    Deposited by the agent at ``STATE_REPORT_SCOPE`` after honoring a valid
+    control — one report per honored control, never for a rejected/requeued/
+    foreign one. The report is **unsigned by design**: the agent holds a
+    verify-only handle and can never mint (LEG-082), so the Runtime trusts the
+    report by **correlation with its own pending-mint ledger** (the
+    ``(instance_id, action, seq)`` it itself minted) — never by blind trust. An
+    external writer cannot mint a control in the first place.
+    """
+
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        validate_assignment=True,
+    )
+
+    schema_version: int = Field(default=SCHEMA_VERSION, frozen=True)
+    message_type: Literal["state_report"] = STATE_REPORT_MESSAGE_TYPE
+    instance_id: str
+    action: ControlAction
+    seq: int = Field(ge=1, frozen=True)
+    state: ReportedState
+
+
 __all__ = [
     "CONTROL_MESSAGE_TYPE",
     "CONTROL_PRIORITY",
+    "STATE_REPORT_MESSAGE_TYPE",
+    "STATE_REPORT_SCOPE",
+    "AgentStateReport",
     "ControlAction",
     "ControlMessage",
     "ControlOrigin",
     "ControlVerifier",
+    "ReportedState",
     "derive_control_key",
     "sign_control",
 ]

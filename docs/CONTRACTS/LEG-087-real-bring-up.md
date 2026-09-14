@@ -50,10 +50,13 @@ New Manager facts registered at boot (the Runtime decides, the Manager executes)
 
 - `ENABLE_INSTANCE` / `DISABLE_INSTANCE`: the fact mints a signed
   `ControlMessage(action=enable|disable, origin=operator)` with the per-boot node
-  key and deposits it at `CONTROL_PRIORITY` on the target instance's class queue.
-  Confirm: bounded Manager read that the **bring-up** record still reads
-  `running` (§5.8). There is deliberately **no ack** — the agent honors the
-  order between its dispatches; the Registry is updated posteriori.
+  key, registers the mint in a pending ledger, and deposits it at
+  `CONTROL_PRIORITY` on the target instance's class queue.
+  Confirm: bounded Registry read that the instance row reaches the target state
+  (§5.8), **converged via the agent's state report** — one report per honored
+  control, applied by the Runtime's report intake only after correlating
+  `(instance_id, action, seq)` with the pending mint (LEG-095). There is
+  deliberately **no optimistic write**; the Registry is updated posteriori.
 - `DESTROY_INSTANCE`: mints `ControlMessage(action=terminate_with_drain)` and
   deposits it; confirm: bounded wait for the **bring-up** record to reach
   `success` (the agent drained and exited its own loop; the generator ended).
@@ -102,8 +105,10 @@ per-agent verifier with `standing_loop`'s instance binding, all fail-fast (rule 
 
 ## Notes / debt
 
-- Enable/disable have no strong ack (by design: no acks in the protocol); the
-  confirm is a bounded read. Documented, not debt.
+- Enable/disable converge via the **state report** (LEG-095): the agent
+  acknowledges a control by depositing one report per honored control; the
+  Runtime correlates it against its pending mint and applies it. The confirm is
+  a bounded Registry read. Documented, not debt.
 - **Executor occupancy:** a real bring-up's parked generator occupies its
   dispatching executor for the agent's whole life. A node therefore runs **one
   executor per live bring-up instance + spares for facts** (§6.1).
@@ -116,4 +121,5 @@ per-agent verifier with `standing_loop`'s instance binding, all fail-fast (rule 
   on a shared agent is the minimum guard.
 - `AGENT_LIFECYCLE.md` §5.1 step 2 confirm, §6.1 bring-up row, and the §8 step-4
   wording are amended to the parked-generator model; the §5.3–§5.8 verbs are
-  amended to the message model.
+  amended to the message model (enable/disable further amended to the
+  report-convergent model by LEG-095).

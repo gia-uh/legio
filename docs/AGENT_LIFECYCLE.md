@@ -871,10 +871,12 @@ Precondition: the instance exists and is disabled.
 
 How: **Runtime** (as the only minting authority) deposits a signed
 `ControlMessage(action=enable)` at control priority on the instance's class queue
-(the `ENABLE_INSTANCE` fact, LEG-087) → confirms the bring-up record is alive
-(bounded Manager read — **deliberately no ack**, §5.8) → on success **Runtime** →
-**Registry** `set_instance_state(enabled)` (posteriori). A no-op when the instance
-is already enabled.
+(the `ENABLE_INSTANCE` fact, LEG-087, with the mint registered in its pending
+ledger) → converges on the **state report**: the agent deposits one report per
+honored control (`state=ready`, LEG-095) and the Runtime's report intake applies
+it to the **Registry** once correlated against the pending mint (no optimistic
+write) → the confirm is a bounded Registry read of the target state (§5.8) →
+the instance row reads `enabled`. A no-op when the instance is already enabled.
 
 ### 5.4 Enable class
 Precondition: the class exists and is disabled. Enabling is a **conscious**
@@ -894,9 +896,9 @@ explicit `disable_instance` of a single agent is a one-shot pause that the next
 
 How: **Runtime** (conscious decision) → ensures an agent exists (via the
 bring-up, confirmed `running`, recorded **posteriori** in **Registry**) → orders
-**all** instances enabled (a signed `enable` control deposit per instance,
-confirmed by a weak alive-read of each bring-up) → **Registry**
-`set_instance_state(enabled)` for each + `set_class_state(enabled)` after the
+**all** instances enabled (a signed `enable` control deposit per instance, each
+converging on its state report — §5.3) → **Registry** `set_instance_state(enable)`
+applied by the report intake for each + `set_class_state(enabled)` after the
 facts hold.
 
 ### 5.5 Disable instance
@@ -908,9 +910,10 @@ Precondition: the instance exists and is enabled.
 
 How: **Runtime** (the only minting authority) deposits a signed
 `ControlMessage(action=disable)` at control priority on the instance's class
-queue (the `DISABLE_INSTANCE` fact, LEG-087) → confirms the bring-up record is
-alive (bounded Manager read — **no strong ack**, §5.8) → on success **Runtime** →
-**Registry** `set_instance_state(disabled)` (posteriori). The agent's own loop
+queue (the `DISABLE_INSTANCE` fact, LEG-087, ledgered) → converges on the state
+report (`state=parked`; the intake applies it once correlated with the pending
+mint) → the confirm is a bounded Registry read of `disabled` (§5.8) — no
+optimistic write. The agent's own loop
 parks — inbox work is held in-memory, losslessly released on `enable` — and stays
 alive so `enable` can reach it. Unlike disable-class, here **one specific agent
 is stopped**. A no-op when the instance is already disabled.
@@ -1157,8 +1160,8 @@ confirmed (registration-is-a-mirror):
 |---|---|---|---|
 | create_instance | `submit_task(...)` (bring-up task; real bring-up is a **parked async generator** spawning the agent's own standing loop, §5.2/§6.1) | `running` while the agent lives (structural terminal on its exit) | `record_instance` |
 | destroy_instance | `DESTROY_INSTANCE` fact: **mints + deposits a signed `terminate_with_drain` control message** on the instance's class queue (LEG-082/LEG-087) | bring-up record reaches `success` — the agent's structural exit (no `cancel` on this path) | `remove_instance` |
-| disable_instance | `DISABLE_INSTANCE` fact: **mints + deposits a signed `disable` control** on the class queue (the agent parks its own loop between dispatches) | weak bounded read: bring-up record alive (`running`/`success`) — **no strong ack by design** | `set_instance_state(disabled)` |
-| enable_instance | `ENABLE_INSTANCE` fact: **mints + deposits a signed `enable` control** on the class queue | weak bounded read: bring-up record alive — no strong ack | `set_instance_state(enabled)` |
+| disable_instance | `DISABLE_INSTANCE` fact: **mints + deposits a signed `disable` control** on the class queue (the agent parks its own loop between dispatches) | converges on the state report (`parked`); bounded Registry read of `disabled` — no strong ack by design | `set_instance_state(disabled)` |
+| enable_instance | `ENABLE_INSTANCE` fact: **mints + deposits a signed `enable` control** on the class queue | converges on the state report (`ready`); bounded Registry read of `enabled` — no strong ack | `set_instance_state(enabled)` |
 | create_class (pool N) | N × `submit_task(...)` | N tasks `running` | `record_class` + N×`record_instance` + `cache_spec` |
 | destroy_class | N × `DESTROY_INSTANCE` (terminate-with-drain deposits) | all bring-up records `success` | N×`remove_instance` + `remove_class` |
 

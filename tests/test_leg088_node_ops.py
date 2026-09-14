@@ -33,8 +33,7 @@ from beaver import AsyncBeaverDB
 
 from legio.agents.tool_agent import ToolAgent
 from legio.errors import RecoverableError
-from legio.flow import ControlAction, ControlMessage, ControlVerifier
-from legio.flow.control import CONTROL_MESSAGE_TYPE
+from legio.flow import ControlVerifier
 from legio.manager import TaskStatus
 from legio.naming import queue_key
 from legio.patterns import load_patterns
@@ -191,23 +190,6 @@ async def _status_is(runtime: Runtime, task_id: str, expected: TaskStatus) -> bo
     return await _record_status(runtime, task_id) == expected
 
 
-async def _class_control_messages(
-    runtime: Runtime, class_name: str
-) -> list[ControlMessage]:
-    """Destructively drain every control message currently on the class queue."""
-    queue = runtime._db.queue(queue_key(class_name))
-    messages: list[ControlMessage] = []
-    while True:
-        item = await queue.peek()
-        if item is None:
-            break
-        await queue.get(block=False)
-        data = dict(item.data)
-        if data.get("message_type") == CONTROL_MESSAGE_TYPE:
-            messages.append(ControlMessage.model_validate(data))
-    return messages
-
-
 async def _scopes(db: AsyncBeaverDB) -> tuple[set[str], set[str]]:
     """Distinct beaver dict/queue scopes the whole tree has touched (footprint pin)."""
     cursor = await db.connection.execute("SELECT DISTINCT dict_name FROM __beaver_dicts__")
@@ -310,14 +292,17 @@ async def test_deposit_queues_a_typed_intent_and_never_touches_the_agent_queue(
 
 
 @pytest.mark.asyncio
-async def test_intent_reaches_instance_control_on_the_one_shot_vehicle(
+async def test_intent_reaches_instance_control_on_the_mounted_vehicle(
     beaver_db,
 ) -> None:
     """§B: an operator intent on ``node_ops`` is drained by the ``NODE_OP``
     fact, relayed to the lifecycle verb, and reaches the instance as a signed
     control message on its class queue (minted only by the Runtime); the
-    Registry mirrors the result posteriori."""
+    Registry mirrors the result **only after** the standing loop honors the
+    control and its honor report converges (LEG-095 — no optimistic posteriori
+    write)."""
     runtime = _runtime(beaver_db)
+    runtime.mount_agents({"pinger": _tool_agent(beaver_db)})
     pumps = _start_executor(runtime)
     name, spec = _catalog_spec("pinger")
     try:
@@ -330,14 +315,9 @@ async def test_intent_reaches_instance_control_on_the_one_shot_vehicle(
         assert await _wait_until(
             lambda: _state_is(runtime, name, instance_id, ActivityState.DISABLED)
         )
-
-        messages = await _class_control_messages(runtime, name)
-        assert len(messages) == 1
-        message = messages[0]
-        assert message.target_instance == instance_id
-        assert message.action == ControlAction.DISABLE
-        assert ControlVerifier(KEY).verify(message)
-        assert message.seq >= 1
+        assert runtime._control_sequence[(name, instance_id)] == 1
+        assert runtime._pending_controls == {}
+        assert await runtime._state_reports.count() == 0
     finally:
         await _teardown(beaver_db, runtime, [name], pumps=pumps)
 
@@ -419,7 +399,9 @@ async def test_footprint_is_exactly_gates_plus_node_ops(beaver_db) -> None:
     """§C/rule 13: exercising the operator surface leaves the Runtime's beaver
     footprint exactly ``gates`` + ``node_ops`` — every other scope is Manager,
     Registry or flow-owned (naming never collides with the Manager's
-    ``control`` scope)."""
+    ``control`` scope). The LEG-095 intake scope ``state_report`` exists as
+    another Runtime-owned handle, but it only materializes on its first deposit
+    (no instance lives here, so no report is ever put — the pin holds)."""
     runtime = _runtime(beaver_db)
     name, spec = _catalog_spec("pinger")
     await runtime.create_class(spec, spec_yaml=_atomic_yaml("pinger"), pool=0)

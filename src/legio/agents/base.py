@@ -67,11 +67,14 @@ from pydantic import BaseModel, ValidationError
 
 from legio.flow import (
     CONTROL_MESSAGE_TYPE,
+    STATE_REPORT_SCOPE,
+    AgentStateReport,
     ControlAction,
     ControlMessage,
     ControlVerifier,
     ExecutionRequestMessage,
     ExecutionResultMessage,
+    ReportedState,
 )
 from legio.naming import queue_key
 from legio.patterns.compile import compile_schema
@@ -259,6 +262,46 @@ class AgentBase:
                 len(hold),
             )
 
+    async def _deposit_state_report(
+        self, message: ControlMessage, state: ReportedState
+    ) -> None:
+        """Deposit the instance's statement that one control was honored (LEG-095).
+
+        One report per honored control, on the Runtime's node-internal intake
+        (``STATE_REPORT_SCOPE``) at neutral priority. The report is unsigned by
+        design; the Runtime authenticates it by correlating ``(instance_id,
+        action, seq)`` with its own pending-mint ledger — never by trust. A
+        failed deposit is a visible crash event (rule 9/11) but **does not
+        change the honor decision**: the loop already transitioned.
+        """
+        try:
+            await self._db.queue(STATE_REPORT_SCOPE).put(
+                AgentStateReport(
+                    instance_id=message.target_instance,
+                    action=message.action,
+                    seq=message.seq,
+                    state=state,
+                ).model_dump(mode="json"),
+                priority=0.0,
+            )
+            logger.info(
+                "agent state_report instance=%s class=%s action=%s state=%s seq=%s",
+                self._control_instance,
+                self._agent_id,
+                message.action.value,
+                state.value,
+                message.seq,
+            )
+        except Exception:
+            logger.exception(
+                "agent state_report deposit FAILED instance=%s class=%s action=%s state=%s seq=%s",
+                self._control_instance,
+                self._agent_id,
+                message.action.value,
+                state.value,
+                message.seq,
+            )
+
     async def _honor_control(self, item: dict[str, Any]) -> bool:
         """Validate and honor one control message between dispatches (LEG-082).
 
@@ -324,6 +367,7 @@ class AgentBase:
                 self._agent_id,
                 message.origin.value,
             )
+            await self._deposit_state_report(message, ReportedState.PARKED)
         elif action is ControlAction.ENABLE:
             self._control_paused = False
             await self._release_hold()
@@ -333,6 +377,7 @@ class AgentBase:
                 self._agent_id,
                 message.origin.value,
             )
+            await self._deposit_state_report(message, ReportedState.READY)
         elif action is ControlAction.TERMINATE_WITH_DRAIN:
             await self._release_hold()
             logger.info(
@@ -341,6 +386,7 @@ class AgentBase:
                 self._agent_id,
                 message.origin.value,
             )
+            await self._deposit_state_report(message, ReportedState.TERMINATING)
             return False
         return True
 

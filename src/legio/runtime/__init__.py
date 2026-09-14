@@ -71,10 +71,13 @@ from legio.config import LifecycleConfig, PoolsConfig
 from legio.errors import RecoverableError
 from legio.flow import (
     CONTROL_PRIORITY,
+    STATE_REPORT_SCOPE,
+    AgentStateReport,
     ControlAction,
     ExecutionRequestMessage,
     ExecutionResultMessage,
     FlowToken,
+    ReportedState,
     derive_control_key,
     sign_control,
 )
@@ -98,6 +101,12 @@ DESTROY_INSTANCE = "destroy_instance"
 # controls *tasks*, ``node_ops`` carries *operator intents*).
 NODE_OP_TASK = "node_op"
 NODE_OPS_SCOPE = "node_ops"
+# LEG-095 — the state-report intake: the agent's honor statements land on the
+# node-internal ``state_report`` queue (plain beaver naming, the ``node_ops``
+# pattern) and are drained via this Manager fact (the intake's scope constant
+# ``STATE_REPORT_SCOPE`` itself lives in ``legio.flow.control`` — the agent
+# deposits there and cannot import the Runtime).
+STATE_REPORT_TASK = "state_report"
 CLASS_OP_VERBS = frozenset({"enable_class", "disable_class", "destroy_class"})
 INSTANCE_OP_VERBS = frozenset({"enable_instance", "disable_instance", "destroy_instance"})
 NODE_OP_VERBS = CLASS_OP_VERBS | INSTANCE_OP_VERBS
@@ -208,6 +217,12 @@ class Runtime:
         # it (never the Runtime pumping). The Manager owns ``control`` and
         # ``pending_tasks``; this ownership split never collides (rule 13).
         self._node_ops = db.queue(NODE_OPS_SCOPE)
+        # LEG-095: the agent honor-statement intake, drained via the
+        # ``STATE_REPORT`` Manager fact, and the Runtime's own pending-mint
+        # ledger (mint time → matching report applied); the intake never trusts
+        # a report, it correlates it with the ledger (LEG-095 §A/§C).
+        self._state_reports = db.queue(STATE_REPORT_SCOPE)
+        self._pending_controls: dict[tuple[str, str, int], str] = {}
         self._instance_tasks: dict[tuple[str, str], str] = {}
         self._instance_sequence: dict[str, int] = {}
         # The authenticated control channel (LEG-082): the Runtime is the only
@@ -225,6 +240,7 @@ class Runtime:
         for fact in (ENABLE_INSTANCE, DISABLE_INSTANCE, DESTROY_INSTANCE):
             self.manager.register(fact, self._instance_control_fact)
         self.manager.register(NODE_OP_TASK, self._node_op_fact)  # LEG-088 intake drain
+        self.manager.register(STATE_REPORT_TASK, self._state_report_fact)  # LEG-095 drain
         logger.info("runtime up node=%s", node_id)
 
     # --- registered callables (the facts the Manager executes) ----------------
@@ -308,9 +324,23 @@ class Runtime:
         with the per-boot key and deposit it at control priority on the target
         instance's class queue. The Runtime (operator origin) is the only
         minting authority; the message is honored between the agent's dispatches.
+
+        The mint also **enters the pending report ledger** (LEG-095): the entry
+        ``(instance_id, action, seq)`` lives from mint until the matching honor
+        report is consumed by ``_state_report_fact`` — the intake correlates a
+        report with exactly this ledger, never by trust.
         """
         seq = self._control_sequence.get((class_name, instance_id), 0) + 1
         self._control_sequence[(class_name, instance_id)] = seq
+        self._pending_controls[(instance_id, action, seq)] = class_name
+        logger.info(
+            "runtime control minted class=%s instance=%s action=%s seq=%s "
+            "pending_report=True",
+            class_name,
+            instance_id,
+            action,
+            seq,
+        )
         message = sign_control(
             self._control_key,
             target_instance=instance_id,
@@ -320,13 +350,7 @@ class Runtime:
         await self._db.queue(queue_key(class_name)).put(
             message.model_dump(mode="json"), priority=CONTROL_PRIORITY
         )
-        logger.info(
-            "runtime control minted class=%s instance=%s action=%s seq=%s",
-            class_name,
-            instance_id,
-            action,
-            seq,
-        )
+        await self.manager.submit_task(STATE_REPORT_TASK)  # kick the intake drain
         return message.model_dump(mode="json")
 
     async def _seed_impl(
@@ -441,6 +465,80 @@ class Runtime:
         )
         return {"processed": 1, "replenished": replenished}
 
+    async def _state_report_fact(self) -> dict[str, Any]:
+        """The state-report intake drain (LEG-095 §C): mirrors ``_node_op_fact``.
+
+        Pop one agent honor report off ``state_report``, validate it, apply it
+        to the Registry state and re-schedule one drain while reports remain
+        (scheduling field = presence on the intake, a data read, never a sleep,
+        rule 8). Validation is by **self-correlation**: the pending-mint ledger
+        must hold exactly ``(instance_id, action, seq)`` and the instance must
+        still exist — the intake single-writes the Registry state only on a full
+        hit (no optimism). Each miss is a visible ``WARNING``, the item is
+        consumed and never applied (rule 9); the pending entry of a *different*
+        control is left untouched.
+        """
+        try:
+            item = await self._state_reports.get(block=False)
+        except IndexError:
+            return {"processed": 0, "replenished": False}
+        report = AgentStateReport.model_validate(item.data)
+        class_name = self._pending_controls.pop(
+            (report.instance_id, report.action.value, report.seq), None
+        )
+        replenished = await self._state_reports.count() > 0
+        if class_name is None:
+            logger.warning(
+                "runtime state_report orphan instance=%s action=%s seq=%s "
+                "(no pending mint; consumed, not applied)",
+                report.instance_id,
+                report.action.value,
+                report.seq,
+            )
+            if replenished:
+                await self.manager.submit_task(STATE_REPORT_TASK)
+            return {"processed": 1, "replenished": replenished}
+        if await self.registry.get_instance(class_name, report.instance_id) is None:
+            logger.warning(
+                "runtime state_report unknown_instance instance=%s class=%s action=%s "
+                "seq=%s (consumed, not applied)",
+                report.instance_id,
+                class_name,
+                report.action.value,
+                report.seq,
+            )
+            if replenished:
+                await self.manager.submit_task(STATE_REPORT_TASK)
+            return {"processed": 1, "replenished": replenished}
+        target = {
+            ReportedState.READY: ActivityState.ENABLED,
+            ReportedState.PARKED: ActivityState.DISABLED,
+        }.get(report.state)
+        if target is not None:
+            await self.registry.set_instance_state(
+                class_name, report.instance_id, target
+            )
+            logger.info(
+                "runtime state_report applied instance=%s class=%s action=%s "
+                "state=%s seq=%s",
+                report.instance_id,
+                class_name,
+                report.action.value,
+                target.value,
+                report.seq,
+            )
+        else:
+            logger.info(
+                "runtime state_report terminating (informational) instance=%s "
+                "class=%s seq=%s",
+                report.instance_id,
+                class_name,
+                report.seq,
+            )
+        if replenished:
+            await self.manager.submit_task(STATE_REPORT_TASK)
+        return {"processed": 1, "replenished": replenished}
+
     async def _apply_node_op(self, op: NodeOp) -> str:
         """The Runtime's decision logic for a drained intent: relay it to the
         corresponding lifecycle verb — which mints the signed control message,
@@ -534,21 +632,52 @@ class Runtime:
             f"{what}: could not confirm task {task_id!r} within {timeout}s (last state: {state})"
         )
 
-    async def _confirm_vehicle_alive(
-        self, task_id: str, *, what: str, class_name: str
+    async def _await_instance_state(
+        self,
+        class_name: str,
+        instance_id: str,
+        target: ActivityState,
+        *,
+        what: str,
     ) -> None:
-        """Read-poll the bring-up record until the vehicle is alive (bounded).
+        """Confirm an instance reached ``target`` by report convergence (LEG-095).
 
-        A real bring-up reads ``running`` while the agent lives; the one-shot
-        fact lands ``success`` instantly — both are "the vehicle is up" for the
-        weak, ack-free enable/disable confirm (§5.8: **no protocol acks by
-        design**, the agent honors the order between its dispatches).
+        Read-poll the Registry state until it equals the target, bounded by the
+        class lifecycle budget (the sanctioned §5.8 bounded clock wait, exactly
+        the ``_await_observable_state`` pattern). While waiting the loop also
+        schedules a ``STATE_REPORT`` intake drain whenever reports sit on the
+        ``state_report`` queue — the agent cannot reach the Manager, so the seed
+        of the drain comes from here (data-read scheduling, rule 8). A ``FAILED``
+        bring-up record raises immediately with its error; exhausting the budget
+        raises a visible ``RecoverableError`` ("no state report") — never a
+        silent grey state.
         """
-        await self._await_observable_state(
-            task_id,
-            lambda record: record.status in (TaskStatus.RUNNING, TaskStatus.SUCCESS),
-            what=what,
-            class_name=class_name,
+        timeout, interval = await self._lifecycle_budget(class_name)
+        task_id = self._instance_tasks.get((class_name, instance_id))
+        deadline = time.monotonic() + timeout
+        last: str | None = None
+        while time.monotonic() < deadline:
+            if await self._state_reports.count() > 0:
+                await self.manager.submit_task(STATE_REPORT_TASK)
+            instance = await self.registry.get_instance(class_name, instance_id)
+            if instance is None:
+                last = "missing"
+            else:
+                last = instance.state.value
+                if instance.state is target:
+                    return
+            if task_id is not None:
+                record = await self.manager.status(task_id)
+                if (
+                    record is not None
+                    and record.status == TaskStatus.FAILED
+                    and instance is not None
+                ):
+                    error = record.error or "unknown error"
+                    raise RecoverableError(f"{what}: bring-up task failed: {error}")
+            await asyncio.sleep(interval)
+        raise RecoverableError(
+            f"{what}: no state report within {timeout}s (last state: {last!r})"
         )
 
     # --- bring-up vehicle -----------------------------------------------------
@@ -974,14 +1103,11 @@ class Runtime:
                 instance.instance_id,
                 action=ControlAction.ENABLE.value,
             )
-            task_id = self._require_bring_up_task(name, instance.instance_id)
-            await self._confirm_vehicle_alive(
-                task_id,
+            await self._await_instance_state(
+                name,
+                instance.instance_id,
+                ActivityState.ENABLED,
                 what=f"enable instance class={name} instance={instance.instance_id}",
-                class_name=name,
-            )
-            await self.registry.set_instance_state(
-                name, instance.instance_id, ActivityState.ENABLED
             )
         await self._gates.set(name, {"state": ActivityState.ENABLED.value})
         await self.registry.set_class_state(name, ActivityState.ENABLED)
@@ -1085,10 +1211,14 @@ class Runtime:
         return created
 
     async def enable_instance(self, name: str, instance_id: str) -> str:
-        """Enable one instance (§5.4): deposit an ``enable`` control message on
-        its class queue, confirm the vehicle is alive (weak read, no ack) and
-        record enabled posteriori. Returns the bring-up task id (unchanged
-        signature)."""
+        """Enable one instance (§5.4) with a report-convergent confirm (LEG-095).
+
+        Deposit an ``enable`` control message on its class queue, then confirm by
+        **convergence on the agent's own honor report**: the intake applies the
+        ``ready`` report to the Registry state (single writer, no optimistic
+        write here) and this verb read-polls the Registry until it reads
+        ``ENABLED``. Returns the bring-up task id (unchanged signature).
+        """
         instance = await self._require_instance(name, instance_id)
         task_id = self._require_bring_up_task(name, instance_id)
         if instance.state == ActivityState.ENABLED:
@@ -1101,20 +1231,29 @@ class Runtime:
         await self.manager.submit_task(
             ENABLE_INSTANCE, name, instance_id, action=ControlAction.ENABLE.value
         )
-        await self._confirm_vehicle_alive(
-            task_id,
+        await self._await_instance_state(
+            name,
+            instance_id,
+            ActivityState.ENABLED,
             what=f"enable instance class={name} instance={instance_id}",
-            class_name=name,
         )
-        await self.registry.set_instance_state(name, instance_id, ActivityState.ENABLED)
-        logger.info("runtime enable_instance class=%s instance=%s", name, instance_id)
+        logger.info(
+            "runtime enable_instance class=%s instance=%s report_converged=True",
+            name,
+            instance_id,
+        )
         return task_id
 
     async def disable_instance(self, name: str, instance_id: str) -> str:
-        """Disable one instance (§5.5): deposit a ``disable`` control message on
-        its class queue (the agent parks its own loop between dispatches),
-        confirm the vehicle is alive and record disabled posteriori. Returns the
-        bring-up task id (unchanged signature)."""
+        """Disable one instance (§5.5) with a report-convergent confirm (LEG-095).
+
+        Deposit a ``disable`` control message on its class queue (the agent parks
+        its own loop between dispatches), then confirm by convergence on the
+        agent's honor report: the intake applies the ``parked`` report to the
+        Registry state (single writer, no optimistic write here) and this verb
+        read-polls the Registry until it reads ``DISABLED``. Returns the
+        bring-up task id (unchanged signature).
+        """
         instance = await self._require_instance(name, instance_id)
         task_id = self._require_bring_up_task(name, instance_id)
         if instance.state == ActivityState.DISABLED:
@@ -1127,13 +1266,17 @@ class Runtime:
         await self.manager.submit_task(
             DISABLE_INSTANCE, name, instance_id, action=ControlAction.DISABLE.value
         )
-        await self._confirm_vehicle_alive(
-            task_id,
+        await self._await_instance_state(
+            name,
+            instance_id,
+            ActivityState.DISABLED,
             what=f"disable instance class={name} instance={instance_id}",
-            class_name=name,
         )
-        await self.registry.set_instance_state(name, instance_id, ActivityState.DISABLED)
-        logger.info("runtime disable_instance class=%s instance=%s", name, instance_id)
+        logger.info(
+            "runtime disable_instance class=%s instance=%s report_converged=True",
+            name,
+            instance_id,
+        )
         return task_id
 
     async def destroy_instance(self, name: str, instance_id: str) -> None:
@@ -1146,7 +1289,10 @@ class Runtime:
 
         The vehicle is only knowable in-process (§4.8); a destroy on a legacy
         row with no in-process task (reboot) is a pure Registry fact removal —
-        the Manager holds no vehicle to reach (rule 13).
+        the Manager holds no vehicle to reach (rule 13). The agent's
+        ``terminating`` honor report is **informational** (LEG-095): the
+        structural record is the confirm; here the pending mint ledger is purged
+        and a drained run lets the intake log/consume it.
         """
         instance = await self.registry.get_instance(name, instance_id)
         if instance is None:
@@ -1176,7 +1322,9 @@ class Runtime:
                 name,
                 instance_id,
             )
+        self._purge_pending(instance_id)
         await self.registry.remove_instance(name, instance_id)
+        await self.manager.submit_task(STATE_REPORT_TASK)  # drain the terminating report
         if not await self.registry.list_instances(name):
             await self.registry.set_class_state(name, ActivityState.DISABLED)
         logger.info("runtime destroy_instance class=%s instance=%s", name, instance_id)
@@ -1191,6 +1339,25 @@ class Runtime:
                 "re-boot re-binds it"
             )
         return task_id
+
+    def _purge_pending(self, instance_id: str) -> None:
+        """Drop the pending-mint ledger entries of a destroyed instance.
+
+        After a structural destroy the vehicle is gone: its not-yet-consumed
+        honoring entries can never produce a valid application (the instance was
+        removed) — they are purged visibly, keeping the ledger bounded. Any
+        implementing report arriving later is an orphan ``WARNING``, never
+        applied (LEG-095 §C).
+        """
+        stale = [key for key in self._pending_controls if key[0] == instance_id]
+        for key in stale:
+            del self._pending_controls[key]
+        if stale:
+            logger.info(
+                "runtime pending purged instance=%s entries=%s",
+                instance_id,
+                len(stale),
+            )
 
     async def _require_instance(self, name: str, instance_id: str) -> InstanceRecord:
         instance = await self.registry.get_instance(name, instance_id)
@@ -1248,6 +1415,7 @@ __all__ = [
     "NODE_OP_TASK",
     "NODE_OP_VERBS",
     "SEED_TASK",
+    "STATE_REPORT_TASK",
     "NodeOp",
     "Runtime",
     "TaskEntry",

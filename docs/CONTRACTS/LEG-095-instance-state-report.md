@@ -2,7 +2,7 @@
 
 - **Status:** DRAFT (awaiting maintainer approval)
 - **Rasante:** R-8 (amends LEG-082 / LEG-087)
-- **GitHub issue:** TBD (maintainer opens on approval)
+- **GitHub issue:** #50
 - **Source:** session 85x/85y (maintainer-led analysis) + `docs/PLAN.md` (R-8)
 - **Depends on:** LEG-082 (authenticated control channel + standing loop), LEG-087
   (real bring-up + lifecycle facts minting control), LEG-088 (`node_ops` intake

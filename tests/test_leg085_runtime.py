@@ -139,16 +139,23 @@ def _start_executor(runtime: Runtime) -> asyncio.Task:
 
 
 async def _teardown(
-    db: AsyncBeaverDB, runtime: Runtime, names: list[str], *, pump: asyncio.Task | None = None
+    db: AsyncBeaverDB,
+    runtime: Runtime,
+    names: list[str],
+    *,
+    pump: asyncio.Task | None = None,
+    pumps: list[asyncio.Task] | None = None,
 ) -> None:
     for name in reversed(names):
         try:
             await runtime.destroy_class(name, mode="now")
         except RecoverableError as exc:  # teardown is best effort; stay visible
             print(f"teardown skipped class={name}: {exc}")
-    if pump is not None:
-        pump.cancel()
-        await asyncio.gather(pump, return_exceptions=True)
+    tasks = [t for t in (pump, *(pumps or [])) if t is not None]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _expect_seed_success(runtime: Runtime, task_id: str) -> None:
@@ -189,6 +196,44 @@ async def _expect_control_message(
             return message
         await asyncio.sleep(0.01)
     pytest.fail(f"no control message reached class={class_name} instance={instance_id}")
+
+
+def echo_text(text: str) -> dict:
+    """A fictitious domain-free tool (the pattern's own model)."""
+    return {"text": text}
+
+
+def _mounted_tool_agent(db: AsyncBeaverDB, name: str, key: bytes) -> ToolAgent:
+    """The mounted standing agent for a class: verifies/honors the Runtime's
+    signed controls (LEG-082/LEG-095) and reports each honored order."""
+    registry = AvailableToolsRegistry()
+    registry.declare(
+        name,
+        implementation="tests.test_leg085_runtime.echo_text",
+        policy={"timeout": 30, "retries": 0},
+    )
+    return ToolAgent(
+        agent_id=name,
+        db=db,
+        available_tools=registry,
+        tool_name=name,
+        parameters={"text": "{" + name + ".text}"},
+        control_verifier=ControlVerifier(key),
+    )
+
+
+async def _pool_executor(runtime: Runtime, *, pumps: int = 3) -> list[asyncio.Task]:
+    """The node's executor pool (AGENT_LIFECYCLE §6.1): with a mounted standing
+    loop a bring-up occupies its executor for the agent's life and a lifecycle
+    confirm occupies another while it waits — the pool runs one executor per
+    occupant plus spares for facts, exactly as a booted node must."""
+
+    async def _loop() -> None:
+        while True:
+            await runtime.manager.run()
+            await asyncio.sleep(0)
+
+    return [asyncio.create_task(_loop()) for _ in range(pumps)]
 
 
 # --- construction -------------------------------------------------------------
@@ -365,51 +410,54 @@ async def test_create_instance_ids_stay_monotonic_across_destroy(beaver_db) -> N
 
 @pytest.mark.asyncio
 async def test_disable_instance_mints_control_and_records_disabled(beaver_db) -> None:
-    """§5.5 (message model): disable is an order to the agent — a signed
-    ``ControlMessage(action=disable)`` at control priority on the class queue,
-    deposited by the ``disable_instance`` fact (origin=operator). No vehicle
-    control-mode coupling: the bring-up record stays a live vehicle; the
-    Registry records disabled posteriori."""
+    """§5.5 (report model, LEG-095): disable is an order to the agent — a signed
+    ``ControlMessage(action=disable)`` at control priority, minted by the
+    ``disable_instance`` fact (origin=operator). The Registry records disabled
+    **only** after the mounted standing loop honors the order and its report is
+    consumed on the intake (report convergence, no optimistic write)."""
     key = bytes(range(32))
     runtime = _runtime(beaver_db, control_key=key)
-    pump = _start_executor(runtime)
+    runtime.mount_agents({"single-class": _mounted_tool_agent(beaver_db, "single-class", key)})
+    pumps = await _pool_executor(runtime)
     name, spec = _load_atomic_spec("single-class")
     try:
         await runtime.create_class(spec, spec_yaml=_atomic_yaml("single-class"), pool=1)
         instance_id = "single-class-1"
         await runtime.disable_instance(name, instance_id)
 
-        message = await _expect_control_message(beaver_db, name, instance_id, key=key)
-        assert message.action is ControlAction.DISABLE
-        assert message.seq == 1
+        assert runtime._control_sequence[(name, instance_id)] == 1
+        assert runtime._pending_controls == {}
+        assert await runtime._state_reports.count() == 0
         instance = await runtime.get_instance(name, instance_id)
         assert instance is not None and instance.state == ActivityState.DISABLED
         assert await runtime.class_state(name) == ActivityState.ENABLED
     finally:
-        await _teardown(beaver_db, runtime, [name], pump=pump)
+        await _teardown(beaver_db, runtime, [name], pumps=pumps)
 
 
 @pytest.mark.asyncio
 async def test_enable_instance_mints_control_and_records_enabled(beaver_db) -> None:
-    runtime = _runtime(beaver_db, control_key=bytes(range(32)))
-    pump = _start_executor(runtime)
+    """§5.4 (report model, LEG-095): disable → enable round-trip. Each order is
+    minted with a strictly increasing ``seq``; the Registry mirrors the state
+    only after the mount's honor report converges (no optimistic write)."""
+    key = bytes(range(32))
+    runtime = _runtime(beaver_db, control_key=key)
+    runtime.mount_agents({"single-class": _mounted_tool_agent(beaver_db, "single-class", key)})
+    pumps = await _pool_executor(runtime)
     name, spec = _load_atomic_spec("single-class")
     try:
         await runtime.create_class(spec, spec_yaml=_atomic_yaml("single-class"), pool=1)
         instance_id = "single-class-1"
         await runtime.disable_instance(name, instance_id)
-        message = await _expect_control_message(beaver_db, name, instance_id, key=bytes(range(32)))
-        assert message.action is ControlAction.DISABLE
-
         await runtime.enable_instance(name, instance_id)
 
-        message = await _expect_control_message(beaver_db, name, instance_id, key=bytes(range(32)))
-        assert message.action is ControlAction.ENABLE
-        assert message.seq == 2
+        assert runtime._control_sequence[(name, instance_id)] == 2
+        assert runtime._pending_controls == {}
+        assert await runtime._state_reports.count() == 0
         instance = await runtime.get_instance(name, instance_id)
         assert instance is not None and instance.state == ActivityState.ENABLED
     finally:
-        await _teardown(beaver_db, runtime, [name], pump=pump)
+        await _teardown(beaver_db, runtime, [name], pumps=pumps)
 
 
 # --- enable / disable class ---------------------------------------------------
@@ -470,8 +518,15 @@ async def test_disable_class_cascades_dependents_transitively(beaver_db) -> None
 
 @pytest.mark.asyncio
 async def test_cascade_is_not_auto_undone_by_enabling_the_dependency(beaver_db) -> None:
-    runtime = _runtime(beaver_db)
-    pump = _start_executor(runtime)
+    key = bytes(range(32))
+    runtime = _runtime(beaver_db, control_key=key)
+    runtime.mount_agents(
+        {
+            "two-class": _mounted_tool_agent(beaver_db, "two-class", key),
+            "one-class": _mounted_tool_agent(beaver_db, "one-class", key),
+        }
+    )
+    pumps = await _pool_executor(runtime)
     two_name, two_spec = _load_atomic_spec("two-class")
     one_name, one_spec = _composite_spec("one-class", "two-class")
     try:
@@ -488,13 +543,14 @@ async def test_cascade_is_not_auto_undone_by_enabling_the_dependency(beaver_db) 
         assert await runtime.class_state(two_name) == ActivityState.ENABLED
         assert await runtime.class_state(one_name) == ActivityState.DISABLED
     finally:
-        await _teardown(beaver_db, runtime, [one_name, two_name], pump=pump)
+        await _teardown(beaver_db, runtime, [one_name, two_name], pumps=pumps)
 
 
 @pytest.mark.asyncio
 async def test_enable_class_brings_up_one_instance_when_none_exists(beaver_db) -> None:
-    runtime = _runtime(beaver_db)
-    pump = _start_executor(runtime)
+    runtime = _runtime(beaver_db, control_key=bytes(range(32)))
+    runtime.mount_agents({"stalled-class": _mounted_tool_agent(beaver_db, "stalled-class", bytes(range(32)))})
+    pumps = await _pool_executor(runtime)
     name, spec = _load_atomic_spec("stalled-class")
     try:
         await runtime.create_class(spec, spec_yaml=_atomic_yaml("stalled-class"), pool=0)
@@ -509,7 +565,7 @@ async def test_enable_class_brings_up_one_instance_when_none_exists(beaver_db) -
         gate = await beaver_db.dict("gates").fetch(name)
         assert gate is not None and gate["state"] == "enabled"
     finally:
-        await _teardown(beaver_db, runtime, [name], pump=pump)
+        await _teardown(beaver_db, runtime, [name], pumps=pumps)
 
 
 # --- destroy_instance ---------------------------------------------------------
@@ -939,8 +995,9 @@ async def test_runtime_status_flow_completed_and_owner_scoped(beaver_db) -> None
 
 @pytest.mark.asyncio
 async def test_gate_row_is_written_only_by_runtime_lifecycle(beaver_db) -> None:
-    runtime = _runtime(beaver_db)
-    pump = _start_executor(runtime)
+    runtime = _runtime(beaver_db, control_key=bytes(range(32)))
+    runtime.mount_agents({"gate-probe": _mounted_tool_agent(beaver_db, "gate-probe", bytes(range(32)))})
+    pumps = await _pool_executor(runtime)
     cls = "gate-probe"
     _, spec = _load_atomic_spec(cls)
     try:
@@ -953,7 +1010,7 @@ async def test_gate_row_is_written_only_by_runtime_lifecycle(beaver_db) -> None:
         await runtime.disable_class(cls)
         assert await beaver_db.dict("gates").fetch(cls) == {"state": "disabled"}
     finally:
-        await _teardown(beaver_db, runtime, [cls], pump=pump)
+        await _teardown(beaver_db, runtime, [cls], pumps=pumps)
 
 
 # --- executor ownership (the node pumps; the Runtime confirms reads only) ----
