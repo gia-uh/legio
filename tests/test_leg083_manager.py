@@ -12,7 +12,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from contextlib import suppress
 from typing import Any, cast
 
 import pytest
@@ -439,3 +440,96 @@ async def test_manager_is_polling_only_never_blocking(beaver_db) -> None:
     manager = _manager(beaver_db)
     done = await manager.run()
     assert done == 0
+
+
+# --- parked generators: RUNNING means parked, never transient -----------------
+
+
+async def _stillborn() -> AsyncGenerator[str]:
+    """An async generator that raises before its first yield (a vehicle that
+    never lived — the unmounted bring-up shape)."""
+    raise RuntimeError("never lived")
+    yield "never"  # pragma: no cover - structural (marks the async generator)
+
+
+async def _healthy() -> AsyncGenerator[str]:
+    """An async generator that parks after its first yield and stays there
+    until cancelled (a live vehicle)."""
+    yield "parked"
+    await asyncio.sleep(3600)
+
+
+@pytest.mark.asyncio
+async def test_stillborn_generator_never_observes_running(beaver_db) -> None:
+    """A generator that raises before its first yield goes PENDING → FAILED
+    with no observable RUNNING — a waiter sampling concurrently must never
+    mistake the dispatch transient for a live vehicle (the leg087 race).
+
+    The dispatch window is widened deterministically: the RUNNING persist is
+    delayed, so a concurrent sampler provably lands inside it on code that
+    marks RUNNING before the first yield. On fixed code no RUNNING is ever
+    written for a stillborn task, so the delay never triggers."""
+    manager = _manager(beaver_db)
+    manager.register("stillborn", _stillborn)
+    ids = [await manager.submit_task("stillborn") for _ in range(5)]
+
+    real_set = manager._tasks.set
+
+    async def delayed_set(key: str, value: dict[str, Any]) -> None:
+        if value.get("status") == TaskStatus.RUNNING.value:
+            await asyncio.sleep(0.05)
+        await real_set(key, value)
+
+    manager._tasks.set = delayed_set  # type: ignore[method-assign]
+    seen: set[TaskStatus] = set()
+    stop = asyncio.Event()
+
+    async def watch() -> None:
+        while not stop.is_set():
+            for task_id in ids:
+                record = await manager.status(task_id)
+                if record is not None:
+                    seen.add(record.status)
+            await asyncio.sleep(0)
+
+    async def pump() -> None:
+        for _ in range(len(ids)):
+            await manager.run()
+
+    watcher = asyncio.create_task(watch())
+    try:
+        await pump()
+    finally:
+        stop.set()
+        await watcher
+        manager._tasks.set = real_set  # type: ignore[method-assign]
+    assert TaskStatus.RUNNING not in seen
+    for task_id in ids:
+        record = await manager.status(task_id)
+        assert record is not None
+        assert record.status == TaskStatus.FAILED
+        assert record.error == "never lived"
+
+
+@pytest.mark.asyncio
+async def test_parked_generator_observes_running_while_parked(beaver_db) -> None:
+    """The steady state is preserved: a generator parked past its first yield
+    reads RUNNING until it ends."""
+    manager = _manager(beaver_db)
+    manager.register("healthy", _healthy)
+    task_id = await manager.submit_task("healthy")
+    dispatch = asyncio.create_task(manager.run())
+    try:
+        for _ in range(200):
+            record = await manager.status(task_id)
+            if record is not None and record.status == TaskStatus.RUNNING:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("healthy generator never parked")
+        assert task_id in manager._parked
+        assert manager._last_yields[task_id] == "parked"
+    finally:
+        dispatch.cancel()
+        with suppress(asyncio.CancelledError):
+            await dispatch

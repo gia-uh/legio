@@ -859,7 +859,10 @@ spawns the instance's own `standing_loop` and awaits it, so `running` is not a
 transient state: the record reads `running` for the agent's whole life, and the
 moment the agent honors a `terminate_with_drain` and exits its own loop the
 record reaches `success` at that same structural moment — never a timer or a
-poll (rule 8). The bring-up itself consumes no queue work; the agent suspends in
+poll (rule 8). The Manager writes `running` only after the generator's first
+yield lands (RUNNING means *parked*, LEG-083/86c): a bring-up whose vehicle
+never starts (e.g. no agent mounted) goes pending → failed with no observable
+running, so the confirm below can never mistake it for a live vehicle. The bring-up itself consumes no queue work; the agent suspends in
 its own class queue.
 
 ### 5.3 Enable instance

@@ -81,7 +81,13 @@ From `docs/AGENT_LIFECYCLE.md` §6.1 (source of truth), implemented verbatim:
   ```
   1. pending_tasks.get(block=False) → dispatch   (IndexError ⇒ nothing due; run() returns)
   2. dispatch(task_id):
-     a. status := running (+ started_at)
+     a. plain callable → status := running (+ started_at), then await it;
+        async generator → created parked in-process, and status := running
+        (+ started_at) is written only after its first yield lands —
+        RUNNING means *parked*, never a dispatch transient. A generator
+        raising before its first yield (stillborn, e.g. an unmounted
+        bring-up) goes pending → failed with no observable running, so a
+        waiter can never mistake the transient for a live vehicle (86c).
      b. cancellable? drive the generator, checking control at each yield:
           run    → advance one step
           pause  → yield without advancing

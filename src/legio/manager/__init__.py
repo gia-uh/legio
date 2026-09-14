@@ -248,16 +248,23 @@ class Manager:
             logger.error("manager unregistered name=%s task=%s", record.name, task_id)
             return
 
+        if inspect.isasyncgenfunction(callable_):
+            # Parked tasks are marked RUNNING only after their first yield
+            # lands (inside `_drive_parked`): RUNNING means *parked*, never a
+            # dispatch transient. A stillborn generator (raising before its
+            # first yield) therefore goes PENDING → FAILED with no observable
+            # RUNNING — a waiter can never mistake it for a live vehicle.
+            if task_id not in self._parked:
+                self._parked[task_id] = callable_(*record.args, **record.kwargs)
+            await self._drive_parked(task_id, record)
+            return
+
         record.status = TaskStatus.RUNNING
         record.started_at = _utc_now_iso()
         await self._tasks.set(task_id, record.model_dump(mode="json"))
         logger.info("manager running task=%s name=%s", task_id, record.name)
 
-        if inspect.isasyncgenfunction(callable_):
-            self._parked[task_id] = callable_(*record.args, **record.kwargs)
-            await self._drive_parked(task_id, record)
-        else:
-            await self._await_plain(task_id, record, callable_)
+        await self._await_plain(task_id, record, callable_)
 
     async def _await_plain(self, task_id: str, record: TaskRecord, callable_) -> None:
         try:
@@ -300,6 +307,13 @@ class Manager:
             try:
                 last_yielded = await generator.__anext__()
                 self._last_yields[task_id] = last_yielded
+                if record.status != TaskStatus.RUNNING:
+                    # First park: the vehicle demonstrably yielded, so it is
+                    # alive — only now does the record read RUNNING.
+                    record.status = TaskStatus.RUNNING
+                    record.started_at = _utc_now_iso()
+                    await self._tasks.set(task_id, record.model_dump(mode="json"))
+                    logger.info("manager running task=%s name=%s", task_id, record.name)
             except StopAsyncIteration:
                 self._parked.pop(task_id, None)
                 result = self._last_yields.pop(task_id, None)
