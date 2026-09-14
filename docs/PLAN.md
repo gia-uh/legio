@@ -395,6 +395,14 @@ are red for the yet-unimplemented surface.
     `read_outbox` / `ack_outbox` read records, never the physical queue; an
     invalid item on a result queue is a visible WARNING, consumed, never
     applied; `destroy_class` clears `result:<name>`.
+  - **Accept (Phase 3 — node-injected db proxy + federated deposit, approved
+    session 86d)**: agents keep one `db` handle (a transparent `AsyncBeaverDB`
+    proxy, zero agent changes); internal queue names hit local beaver, foreign
+    names deposit via the owner's L1 `POST /deposits` (no direct remote write
+    ever); `result:<task>` follows the task origin; foreign reads raise
+    visibly; the owner gate-checks agent queues (disabled → 409) and puts
+    result queues purely; boot composes the proxy (fail-fast peer roster
+    fetch unless injected).
 
 ### R-9 — Federation
 

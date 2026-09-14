@@ -275,6 +275,17 @@ composite:
   `schema_version`; the author validates the interface on POST (4xx on
   mismatch). Only configured peers (`federation.peers`) are reachable (see
   Security).
+- **Message-level transport (LEG-095 Phase 3).** A node can also delegate
+  *steps*, not just whole work items: the agents' single `db` handle is a
+  transparent `AsyncBeaverDB` proxy (`NodeDB`) the boot composes, and
+  `queue(...)` routes **by queue name** — internal names hit local beaver,
+  foreign names deposit onto the owning node's federation-only `POST
+  /deposits`. The cross-node leg is pure transport: reads on foreign names are
+  a visible violation, the owner performs its own local `put` (gate-checking
+  agent/gather queues; result queues are never gated), no direct remote write
+  ever exists. The static routing table (agent → owner) mirrors the resolver's
+  order — local first, first offering peer wins — so table and verdict never
+  disagree, and it is fed by the peers' `GET /catalog` rosters.
 
 ## 10. Security — two coarse levels, two secrets
 
@@ -285,7 +296,7 @@ tenants, limits) is the application's layer on top of the node.
 **Level 1 — nodes talking to nodes.** One **federation token**, the same value
 in every node of the federation ("if you know the key, you're in"). Every
 federation endpoint (`/catalog`, `/work-items/{agent}`, `/outbox/*`,
-`/health`) requires `Authorization: Bearer <federation_token>`. Delegation only
+`/deposits`, `/health`) requires `Authorization: Bearer <federation_token>`. Delegation only
 between explicitly configured peers (`federation.peers` allowlist). Setup is
 configuration, not a handshake.
 

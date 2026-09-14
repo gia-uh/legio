@@ -19,6 +19,7 @@ FEDERATION_ENDPOINTS = [
     "POST /outbox/{id}/ack",
     "GET /catalog",
     "GET /health",
+    "POST /deposits",
 ]
 
 CLIENT_ENDPOINTS = [

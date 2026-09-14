@@ -289,3 +289,149 @@ Agent flow (`_deposit_result`, gather queues, branch closes), the HTTP shells
   run → `status` kick → drain → `status` COMPLETED with `result_key =
   outbox:<task_id>`; plus the LEG-093 acceptor round trip
   (deposit → drain → poll → ack).
+
+---
+
+## Phase 3 — Node-injected db proxy + federated deposit (spec, approved in-session 86d)
+
+- **Status:** spec APPROVED in-session by the maintainer (session 86d).
+  A separate GitHub issue number is pending (maintainer opens, same as
+  Phases 1–2).
+- **Source:** session 85y roadmap item 3 ("Decoupled deposit: node-injected db
+  proxy") + session 85w directed model + ARCH §9 (local-first framing).
+- **Depends on:** LEG-090 (`GET /catalog` wire — the roster source), LEG-091
+  (local-first resolution order — the table mirrors it), LEG-017 (L1 shared
+  token), LEG-070 (`is_served`), Phase 2 (`result:<agent>` naming +
+  origin-bearing task ids).
+
+### Goal
+
+Cross-node queue deposits with **no direct remote write ever**: agents keep
+their single `db` handle (zero agent changes, no transport knowledge — the
+proxy is a transparent `AsyncBeaverDB`); the node composes the proxy at boot
+and it routes **by queue name** — internal names hit local beaver, foreign
+names are deposited onto the owning node's federation-only `POST /deposits`,
+and the owner performs the local `put`. The cross-node leg is pure transport.
+Reads on foreign names are a visible violation.
+
+### Contract & design
+
+#### A. `NodeDB` (`legio.federation`) — the proxy
+
+- Subclasses `AsyncBeaverDB`, sharing the local connection state (no second
+  connection; the proxy never owns the lifecycle — only the boot closes the
+  raw db). `isinstance(proxy, AsyncBeaverDB)` holds, so materialization
+  signatures are untouched. `dict()`/`lock()`/everything else is inherited
+  (node-local by construction).
+- `queue(name)` routing (pure name rules, no I/O at route time):
+  - `legio:queue:result:<task_id>` → parse the author origin from the task
+    id: origin == self → local; origin == a configured peer → that peer;
+    malformed (unparseable, legacy/test shapes) → local (back-compat);
+    well-formed but unknown origin → visible `RecoverableError` (a genuine
+    routing failure must never strand silently, rule 9).
+  - `legio:queue:<agent>` / `legio:queue:gather:<agent>` → the static table
+    (agent → owner peer; local-first: locally served agents are never tabled).
+    Table miss → local (today's behavior; the flow layer's own checks still
+    apply).
+  - Anything else (`node_ops`, `state_report`, …) → local, always.
+- The static table is boot-built by the pure `build_routes(local_served,
+  peer_rosters)`: local served excluded; first offering peer in configured
+  order wins — the same order as the LEG-091 resolver, so table and verdict
+  never disagree (the resolver returns Remote exactly when the table routes
+  remote).
+- The remote leg is a small shim exposing `put(data, priority)` only:
+  `POST {peer_url}/deposits {queue, item, priority}` with the L1 bearer.
+  `get`/`peek`/`count` on it raise a visible `RecoverableError` (foreign
+  reads are a violation, never served). Non-dict payloads are refused
+  visibly. Transport failures (connect/timeout, owner 4xx/5xx) raise visible
+  `RecoverableError` carrying peer + code — the flow's `_deliver` then fails
+  the step loudly through the normal error path (never silent).
+- Requested priority passes through (agents always send `0.0`; a forged
+  control item is still rejected by the agents' per-boot signature check —
+  compromised node ⇒ rotate the token, ARCH §10).
+
+#### B. `POST /deposits` + `Runtime.deposit_remote` (the owner's half)
+
+- Mounted iff a federation token is configured (absent → 404, like the rest
+  of the surface). L1 bearer guard → 401.
+- Body `{queue, item: dict, priority: float = 0.0}`, `extra="forbid"`.
+  Validation order (visible, rule 9): 401 → 503 (`no_capacity`, no catalog)
+  → 422 (`invalid_request`: missing `legio:queue:` prefix / empty name)
+  → 404 (`unknown_agent`: agent/gather queue for an unserved agent)
+  → 409 (`class_disabled`: the entry gate, same invariant as LEG-092/85u)
+  → deposit → 200 `{queue, deposited: true}`.
+- `Runtime.deposit_remote(queue, item, priority)` is the Runtime seam: it
+  gate-checks agent/gather queues (its own `gates` scope — no layer writes
+  another's) and puts result queues purely (a computed result must never
+  strand on a gate). Served-checks stay in the HTTP shell (it owns the
+  catalog), mirroring LEG-092.
+- Lifecycle stays local (85q): the envelope forbids extras; control messages
+  cannot be minted by a peer (per-boot keys, LEG-082).
+
+#### C. Boot wiring (`materializer`)
+
+- The boot **always** wraps the agents' db in a `NodeDB` (routes possibly
+  empty → pure-local behavior). Runtime/Manager/Registry keep the raw db
+  (their scopes are node-internal and must never route).
+- Peer rosters come from injected `peer_catalogs` (peer id → LEG-090
+  `CatalogResponse`) or, when peers are configured and none are injected,
+  are fetched over HTTP (`fetch_peer_catalogs`, L1) — fail-fast with the peer
+  named (rule 9): silently degraded federation would strand deposits.
+- No new dependency (`httpx` is approved for nodes).
+
+#### D. Non-goals (explicitly LEG-094)
+- Resolver gating of fan-out (pre-deposit validation of whole DAGs), return
+  address stamps, and the 3-node end-to-end example. Coexistence: task-level
+  delegation (`POST /work-items` + acceptor outbox, LEG-092/093) is untouched;
+  the proxy adds message-level transport beneath it.
+- Premise recorded (complementarity, LEG-094): peer nodes hold complementary
+  capacity, so a queue name has a single owner. A `gather:<composite>` return
+  to a composite served on *both* executor and owner would misroute locally —
+  documented debt; LEG-094 adds return stamps if its example needs them.
+
+#### E. Untouched
+Agents, flow messages (no schema change), Manager/Registry scopes (the proxy
+shares beaver state — it opens no new scope, rule 13), the auth middleware
+(the METHOD-prefix map auto-covers `POST /deposits` as L1).
+
+### Interface
+- `legio.federation`: `NodeDB`, `build_routes`, `fetch_peer_catalogs`.
+- `legio.runtime`: `Runtime.deposit_remote(queue, item, priority) -> None`,
+  exported; `RESULT_DRAIN_TASK`-style fact: none (the owner's put is
+  synchronous inside the request).
+- `POST /deposits` → `200 {queue, deposited}`; `401/404/409/422/503` with
+  stable `code`s (`unauthorized`/`unknown_agent`/`class_disabled`/
+  `invalid_request`/`no_capacity`).
+- `legio.naming`: unchanged — routing needs no new namespaces.
+
+### Acceptance criteria
+- An agent deposit to a locally served queue lands locally (proxy transparent).
+- An agent deposit to a peer-served agent arrives on the peer's queue via
+  `POST /deposits` (L1), with nothing written locally; the owner gate-checks
+  (disabled → 409, nothing deposited).
+- `result:<task>` deposits follow the task origin (self → local, peer
+  author → owner's queue); malformed → local; well-formed unknown origin →
+  visible error.
+- Reads (`get`/`peek`/`count`) on a foreign queue raise visibly; a failed
+  remote put (unreachable owner / owner refusal) raises visibly.
+- `POST /deposits`: 401/404/422/503 pins; `extra="forbid"` refuses junk;
+  unconfigured app → 404.
+- Boot with peers + injected rosters materializes agents over a `NodeDB`
+  with the expected table; boot with no peers behaves pure-local.
+- A real composite fan-out on A to a B-only step lands the
+  `ExecutionRequestMessage` on B's queue (transport drill, no far-side
+  vehicle); a B-side return to A's gather/result queues lands on A.
+- Full suite + `ruff` + `pyright`; no new dependency; no new beaver scope.
+
+### Tests (red first)
+- New `tests/test_leg095_db_proxy.py` (proxy units, endpoint pins,
+  table/fetch helpers, boot composition, cross-node drills).
+- `test_leg017_security.py`: `POST /deposits` joins the L1 map pin.
+
+### Logging (rule 11, with the implementation)
+- Remote deposit → INFO `federation deposit remote queue=… peer=…`
+  (cross-node legs are traced); local routing is routine ( DEBUG-free —
+  same as local `_deliver` today: no per-deposit line).
+- Remote failure → WARNING with peer + reason (rule 9); owner denials →
+  WARNING (`api deposit …`), `no_capacity` → ERROR (federated node must
+  never serve silently empty).

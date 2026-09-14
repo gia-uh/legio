@@ -43,6 +43,7 @@ from legio.agents import AgentBase, CompositeAgent, LinguisticAgent, ToolAgent
 from legio.api import create_app
 from legio.config import LlmConfig, LoadedConfig
 from legio.errors import UnrecoverableError
+from legio.federation import NodeDB, build_routes, fetch_peer_catalogs
 from legio.flow import ControlVerifier, derive_control_key
 from legio.patterns import (
     AgentKind,
@@ -296,6 +297,7 @@ async def boot_node(
     composite_classes: CompositeClasses | None = None,
     control_key: bytes | None = None,
     on_built: Callable[[str], None] | None = None,
+    peer_catalogs: Mapping[str, Any] | None = None,
 ) -> BootedNode:
     """Boot a node from its LoadedConfig: connect → load → validate → materialize.
 
@@ -308,6 +310,13 @@ async def boot_node(
     boot without one derives it from an entropy draw (random per boot, rule 11).
     The Runtime (LEG-085), the HTTP app and the authenticated client store are
     built last.
+
+    Federation (LEG-095 Phase 3): the agents' db is **always** wrapped in a
+    ``NodeDB`` (routes possibly empty → pure-local behavior) while the
+    Runtime/Manager/Registry keep the raw db. ``peer_catalogs`` (peer id →
+    LEG-090 roster) injects the routing table directly; absent, configured peers
+    are fetched over HTTP (``fetch_peer_catalogs``, L1) — fail-fast with the
+    peer named (rule 9).
     """
     cfg = loaded.config
 
@@ -327,6 +336,7 @@ async def boot_node(
             composite_classes=composite_classes,
             control_key=control_key,
             on_built=on_built,
+            peer_catalogs=peer_catalogs,
         )
     except BaseException:
         if owns_database:
@@ -343,6 +353,7 @@ async def _boot_on_database(
     composite_classes: CompositeClasses | None,
     control_key: bytes | None,
     on_built: Callable[[str], None] | None,
+    peer_catalogs: Mapping[str, Any] | None,
 ) -> BootedNode:
     """Boot the node over an already-connected substrate (fail-fast, rule 9)."""
     cfg = loaded.config
@@ -358,9 +369,32 @@ async def _boot_on_database(
     registry = available_tools_from_config(loaded)
     served = {name for name in catalog.specs if catalog.is_served(name)}
     verifiers = {name: ControlVerifier(key) for name in served}
+
+    # LEG-095 Phase 3: the agents' single db handle is the routing proxy; the
+    # Runtime/Manager/Registry keep the raw database (their scopes are
+    # node-internal and must never route). Rosters are injected or fetched
+    # over HTTP (L1) — fail-fast with the peer named (rule 9).
+    peers = {peer.id: peer.url for peer in cfg.federation.peers}
+    rosters = peer_catalogs
+    if rosters is None and peers:
+        if loaded.secrets.federation_token is None:
+            logger.warning(
+                "federation peers configured but no LEGIO_FEDERATION_TOKEN; the proxy stays local"
+            )
+            rosters = {}
+        else:
+            rosters = await fetch_peer_catalogs(peers, loaded.secrets.federation_token)
+    routes = build_routes(served, rosters)
+    agents_db = NodeDB(
+        database,
+        node_id=cfg.node.id,
+        routes=routes,
+        peers=peers,
+        federation_token=loaded.secrets.federation_token,
+    )
     agents = materialize_agents(
         catalog,
-        db=database,
+        db=agents_db,
         available_tools=registry,
         llm_config=cfg.services.llm,
         llm_api_key=loaded.secrets.llm_api_key,
@@ -407,8 +441,9 @@ class BootedNode:
 
         When a federation token is configured (LEG-017 L1 secret), the app also
         serves the federation surface guarded by that shared token: ``GET
-        /catalog`` (LEG-090), ``POST /work-items/{agent}`` (LEG-092) and the
-        outbox verbs ``GET``/``DELETE /outbox/{task_id}`` (LEG-093).
+        /catalog`` (LEG-090), ``POST /work-items/{agent}`` (LEG-092), the
+        outbox verbs ``GET``/``DELETE /outbox/{task_id}`` (LEG-093) and
+        ``POST /deposits`` (LEG-095 Phase 3, the db proxy's owner half).
         """
         return create_app(
             runtime=self.runtime,

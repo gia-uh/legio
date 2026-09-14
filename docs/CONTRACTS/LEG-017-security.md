@@ -26,7 +26,7 @@ is the application layer's responsibility, implemented on top of the node.
 
 | Endpoint | Token |
 |---|---|
-| `POST /work-items/{agent}`, `GET /work-items/{id}`, `GET /outbox`, `POST /outbox/{id}/ack`, `GET /catalog`, `GET /health` | **federation** |
+| `POST /work-items/{agent}`, `GET /work-items/{id}`, `GET /outbox`, `POST /outbox/{id}/ack`, `GET /catalog`, `GET /health`, `POST /deposits` | **federation** |
 | `submit(starting_agent)` | **client** |
 | `status(task_id)` / task results | **client** + ownership |
 

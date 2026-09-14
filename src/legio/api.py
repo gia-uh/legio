@@ -17,13 +17,16 @@ An optional ``pattern_catalog`` can be provided to derive the starting route
 from the pattern catalog (LEG-021). If not provided, the agent name is used as
 a single-agent route.
 
-Federation (LEG-090/092/093): when ``federation_token`` is provided, the app
+Federation (LEG-090/092/093/095): when ``federation_token`` is provided, the app
 also serves ``GET /catalog`` (the node's roster of served capacity, guarded by
 the shared federation token), ``POST /work-items/{agent}`` (remote deposit) and
 the outbox verbs ``GET``/``DELETE /outbox/{task_id}`` (result readback/ack for
 remote work). A peer reads ``/catalog`` to author remote work (LEG-091/092);
 results land on the task's outbox (the result queue) and the author polls and
-acks them here (LEG-093). Without a federation token none of the endpoints are
+acks them here (LEG-093). ``POST /deposits`` is the owner's half of the
+node-injected db proxy (LEG-095 Phase 3): an author's ``NodeDB`` routes a
+foreign queue name here and the owner performs the local ``put`` — the remote
+leg is pure transport. Without a federation token none of the endpoints are
 mounted (404): no federation surface.
 """
 
@@ -44,7 +47,7 @@ from legio.errors import (
     UnrecoverableError,
 )
 from legio.flow import SCHEMA_VERSION, FlowToken
-from legio.naming import validate_task_id
+from legio.naming import QUEUE_NAMESPACE, validate_task_id
 from legio.patterns import Catalog, starting_route
 from legio.runtime import Runtime, TaskEntry, TaskState
 from legio.security import ClientTokenStore, FederationTokenStore
@@ -154,6 +157,30 @@ class OutboxAckResponse(BaseModel):
     acked: bool
 
 
+class DepositRequest(BaseModel):
+    """Body of ``POST /deposits`` (LEG-095 Phase 3).
+
+    The proxy's remote leg deposits a message onto a full flow queue name
+    (``legio:queue:<...>``); the owner performs the local ``put``. ``item`` is a
+    dict (a flow message's JSON shape — the endpoint is transport, it does not
+    mint lifecycle); ``priority`` passes through (agents always send ``0.0``).
+    Extra fields are forbidden — federation transports work, never lifecycle.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    queue: str = Field(min_length=1)
+    item: dict[str, Any]
+    priority: float = 0.0
+
+
+class DepositResponse(BaseModel):
+    """The owner's receipt for a federated queue deposit (LEG-095 Phase 3)."""
+
+    queue: str
+    deposited: bool
+
+
 def _to_catalog_response(catalog: Catalog) -> CatalogResponse:
     """Derive the node's capacity roster from its served pattern catalog.
 
@@ -226,6 +253,23 @@ def _guard_outbox(
         logger.warning("api outbox invalid_id task=%s reason=%s", task_id, exc)
         return JSONResponse(status_code=422, content={"code": "invalid_request"})
     return task_id
+
+
+def _deposit_agent(queue_name: str) -> str | None:
+    """The served agent a deposit addresses, or ``None`` for result queues.
+
+    Agent queues (``legio:queue:<agent>``) address their agent; gather queues
+    (``legio:queue:gather:<composite>``) address the composite whose branches
+    return through it; result queues (``legio:queue:result:<...>``) are pure
+    transport — the drain reads them by served root agent, and a result-bearing
+    deposit must never be refused on a served check (LEG-095 Phase 3 §B).
+    """
+    relative = queue_name[len(QUEUE_NAMESPACE):]
+    if relative.startswith("gather:"):
+        return relative[len("gather:"):]
+    if relative.startswith("result:"):
+        return None
+    return relative
 
 
 def _resolve_route(agent_name: str, catalog: Catalog | None) -> tuple[tuple[str, str], ...]:
@@ -440,6 +484,45 @@ def create_app(
             logger.info("api outbox ack task=%s acked=%s", task_id, acked)
             return OutboxAckResponse(id=task_id, acked=acked)
 
+        @app.post("/deposits", response_model=DepositResponse)
+        async def deposits(
+            body: DepositRequest,
+            authorization: str | None = Header(default=None),
+        ) -> DepositResponse | JSONResponse:
+            """The owner's half of a routed queue deposit (LEG-095 Phase 3).
+
+            The author's proxy (a ``NodeDB``) deposits a message onto a flow
+            queue name through this endpoint; the owner performs the local
+            ``put`` — no direct remote write ever exists. Validation order
+            (visible, rule 9): L1 bearer → 401; no catalog → 503
+            (``no_capacity``, a federated node must never serve silently
+            empty); malformed queue name → 422; agent/gather queue for an
+            unserved agent → 404; gate denial → 409; deposit → 200.
+            """
+            token = _bearer_token(authorization)
+            if token is None or not federation_store.is_valid(token):
+                logger.warning("api deposits unauthorized queue=%s", body.queue)
+                return _unauthorized()
+            if pattern_catalog is None:
+                logger.error("api deposits no capacity queue=%s", body.queue)
+                return JSONResponse(status_code=503, content={"code": "no_capacity"})
+            if not body.queue.startswith(QUEUE_NAMESPACE) or len(body.queue) <= len(
+                QUEUE_NAMESPACE
+            ):
+                logger.warning("api deposits invalid_request queue=%r", body.queue)
+                return JSONResponse(status_code=422, content={"code": "invalid_request"})
+            agent = _deposit_agent(body.queue)
+            if agent is not None and not pattern_catalog.is_served(agent):
+                logger.warning("api deposits unknown_agent queue=%s", body.queue)
+                return JSONResponse(status_code=404, content={"code": "unknown_agent"})
+            try:
+                await runtime.deposit_remote(body.queue, body.item, body.priority)
+            except RecoverableError as exc:
+                logger.warning("api deposits denied queue=%s reason=%s", body.queue, exc)
+                return JSONResponse(status_code=409, content={"code": "class_disabled"})
+            logger.info("api deposits queue=%s deposited=true", body.queue)
+            return DepositResponse(queue=body.queue, deposited=True)
+
     return app
 
 
@@ -447,6 +530,8 @@ __all__ = [
     "CatalogAgentEntry",
     "CatalogAgentInterface",
     "CatalogResponse",
+    "DepositRequest",
+    "DepositResponse",
     "OutboxAckResponse",
     "OutboxPollResponse",
     "StatusResponse",

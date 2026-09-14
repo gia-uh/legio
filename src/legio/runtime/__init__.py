@@ -88,6 +88,7 @@ from legio.flow import (
 from legio.manager import Manager, TaskRecord, TaskStatus
 from legio.naming import (
     OUTBOX_SCOPE,
+    QUEUE_NAMESPACE,
     outbox_key,
     queue_key,
     result_queue_key,
@@ -919,6 +920,48 @@ class Runtime:
             result_queue,
         )
         return WorkItemReceipt(id=task_id, deposited=True)
+
+    async def deposit_remote(
+        self, queue_name: str, item: dict[str, Any], priority: float = 0.0
+    ) -> None:
+        """The owner's half of a federated deposit (LEG-095 Phase 3).
+
+        Performs the *local* put the author's proxy asked for: the cross-node leg
+        is transport, and only the owner writes its own beaver queues. The entry
+        gate (§12.5) is checked agent/gather queues against the Runtime's own
+        ``gates`` scope (no layer writes another's — the HTTP shell owns the
+        served/capacity checks, mirroring LEG-092); a computed result must never
+        strand, so result queues are put purely, never gate-checked. A foreign
+        caller cannot mint lifecycle (control messages carry per-boot signatures,
+        LEG-082), so this seam deposits messages, never verbatim intent.
+        """
+        if not queue_name.startswith(QUEUE_NAMESPACE):
+            logger.warning("runtime deposit_remote refused queue=%s", queue_name)
+            raise RecoverableError(
+                f"foreign deposit refuses queue {queue_name!r} outside the flow namespace"
+            )
+        relative = queue_name[len(QUEUE_NAMESPACE):]
+        if not relative.startswith(("result:", "gather:")):
+            gate = await self._gates.fetch(relative)
+            if gate is not None and gate.get("state") == ActivityState.DISABLED.value:
+                logger.warning(
+                    "runtime deposit_remote denied queue=%s (gate closed)",
+                    queue_name,
+                )
+                raise RecoverableError(f"class {relative!r} is disabled (entry gate closed)")
+        if relative.startswith("gather:"):
+            composite = relative[len("gather:"):]
+            gate = await self._gates.fetch(composite)
+            if gate is not None and gate.get("state") == ActivityState.DISABLED.value:
+                logger.warning(
+                    "runtime deposit_remote denied queue=%s (gate closed)",
+                    queue_name,
+                )
+                raise RecoverableError(
+                    f"composite {composite!r} is disabled (entry gate closed)"
+                )
+        await self._db.queue(queue_name).put(item, priority=priority)
+        logger.info("runtime deposit_remote queue=%s", queue_name)
 
     async def ack_outbox(self, task_id: str) -> bool:
         """Consume the collected result of a completed work item from its outbox record.
