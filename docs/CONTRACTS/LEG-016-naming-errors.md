@@ -22,9 +22,11 @@ type-safe across the codebase, logs and APIs.
   - agent: service/domain names (class-based per Schema 2; no `client:` family —
     the destination lives in the token as `end_of_level_queue`, not in an agent id)
   - tool: arbitrary (consumer namespaced)
-  - task: `{uuid}`, globally unique; its final result is addressed by the helper
-    `result_queue_key(task_id)` → `result:<task_id>` (the submit-seeded
-    `end_of_level_queue` at level 1)
+  - task: `{uuid}`, globally unique; its final result is collected from the
+    starting agent's shared queue, addressed by the helper
+    `result_queue_key(agent_name)` → `result:<agent>` (the submit-seeded
+    `end_of_level_queue` at level 1, LEG-095 Phase 2), into the per-task
+    outbox record `outbox:<task_id>` (`outbox_key(task_id)`)
 - **Errors** are typed exceptions with a stable `code`, split into recoverable
   (transient) and unrecoverable (fatal authoring/validation) families;
   boundaries (HTTP, CLI, logs) render them consistently.

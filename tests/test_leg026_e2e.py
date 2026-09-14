@@ -2,10 +2,12 @@
 
 First real single-node capability over the REST surface. A client submits to the
 ``transform`` agent through the API; the agent polls its own queue and runs the
-registered fake tool; the root result lands in the task's final-result queue
-(``end_of_level_queue``, Schema 2) and the client reads it back via ``status``.
-Boundary is the REST surface; all substrate is shared in-process over a single
-native beaver database (one connection, one manager) as on a single node.
+registered fake tool; the root result lands on the agent's shared final-result
+queue (``end_of_level_queue``, Schema 2, LEG-095 Phase 2), the ``RESULT_DRAIN``
+intake collects it into the task's outbox record, and the client reads it back
+via ``status``. Boundary is the REST surface; all substrate is shared
+in-process over a single native beaver database (one connection, one manager)
+as on a single node.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from beaver import AsyncBeaverDB
 
 from legio.agents.tool_agent import ToolAgent
 from legio.api import create_app
-from legio.naming import queue_key, result_queue_key
+from legio.naming import outbox_key
 from legio.runtime import Runtime
 from legio.tools import AvailableToolsRegistry
 
@@ -71,19 +73,24 @@ async def test_transform_e2e_over_rest_and_agent(
         processed = await agent.run()
         assert processed == 1
 
+        # The result sits on the agent's shared queue; status schedules its
+        # collection (kick-on-miss) and the node pump dispatches the drain.
+        kicked = await ac.get(f"/status/{task_id}", params={"client_id": "client-a"})
+        assert kicked.status_code == 200, kicked.text
+        for _ in range(10):
+            await runtime.manager.run()
+
         st = await ac.get(f"/status/{task_id}", params={"client_id": "client-a"})
         assert st.status_code == 200, st.text
         entry = st.json()
         assert entry["state"] == "completed"
         # factor=3, so "HELLO" * 3 = "HELLOHELLOHELLO", wrapped under output_as
         assert entry["output"] == {"transform": {"transformed": "HELLOHELLOHELLO"}}
-        assert entry["result_key"] == result_queue_key(task_id)
+        assert entry["result_key"] == outbox_key(task_id)
 
-        result_item = await beaver_db.queue(
-            queue_key(result_queue_key(task_id))
-        ).peek()
-        assert result_item is not None
-        assert result_item.data["payload"] == {
+        record = await beaver_db.dict("outbox").fetch(task_id)
+        assert record is not None
+        assert record["payload"] == {
             "transform": {"transformed": "HELLOHELLOHELLO"},
         }
 

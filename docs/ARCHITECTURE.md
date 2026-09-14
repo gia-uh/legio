@@ -43,11 +43,14 @@ beaver primitives by name — `db.dict(scope)` / `db.queue(name)` / `db.lock(nam
 - **Registry** — beaver persistent dict per scope: the mirror `Registry`'s
   scopes — the **live catalog** (classes / instances / dependencies) and the
   **runtime YAML cache** (§4.7), Runtime-written posteriori per AGENT_LIFECYCLE
-  §4.8. Future scopes: `gates` (Runtime-written class gate, read by depositors —
-  AGENT_LIFECYCLE §12.5), `semaphore`, `outbox`. There is **no**
+  §4.8. `gates` (Runtime-written class gate, read by depositors —
+  AGENT_LIFECYCLE §12.5) and the Runtime-owned `outbox` dict (LEG-095 Phase 2,
+  one record per completed task) exist; `semaphore` stays a future scope.
+  There is **no**
   ``results`` return store: the final result is delivered to the
-  **final-result queue** (Schema 2) — the Runtime owns a per-task final-result
-  queue that the submit sets as the root `end_of_level_queue`.
+  **final-result queue** (Schema 2) — one shared `result:<agent>` queue per
+  root agent that the submit sets as the root `end_of_level_queue`, collected
+  by the `RESULT_DRAIN` intake into the task's outbox record.
 - **Queue** — beaver persistent priority queue per agent:
   `db.queue("legio:queue:<agent_id>")`; `get(block=False)` pops destructively and
   raises `IndexError` when empty; `put(item, priority=...)` deposits the next
@@ -222,9 +225,10 @@ composite:
    `client:` queue). End-of-level with `level > 1` → branch close to the
    creator's gathering queue.
 7. The client polls `status(task_id)` → Runtime reads the final result from the
-   per-task final-result queue. Lifecycle of the agents themselves (not of a
-   task) is governed by the Runtime / Registry / Manager model —
-   `docs/AGENT_LIFECYCLE.md` §0–§6.1.
+   task's outbox record (collected there by the `RESULT_DRAIN` intake from the
+   agent's shared final-result queue, LEG-095 Phase 2). Lifecycle of the agents
+   themselves (not of a task) is governed by the Runtime / Registry / Manager
+   model — `docs/AGENT_LIFECYCLE.md` §0–§6.1.
 
 ## 8. Failure and resilience
 

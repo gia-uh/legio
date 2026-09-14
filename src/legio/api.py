@@ -214,8 +214,8 @@ def _guard_outbox(
     """L1 + identifier guard shared by both outbox verbs (LEG-093).
 
     Both ``GET``/``DELETE /outbox/{task_id}`` need the shared federation token
-    (401) and a well-formed author task id (422) before touching the result
-    queue. Returns the validated ``task_id`` or a JSON error.
+    (401) and a well-formed author task id (422) before touching the outbox
+    record. Returns the validated ``task_id`` or a JSON error.
     """
     if federation_store is None or token is None or not federation_store.is_valid(token):
         logger.warning("api outbox unauthorized task=%s", task_id)

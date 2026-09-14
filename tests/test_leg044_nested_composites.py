@@ -31,7 +31,7 @@ from legio.agents.linguistic_agent import LinguisticAgent
 from legio.agents.tool_agent import ToolAgent
 from legio.api import create_app
 from legio.flow import build_payload
-from legio.naming import result_queue_key
+from legio.naming import outbox_key
 from legio.patterns import load_patterns, resolve_composite_branches
 from legio.runtime import Runtime
 from legio.security import ClientTokenStore
@@ -312,10 +312,13 @@ async def test_nested_composite_in_branch_over_rest(
             await outer.run()
 
         status_resp = await ac.get(f"/status/{task_id}", headers=bearer("tok-a"))
+        for _ in range(10):
+            await runtime.manager.run()
+        status_resp = await ac.get(f"/status/{task_id}", headers=bearer("tok-a"))
         assert status_resp.status_code == 200, status_resp.text
         entry = status_resp.json()
         assert entry["state"] == "completed"
-        assert entry["result_key"] == result_queue_key(task_id)
+        assert entry["result_key"] == outbox_key(task_id)
         # The outer composite gathered its two branches under its output_as:
         # slot 1 is the nested composite's own built payload {result: {result: ...}}.
         assert (

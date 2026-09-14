@@ -29,7 +29,7 @@ from legio.config import CliOverrides, load
 from legio.errors import ConfigError, UnrecoverableError
 from legio.flow import build_payload
 from legio.materializer import BootedNode, LingoFactory, boot_node, materialize_agents
-from legio.naming import result_queue_key
+from legio.naming import outbox_key
 from legio.patterns import Catalog, load_patterns
 from legio.security import ClientTokenStore
 from legio.tools import AvailableToolsRegistry
@@ -566,8 +566,11 @@ async def test_boot_full_flow_over_rest_uses_configured_node_id(
             await runtime.agents["summarize"].run()
 
         status_resp = await ac.get(f"/status/{task_id}", headers=bearer("tok-a"))
+        for _ in range(10):
+            await runtime.runtime.manager.run()
+        status_resp = await ac.get(f"/status/{task_id}", headers=bearer("tok-a"))
         assert status_resp.status_code == 200, status_resp.text
         entry = status_resp.json()
         assert entry["state"] == "completed"
-        assert entry["result_key"] == result_queue_key(task_id)
+        assert entry["result_key"] == outbox_key(task_id)
         assert entry["output"]["result"]["result"]["result"] == "[Foxes] A note."

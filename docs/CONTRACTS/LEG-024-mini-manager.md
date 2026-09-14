@@ -19,12 +19,13 @@ the task's final-result queue (`result_queue_key`) and client-owned reading via
 ## Contract & design
 - Per LEG-014. `status` enforces ownership (client only sees own tasks).
 - `submit` stages the task on the `tasks` registry, seeds the level-1 root token
-  with `end_of_level_queue = result_queue_key(task_id)`, deposits the root step
+  with `end_of_level_queue = result_queue_key(agent_name)` (the starting
+  agent's shared final-result queue, LEG-095 Phase 2), deposits the root step
   into the starting agent's queue and returns `task_id` (LEG-016); the root
   result is written by the terminating agent (at end-of-sequence **and**
   `level == 1`) to that final-result queue (there is no `results:{task_id}`
-  store and no per-task `client:{task_id}` queue). `status` reads it back via a
-  non-destructive `peek`.
+  store and no per-task `client:{task_id}` queue). The `RESULT_DRAIN` intake
+  collects it into the task's outbox record; `status` reads the record back.
 
 ## Interface
 - `submit(client_id, agent, payload) -> task_id`; `status(task_id, client_id)`.

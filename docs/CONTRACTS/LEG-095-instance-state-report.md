@@ -1,7 +1,9 @@
 # LEG-095 — Instance state report (the control channel's out-side)
 
-- **Status:** DRAFT (awaiting maintainer approval)
-- **Rasante:** R-8 (amends LEG-082 / LEG-087)
+- **Status:** Phase 1 APPROVED (maintainer, session 86b — "haz los pasos 1 y 2");
+  Phase 2 spec below APPROVED in-session (same turn)
+- **Rasante:** R-8 (amends LEG-082 / LEG-087; Phase 2 amends LEG-011 / LEG-050 /
+  LEG-053 / LEG-085 / LEG-093)
 - **GitHub issue:** #50
 - **Source:** session 85x/85y (maintainer-led analysis) + `docs/PLAN.md` (R-8)
 - **Depends on:** LEG-082 (authenticated control channel + standing loop), LEG-087
@@ -168,8 +170,122 @@ posteriori writes remain on the instance verbs.
   disabled only after the report, visible in `status`); plus an explicit
   no-report timeout surfacing as an error (never a silent state).
 
-## Definition of done
+## Definition of done (Phase 1)
 
 - All acceptance criteria met by running checks.
-- Maintainer approval recorded; the maintainer closes the GitHub issue.
+- Maintainer approval recorded (session 86b); the maintainer closes the GitHub
+  issue (#50, maintainer opens).
 - Journal entry appended.
+
+---
+
+## Phase 2 — Per-agent result queue + outbox intake (spec, approved in-session 86b)
+
+- **Status:** spec APPROVED in-session by the maintainer (session 86b).
+  A separate GitHub issue number is pending (maintainer opens, same as Phase 1).
+- **Source:** session 85y roadmap item 2 ("Result queue per submit type, not per
+  task") + session 86b derivation (kick sources, kick-on-miss, ack semantics).
+- **Depends on:** LEG-011 (`end_of_level_queue`), LEG-050/053 (final-result
+  delivery), LEG-085 (Runtime footprint), LEG-093 (outbox verbs), LEG-092
+  (author-minted ids — the outbox record key).
+
+### Goal
+
+`result:<task_id>` creates one beaver queue per submit, never reclaimed. Phase 2
+makes the final-result queue **per served root agent** — `result:<agent>`,
+shared by every task that starts on that agent — and adds a Runtime intake
+(`RESULT_DRAIN`) that consumes `ExecutionResultMessage`s into a per-task
+`outbox` dict. `status` / `read_outbox` / `ack_outbox` read **records**, never
+the physical queue.
+
+### Contract & design
+
+#### A. Naming (`legio.naming`)
+
+- `result_queue_key(agent_name)` → `result:<agent>` — the final-result queue of
+  one root agent. The submit seeds it as the level-1 `end_of_level_queue`; the
+  flow code is untouched (it carries the name opaquely).
+- `OUTBOX_SCOPE = "outbox"` — the Runtime-owned beaver dict holding one record
+  per completed task, keyed by `task_id`. The record is the
+  `ExecutionResultMessage` dump (self-describing, re-validated on read).
+- `outbox_key(task_id)` → `outbox:<task_id>` — the informational pointer
+  `status` reports as `result_key` once the record exists.
+
+#### B. Intake fact (`RESULT_DRAIN_TASK = "result_drain"`, parameterized by agent)
+
+Mirrors `_node_op_fact` / `_state_report_fact` (pop one, apply, re-schedule
+while work remains — scheduling field = presence on the queue, rule 8):
+
+1. Pop ONE item off `result:<agent>` (non-blocking). Empty → done, no re-kick.
+2. Validate as `ExecutionResultMessage`. Miss → visible `WARNING`, item
+   consumed, **never applied** (rule 9).
+3. Hit → `outbox.set(task_id, dump)` (INFO). No gate check: a computed result
+   must never strand on a queue whose class was disabled afterwards.
+4. Re-kick with the same agent while items remain.
+
+#### C. Kick sources (all scheduling, never pumping — the node owns the executor)
+
+- `submit` / `submit_work_item` kick for the starting agent after the seed is
+  minted (drains backlogs; cheap no-op otherwise).
+- `status` / `read_outbox` kick **iff the task's record is absent**
+  (kick-on-miss — bounds Manager-task growth during poll loops). The agent
+  comes from the seed token's `launcher_class`; an unknown seed means no kick
+  (`status` still raises `KeyError`, `read_outbox` still returns `None`).
+- `ack_outbox` never kicks: it consumes the record only. A pure
+  ack-without-poll on an uncollected result returns `False` (no silent loss —
+  the next poll collects it).
+
+#### D. Seam semantics
+
+- `status`: ownership/`FAILED` checks unchanged; COMPLETED + `output` +
+  `result_key = outbox:<task_id>` only when the record exists, else
+  PENDING/RUNNING as today.
+- `read_outbox`: record payload or `None` (non-blocking poll, rule 8).
+- `ack_outbox`: fetch + delete → `True`; absent → `False` (idempotent, never
+  an error).
+- `destroy_class`: also clears `result:<name>` (drain-and-discard, INFO).
+  Per-task outbox records survive (consumed by `ack`; `status` stays
+  servable) — destroy ends the class, not the tasks' readable history.
+
+#### E. Untouched
+
+Agent flow (`_deposit_result`, gather queues, branch closes), the HTTP shells
+(same endpoints/codes), Manager/Registry scopes. Runtime footprint extends to
+`gates` + `node_ops` + `state_report` + `outbox` (ARCH §2/§7, LEG-085 amended).
+
+### Acceptance criteria
+
+- `submit` seeds `end_of_level_queue == result:<starting-agent>`; two submits
+  on the same agent share one queue name.
+- A flow-end result on `result:<agent>` is collected by the drain; `status`
+  reports COMPLETED only via the record (never by peeking the queue).
+- Two tasks on one agent → two records keyed by `task_id`; no cross-talk.
+- An invalid item on a result queue → `WARNING`, consumed, never applied.
+- `destroy_class` clears `result:<name>`; ack consumes; re-read empty;
+  ack-on-empty `False`.
+
+### Tests (red first)
+
+- New `tests/test_leg095_result_drain.py` (submit seeds per-agent queue; drain
+  collects → `status` COMPLETED via record; kick-on-read path; two-task
+  isolation; invalid item consumed with WARNING; ack/empty semantics;
+  destroy clears the agent's result queue; unknown task → no kick, `None`).
+- Updated to the record model: `test_leg014_manager`, `test_leg026_e2e`,
+  `test_leg032_example_summarize`, `test_leg043_examples_composites`,
+  `test_leg044_nested_composites`, `test_leg081_boot`,
+  `test_leg085_runtime`, `test_leg093_outbox`,
+  `test_flow_integration_decoupled`.
+- Full suite + `ruff` + `pyright`.
+
+### Logging (rule 11, with the implementation)
+
+- `submit` / `work_item` INFO carry `result_queue=result:<agent>`.
+- Drain hit → INFO `runtime result_drain task=… agent=… recorded=true`;
+  invalid item → WARNING; ack → INFO; destroy clearing → INFO.
+
+### Validation case
+
+- The `transform` E2E (LEG-026) over the record model: submit → seed → agent
+  run → `status` kick → drain → `status` COMPLETED with `result_key =
+  outbox:<task_id>`; plus the LEG-093 acceptor round trip
+  (deposit → drain → poll → ack).

@@ -209,6 +209,12 @@ async def test_leg026_example_runs_behind_auth(
 
     await agent.run()
 
+    # The result sits on the agent's shared queue; status schedules its
+    # collection (kick-on-miss) and the node pump dispatches the drain.
+    await ac.get(f"/status/{task_id}", headers=bearer("tok-a"))
+    for _ in range(10):
+        await runtime.manager.run()
+
     owner = await ac.get(f"/status/{task_id}", headers=bearer("tok-a"))
     assert owner.status_code == 200, owner.text
     assert owner.json()["state"] == "completed"

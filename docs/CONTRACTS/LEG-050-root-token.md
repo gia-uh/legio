@@ -20,8 +20,10 @@ queue**, and the final result is delivered there exactly-once. There is no
 
 ## Contract & design
 - On submit: the flow is authored as LEG-011 (Schema 2): level `1`,
-  `end_of_level_queue` = the **final-result queue** (a per-task queue the Runtime
-  owns and the API reads back via `status`). The agent never chooses the
+  `end_of_level_queue` = the **final-result queue** (the starting agent's
+  shared `result:<agent>` queue, LEG-095 Phase 2; the `RESULT_DRAIN` intake
+  collects it into the per-task outbox record the API reads back via
+  `status`). The agent never chooses the
   destination; parallel-as-root passes its sequence as level 1
   with the same final-result queue and fan-in via its gathering queue.
 - On **flow end** (end-of-sequence AND `level == 1`) the final

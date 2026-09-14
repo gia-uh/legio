@@ -157,8 +157,9 @@ are red for the yet-unimplemented surface.
     deposited message to completion with observable state changes in registries.
 - **LEG-026** E2E example: `transform` with a fake tool (domain-free).
   - **Accept**: submitting `transform` through the API yields its output
-    in the task's final-result queue (`result:<task_id>`, read back via
-    `status`); example is a green test (does not bitrot).
+    in the agent's shared final-result queue (`result:<agent>`, collected into
+    the task's outbox record, read back via `status`); example is a green test
+    (does not bitrot).
 - **LEG-027** Auth middleware: single middleware enforcing the
   LEG-017 endpoint→token map for the API surface.
   - **Accept**: middleware tests match the LEG-017 §9 contract list for
@@ -387,6 +388,13 @@ are red for the yet-unimplemented surface.
     its `seq`; a rejected/foreign control emits none; a report without a
     pending mint is a visible WARNING, never applied; missing report within the
     budget → visible `RecoverableError`, never a silent state.
+  - **Accept (Phase 2 — per-agent result queue + outbox intake, approved
+    session 86b)**: `submit` seeds `end_of_level_queue == result:<starting-agent>`
+    (one queue per root agent, shared across tasks); the `RESULT_DRAIN` intake
+    collects flow-end results into per-task `outbox` records; `status` /
+    `read_outbox` / `ack_outbox` read records, never the physical queue; an
+    invalid item on a result queue is a visible WARNING, consumed, never
+    applied; `destroy_class` clears `result:<name>`.
 
 ### R-9 — Federation
 

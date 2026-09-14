@@ -26,7 +26,7 @@ from legio.agents.linguistic_agent import LinguisticAgent
 from legio.agents.tool_agent import ToolAgent
 from legio.api import create_app
 from legio.flow import build_payload
-from legio.naming import result_queue_key
+from legio.naming import outbox_key
 from legio.patterns import load_patterns, resolve_composite_branches
 from legio.runtime import Runtime
 from legio.security import ClientTokenStore
@@ -238,12 +238,16 @@ async def test_summarize_flows_linguistic_to_tool_over_rest_and_auth(
             await assess.run()
             await composite.run()
 
-        # Check status
+        # Check status: the result sits on the agent's shared queue; status
+        # schedules its collection (kick-on-miss), the pump dispatches it.
+        await ac.get(f"/status/{task_id}", headers=bearer("tok-a"))
+        for _ in range(10):
+            await runtime.manager.run()
         status_resp = await ac.get(f"/status/{task_id}", headers=bearer("tok-a"))
         assert status_resp.status_code == 200, status_resp.text
         entry = status_resp.json()
         assert entry["state"] == "completed"
-        assert entry["result_key"] == result_queue_key(task_id)
+        assert entry["result_key"] == outbox_key(task_id)
 
         # The tool should have received the linguistic output (re-keyed under its
         # input_as and wrapped under the final output_as in the result)

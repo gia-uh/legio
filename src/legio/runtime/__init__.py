@@ -28,10 +28,14 @@ mirror**, written only by the Runtime after each fact is confirmed. The
 through its public API** (``submit_task``/``status``) and the Registry through
 its public surface — it never opens another layer's beaver scopes.
 
-Beaver footprint (rule 13): the Runtime owns exactly **two** direct scopes —
-the class entry gate (``db.dict("gates")``, §12.5) and the operator control
+Beaver footprint (rule 13): the Runtime owns exactly **four** direct scopes —
+the class entry gate (``db.dict("gates")``, §12.5), the operator control
 intake (``db.queue("node_ops")``, LEG-088 — the ``origin: operator`` source,
-drained **via the ``NODE_OP`` Manager fact**, never pumped). The Manager owns
+drained **via the ``NODE_OP`` Manager fact**, never pumped), the agent
+honor-statement intake (``db.queue("state_report")``, LEG-095 — drained via
+the ``STATE_REPORT`` Manager fact) and the per-task outbox mirror
+(``db.dict("outbox")``, LEG-095 Phase 2 — written by the ``RESULT_DRAIN``
+intake, read by ``status``/``read_outbox``/``ack_outbox``). The Manager owns
 ``tasks``/``pending_tasks``/``control`` (business seeds land there as Manager
 tasks); the Registry owns ``catalog``/``instances``/``yaml_cache``. Class/result
 queues (``legio:queue:<...>``) are the flow's shared message medium, deposited
@@ -82,7 +86,14 @@ from legio.flow import (
     sign_control,
 )
 from legio.manager import Manager, TaskRecord, TaskStatus
-from legio.naming import queue_key, result_queue_key, validate_node_id, validate_task_id
+from legio.naming import (
+    OUTBOX_SCOPE,
+    outbox_key,
+    queue_key,
+    result_queue_key,
+    validate_node_id,
+    validate_task_id,
+)
 from legio.patterns import Catalog, load_patterns
 from legio.patterns.schema1 import AgentKind, AgentSpec, AgentType
 from legio.registry import ActivityState, ClassRecord, InstanceRecord, Registry
@@ -107,6 +118,11 @@ NODE_OPS_SCOPE = "node_ops"
 # ``STATE_REPORT_SCOPE`` itself lives in ``legio.flow.control`` — the agent
 # deposits there and cannot import the Runtime).
 STATE_REPORT_TASK = "state_report"
+# LEG-095 Phase 2 — the result-drain intake: the flow writes flow-end
+# ``ExecutionResultMessage``s onto the per-agent ``result:<agent>`` queue and
+# this Manager fact collects them into per-task ``outbox`` records (parameter
+# ``agent`` names the drained root agent; re-kicks while items remain).
+RESULT_DRAIN_TASK = "result_drain"
 CLASS_OP_VERBS = frozenset({"enable_class", "disable_class", "destroy_class"})
 INSTANCE_OP_VERBS = frozenset({"enable_instance", "disable_instance", "destroy_instance"})
 NODE_OP_VERBS = CLASS_OP_VERBS | INSTANCE_OP_VERBS
@@ -223,6 +239,12 @@ class Runtime:
         # a report, it correlates it with the ledger (LEG-095 §A/§C).
         self._state_reports = db.queue(STATE_REPORT_SCOPE)
         self._pending_controls: dict[tuple[str, str, int], str] = {}
+        # LEG-095 Phase 2 — the per-task outbox mirror, the Runtime's third
+        # scope: the ``RESULT_DRAIN`` intake collects flow-end results here,
+        # keyed by task id; ``status``/``read_outbox``/``ack_outbox`` read
+        # records, never the physical result queue.
+        self._outbox = db.dict(OUTBOX_SCOPE)
+        self._pending_controls: dict[tuple[str, str, int], str] = {}
         self._instance_tasks: dict[tuple[str, str], str] = {}
         self._instance_sequence: dict[str, int] = {}
         # The authenticated control channel (LEG-082): the Runtime is the only
@@ -241,6 +263,7 @@ class Runtime:
             self.manager.register(fact, self._instance_control_fact)
         self.manager.register(NODE_OP_TASK, self._node_op_fact)  # LEG-088 intake drain
         self.manager.register(STATE_REPORT_TASK, self._state_report_fact)  # LEG-095 drain
+        self.manager.register(RESULT_DRAIN_TASK, self._result_drain_fact)  # Phase 2 drain
         logger.info("runtime up node=%s", node_id)
 
     # --- registered callables (the facts the Manager executes) ----------------
@@ -539,6 +562,51 @@ class Runtime:
             await self.manager.submit_task(STATE_REPORT_TASK)
         return {"processed": 1, "replenished": replenished}
 
+    async def _kick_result_drain(self, agent: str) -> None:
+        """Schedule collection of ``agent``'s result queue (scheduling, never
+        pumping — the node's executor dispatches the fact)."""
+        await self.manager.submit_task(RESULT_DRAIN_TASK, agent)
+
+    async def _result_drain_fact(self, agent: str) -> dict[str, Any]:
+        """The result-drain intake (LEG-095 Phase 2): pop one flow-end result
+        off ``result:<agent>``, record it in the per-task ``outbox`` dict, and
+        re-schedule while items remain (scheduling field = presence on the
+        queue, a data read, never a sleep, rule 8).
+
+        An item that is not an ``ExecutionResultMessage`` is a visible
+        ``WARNING`` — consumed, never applied (rule 9). No gate check: a
+        computed result must never strand on the queue of a class disabled
+        after it was produced.
+        """
+        queue = self._db.queue(queue_key(result_queue_key(agent)))
+        try:
+            item = await queue.get(block=False)
+        except IndexError:
+            return {"processed": 0, "replenished": False, "agent": agent}
+        try:
+            result = ExecutionResultMessage.model_validate(item.data)
+        except ValidationError as exc:
+            logger.warning(
+                "runtime result_drain invalid agent=%s reason=%s "
+                "(consumed, not applied)",
+                agent,
+                exc,
+            )
+            replenished = await queue.count() > 0
+            if replenished:
+                await self.manager.submit_task(RESULT_DRAIN_TASK, agent)
+            return {"processed": 1, "replenished": replenished, "agent": agent}
+        await self._outbox.set(result.task_id, result.model_dump(mode="json"))
+        logger.info(
+            "runtime result_drain task=%s agent=%s recorded=true",
+            result.task_id,
+            agent,
+        )
+        replenished = await queue.count() > 0
+        if replenished:
+            await self.manager.submit_task(RESULT_DRAIN_TASK, agent)
+        return {"processed": 1, "replenished": replenished, "agent": agent}
+
     async def _apply_node_op(self, op: NodeOp) -> str:
         """The Runtime's decision logic for a drained intent: relay it to the
         corresponding lifecycle verb — which mints the signed control message,
@@ -738,7 +806,10 @@ class Runtime:
         starting agent's ``input_as`` and the root ``ExecutionRequestMessage``
         is deposited by the ``seed`` task the Manager runs (ARCHITECTURE §7.1):
         the business record is a genuine Manager task in ``tasks`` — the
-        decoupled, dynamic submit the docs prescribe.
+        decoupled, dynamic submit the docs prescribe. The level-1
+        ``end_of_level_queue`` is the starting agent's shared final-result
+        queue (``result:<agent>``, LEG-095 Phase 2), and the submit schedules
+        its collection via the ``RESULT_DRAIN`` intake.
         """
         if not route:
             raise ValueError("route must contain at least one agent")
@@ -749,7 +820,7 @@ class Runtime:
             raise RecoverableError(f"class {first_class!r} is disabled (entry gate closed)")
         task_id = f"{self._node_id}:{uuid.uuid4()}"
         validate_task_id(task_id)
-        result_queue = result_queue_key(task_id)
+        result_queue = result_queue_key(first_class)
         rekeyed_payload = {first_input_as: payload}
         root_branch_id = str(uuid.uuid4())
         token = FlowToken(
@@ -769,6 +840,7 @@ class Runtime:
             token=token.model_dump(mode="json"),
             payload=rekeyed_payload,
         )
+        await self._kick_result_drain(first_class)
         logger.info(
             "runtime submit task=%s owner=%s class=%s result_queue=%s",
             task_id,
@@ -809,7 +881,7 @@ class Runtime:
             logger.warning("runtime work_item denied class=%s by=peer", first_class)
             raise RecoverableError(f"class {first_class!r} is disabled (entry gate closed)")
         validate_task_id(task_id)
-        result_queue = result_queue_key(task_id)
+        result_queue = result_queue_key(first_class)
         rekeyed_payload = {first_input_as: payload}
         root_branch_id = str(uuid.uuid4())
         token = FlowToken(
@@ -838,6 +910,7 @@ class Runtime:
                 exc,
             )
             return WorkItemReceipt(id=task_id, deposited=False, deduplicated=True)
+        await self._kick_result_drain(first_class)
         logger.info(
             "runtime work_item task=%s owner=%s class=%s result_queue=%s deposited=true",
             task_id,
@@ -848,35 +921,42 @@ class Runtime:
         return WorkItemReceipt(id=task_id, deposited=True)
 
     async def ack_outbox(self, task_id: str) -> bool:
-        """Consume the result of a completed work item from its outbox queue.
+        """Consume the collected result of a completed work item from its outbox record.
 
-        The outbox is the task's result queue (``result_queue_key(task_id)``),
-        where the agent flow written the ``ExecutionResultMessage`` during
-        execution (LEG-093). The ack is a destructive drain: after it, a poll
-        reads empty (read-after-ack = empty). An already-empty outbox is a
-        no-op (`False`), never an error.
+        The outbox is the per-task record in the ``outbox`` dict (LEG-095 Phase
+        2), where the ``RESULT_DRAIN`` intake recorded the
+        ``ExecutionResultMessage`` the flow wrote during execution (LEG-093).
+        The ack is a destructive consume of the record: after it, a poll reads
+        empty (read-after-ack = empty). An absent record is a no-op (`False`),
+        never an error — the ack never schedules collection itself (a pure
+        ack-without-poll on an uncollected result loses nothing; the next poll
+        collects it).
         """
-        outbox = self._db.queue(queue_key(result_queue_key(task_id)))
-        try:
-            await outbox.get(block=False)
-        except IndexError:
+        if await self._outbox.fetch(task_id) is None:
             return False
+        await self._outbox.delete(task_id)
         logger.info("runtime ack_outbox task=%s", task_id)
         return True
 
     async def read_outbox(self, task_id: str) -> dict[str, Any] | None:
-        """Peek the result queue for a completed work item (LEG-093).
+        """Peek the outbox record for a completed work item (LEG-093, Phase 2).
 
-        Returns the ``ExecutionResultMessage`` payload when the flow has
-        already written it, else ``None`` — a non-blocking poll (rule 8). The
-        write happened at execution time, independent of any ack; the message
-        is left in place for ``ack_outbox`` to consume.
+        Returns the collected ``ExecutionResultMessage`` payload when the
+        ``RESULT_DRAIN`` intake has already recorded it, else ``None`` — a
+        non-blocking poll (rule 8). When the record is absent the poll
+        schedules one drain of the task's agent queue (kick-on-miss, from the
+        seed's launcher); the write happened at execution time, independent of
+        any ack. A task id with no seed reads empty, never an error.
         """
-        outbox = self._db.queue(queue_key(result_queue_key(task_id)))
-        item = await outbox.peek()
-        if item is None:
+        record = await self.manager.status(task_id)
+        if record is None:
             return None
-        result = ExecutionResultMessage.model_validate(item.data)
+        token = FlowToken.model_validate(record.kwargs["token"])
+        data = await self._outbox.fetch(task_id)
+        if data is None:
+            await self._kick_result_drain(token.launcher_class)
+            return None
+        result = ExecutionResultMessage.model_validate(data)
         logger.info("runtime read_outbox task=%s ready=true", task_id)
         return dict(result.payload)
 
@@ -884,10 +964,12 @@ class Runtime:
         """Return the business task entry if ``client_id`` owns it, else raise.
 
         The business record is the Manager's seed task (its ``kwargs`` carry the
-        owner); the completed result is read from the task's final-result queue
-        via a non-destructive ``peek`` (§7.7). A ``None`` requester (anonymous
-        open-mode access) is denied exactly like a foreign client, and a failed
-        seed surfaces visibly.
+        owner); the completed result is read from the task's outbox record —
+        collected there by the ``RESULT_DRAIN`` intake (LEG-095 Phase 2), never
+        peeked off the physical result queue (§7.7). When the record is absent
+        the read schedules one drain of the task's agent queue (kick-on-miss).
+        A ``None`` requester (anonymous open-mode access) is denied exactly
+        like a foreign client, and a failed seed surfaces visibly.
         """
         record = await self.manager.status(task_id)
         if record is None:
@@ -907,13 +989,14 @@ class Runtime:
         state = TaskState.PENDING if record.status == TaskStatus.PENDING else TaskState.RUNNING
         output: dict[str, Any] | None = None
         result_key: str | None = None
-        result_queue = result_queue_key(task_id)
-        result_item = await self._db.queue(queue_key(result_queue)).peek()
-        if result_item is not None:
-            result = ExecutionResultMessage.model_validate(result_item.data)
+        data = await self._outbox.fetch(task_id)
+        if data is None:
+            await self._kick_result_drain(token.launcher_class)
+        else:
+            result = ExecutionResultMessage.model_validate(data)
             output = dict(result.payload)
             state = TaskState.COMPLETED
-            result_key = result_queue
+            result_key = outbox_key(task_id)
         logger.info("runtime status task=%s state=%s", task_id, state.value)
         return TaskEntry(
             task_id=task_id,
@@ -1136,6 +1219,8 @@ class Runtime:
         the class, then cascade the dependents. Drained classes must be
         recreated via ``recreate_class`` from the cached spec, which survives.
         The drain budgets come from the ``lifecycle`` config (§5.8/§10.2).
+        The class's shared result queue (``result:<name>``, LEG-095 Phase 2)
+        is cleared too; per-task outbox records survive (consumed by ``ack``).
         """
         if await self.registry.class_state(name) is None:
             logger.warning("runtime destroy_class noop class=%s (unknown)", name)
@@ -1151,6 +1236,7 @@ class Runtime:
         for instance in await self.registry.list_instances(name):
             await self.destroy_instance(name, instance.instance_id)
         await self._clear_queue(name)
+        await self._clear_result_queue(name)
         await self._gates.delete(name)
         dependents = await self.registry.class_dependents(name, transitive=True)
         await self.registry.remove_class(name)
@@ -1189,6 +1275,23 @@ class Runtime:
                 await queue.get(block=False)
             except IndexError:
                 return
+
+    async def _clear_result_queue(self, name: str) -> None:
+        """Drain-and-discard the class's shared result queue (LEG-095 Phase 2:
+        one ``result:<agent>`` per root agent, so destroy reclaims it)."""
+        queue = self._db.queue(queue_key(result_queue_key(name)))
+        cleared = 0
+        while True:
+            try:
+                await queue.get(block=False)
+            except IndexError:
+                logger.info(
+                    "runtime destroy_class result_queue cleared class=%s items=%d",
+                    name,
+                    cleared,
+                )
+                return
+            cleared += 1
 
     # --- instance lifecycle ----------------------------------------------------
 
@@ -1414,6 +1517,7 @@ __all__ = [
     "NODE_OPS_SCOPE",
     "NODE_OP_TASK",
     "NODE_OP_VERBS",
+    "RESULT_DRAIN_TASK",
     "SEED_TASK",
     "STATE_REPORT_TASK",
     "NodeOp",

@@ -5,12 +5,14 @@ result of a deposited work item; ack consumes (read-after-ack = empty). The
 deposit is idempotent: a duplicate work item with the same id is never executed
 twice.
 
-In the modern triangle the acceptor's outbox **is** the per-task result queue
-(``result_queue_key(task_id)``): the agent flow already writes the
-``ExecutionResultMessage`` there at the end of level 1, *during* execution —
-write-before-ack is structural, and the two endpoints ``GET /outbox/{task_id}``
-(non-blocking poll) and ``DELETE /outbox/{task_id}`` (destructive ack) are a
-thin read/consume shell over it (LEG-093 contract).
+In the modern triangle the acceptor's outbox is the per-task **record** in the
+``outbox`` dict: the agent flow writes the ``ExecutionResultMessage`` onto the
+agent's shared result queue (``result:<agent>``, LEG-095 Phase 2) at the end of
+level 1, *during* execution, and the ``RESULT_DRAIN`` intake collects it into
+the record — write-before-ack stays structural (the write precedes any ack),
+and the two endpoints ``GET /outbox/{task_id}`` (non-blocking poll) and
+``DELETE /outbox/{task_id}`` (destructive ack) are a thin read/consume shell
+over the record (LEG-093 contract).
 """
 
 from __future__ import annotations
@@ -92,18 +94,39 @@ async def _deposit_result(
     db: AsyncBeaverDB, tid: str, *, payload: dict | None = None
 ) -> None:
     """Simulate the acceptor's flow having already written the result to the
-    task's outbox (result queue) — the write-before-ack precondition."""
+    agent's shared result queue — the write-before-ack precondition (the
+    ``RESULT_DRAIN`` intake still has to collect it into the outbox record)."""
     result = ExecutionResultMessage(
-        end_of_level_queue=result_queue_key(tid),
+        end_of_level_queue=result_queue_key("cutter"),
         level=1,
         launcher_class="cutter",
         task_id=tid,
         branch_id="synthetic-branch",
         payload=payload or {"cutter": {"result": "cut carve"}},
     )
-    await db.queue(queue_key(result_queue_key(tid))).put(
+    await db.queue(queue_key(result_queue_key("cutter"))).put(
         result.model_dump(mode="json"), priority=0.0
     )
+
+
+async def _seed(runtime: Runtime, tid: str) -> None:
+    """Mint the acceptor-side seed for the author's work item (the honest
+    modern-triangle path: ``POST /work-items/cutter`` → ``submit_work_item``).
+
+    The seed lets polls resolve the draining agent; without it the outbox
+    reads empty (no kick, no error).
+    """
+    receipt = await runtime.submit_work_item(
+        AUTHOR_NODE, (("cutter", "cutter"),), {"raw": "carve"}, task_id=tid
+    )
+    assert receipt.deposited is True
+
+
+async def _collect(runtime: Runtime, rounds: int = 10) -> None:
+    """Dispatch pending Manager tasks until idle (the node's executor)."""
+    for _ in range(rounds):
+        if await runtime.manager.run() == 0:
+            break
 
 
 # --------------------------------------------------------------------------
@@ -127,9 +150,13 @@ async def test_outbox_poll_no_result_yet(beaver_db: AsyncBeaverDB) -> None:
 @pytest.mark.asyncio
 async def test_outbox_poll_returns_result_when_deposited(beaver_db: AsyncBeaverDB) -> None:
     app = build_app(beaver_db, capacity_catalog())
+    runtime = Runtime(beaver_db, node_id=NODE_ID)
     tid = task_id()
+    await _seed(runtime, tid)
     await _deposit_result(beaver_db, tid)
     async with await _client(app) as ac:
+        await ac.get(f"/outbox/{tid}", headers=bearer("fed-secret"))  # kick-on-miss
+        await _collect(runtime)
         resp = await ac.get(f"/outbox/{tid}", headers=bearer("fed-secret"))
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -145,9 +172,13 @@ async def test_outbox_poll_returns_result_when_deposited(beaver_db: AsyncBeaverD
 @pytest.mark.asyncio
 async def test_outbox_ack_consumes_and_re_read_is_empty(beaver_db: AsyncBeaverDB) -> None:
     app = build_app(beaver_db, capacity_catalog())
+    runtime = Runtime(beaver_db, node_id=NODE_ID)
     tid = task_id()
+    await _seed(runtime, tid)
     await _deposit_result(beaver_db, tid)
     async with await _client(app) as ac:
+        await ac.get(f"/outbox/{tid}", headers=bearer("fed-secret"))  # kick-on-miss
+        await _collect(runtime)
         acked = await ac.delete(f"/outbox/{tid}", headers=bearer("fed-secret"))
         assert acked.status_code == 200, acked.text
         assert acked.json() == {"id": tid, "acked": True}
@@ -176,9 +207,13 @@ async def test_outbox_ack_on_empty_is_noop(beaver_db: AsyncBeaverDB) -> None:
 @pytest.mark.asyncio
 async def test_outbox_result_is_readable_before_any_ack(beaver_db: AsyncBeaverDB) -> None:
     app = build_app(beaver_db, capacity_catalog())
+    runtime = Runtime(beaver_db, node_id=NODE_ID)
     tid = task_id()
+    await _seed(runtime, tid)
     await _deposit_result(beaver_db, tid)
     async with await _client(app) as ac:
+        await ac.get(f"/outbox/{tid}", headers=bearer("fed-secret"))  # kick-on-miss
+        await _collect(runtime)
         first = await ac.get(f"/outbox/{tid}", headers=bearer("fed-secret"))
         assert first.status_code == 200
         assert first.json()["ready"] is True

@@ -2,15 +2,18 @@
 
 Every identifier (node, agent, tool, task) has a validating contract. There is
 no ``client:`` family (Schema 2, addendum AL): root results land on the
-submit-created final-result queue, addressed by ``result_queue_key``.
+submit-seeded final-result queue, addressed by ``result_queue_key``.
 
 The only persisted namespaces legio names directly are the per-agent queue
 ``legio:queue:<agent_id>``, the per-composite gathering queue
-``legio:queue:gather:<agent_id>`` and the per-task final-result queue
-``legio:queue:result:<task_id>``. A composite consumes **two physical queues**
-(its class inbox and its gathering — AGENT_LIFECYCLE §12.2/§12.3); messages
-are partitioned by queue, never by message type. Flow results always travel in
-the message payload. Everything else is beaver's native naming.
+``legio:queue:gather:<agent_id>``, the per-agent final-result queue
+``legio:queue:result:<agent>`` (one per served root agent, shared by every
+task starting there — LEG-095 Phase 2) and the per-task outbox record
+``outbox:<task_id>`` in the Runtime-owned ``outbox`` dict. A composite consumes
+**two physical queues** (its class inbox and its gathering — AGENT_LIFECYCLE
+§12.2/§12.3); messages are partitioned by queue, never by message type. Flow
+results always travel in the message payload. Everything else is beaver's
+native naming.
 """
 
 from __future__ import annotations
@@ -24,20 +27,37 @@ logger = logging.getLogger(__name__)
 
 QUEUE_NAMESPACE = "legio:queue:"
 
+#: Beaver dict scope holding one outbox record per completed task (LEG-095
+#: Phase 2) — the Runtime-owned mirror of collected results, keyed by task id.
+OUTBOX_SCOPE = "outbox"
+
 
 def queue_key(agent_id: str) -> str:
     """Full namespaced beaver queue name for an agent."""
     return f"{QUEUE_NAMESPACE}{agent_id}"
 
 
-def result_queue_key(task_id: str) -> str:
-    """The queue *name* (relative) of a task's final-result queue (Schema 2).
+def result_queue_key(agent_name: str) -> str:
+    """The queue *name* (relative) of a root agent's final-result queue.
 
-    The submit creates this as the token's ``end_of_level_queue`` at level 1 and
-    ``status`` reads the completed result back from it. The relative name is
-    resolved to a beaver queue via ``queue_key`` when delivering/reading.
+    One queue per served root agent (LEG-095 Phase 2), shared by every task
+    starting there — never one queue per submit. The submit seeds this as the
+    token's ``end_of_level_queue`` at level 1 and the ``RESULT_DRAIN`` intake
+    collects its ``ExecutionResultMessage``s into per-task outbox records,
+    which ``status`` reads back. The relative name is resolved to a beaver
+    queue via ``queue_key`` when delivering/draining.
     """
-    return f"result:{task_id}"
+    return f"result:{agent_name}"
+
+
+def outbox_key(task_id: str) -> str:
+    """The informational pointer ``status`` reports as ``result_key``.
+
+    Names the task's record in the ``outbox`` dict (``OUTBOX_SCOPE``) once the
+    ``RESULT_DRAIN`` intake has collected its result — the address the result
+    lives at after collection, never the physical queue.
+    """
+    return f"outbox:{task_id}"
 
 
 def gathering_key(agent_id: str) -> str:
@@ -97,9 +117,11 @@ def is_reserved_agent(agent_id: str) -> bool:
 
 
 __all__ = [
+    "OUTBOX_SCOPE",
     "QUEUE_NAMESPACE",
     "gathering_key",
     "is_reserved_agent",
+    "outbox_key",
     "queue_key",
     "result_queue_key",
     "validate_agent_id",

@@ -30,7 +30,8 @@ pools wiring). Additive: no existing module changes.
   error policy.
 - **Out of scope:** the Runtime (the public face that decides and calls these —
   its own R-8 slice), the Manager's task execution, the class-queue entry gate,
-  `gates`/`semaphore`/`outbox` future scopes (ARCHITECTURE §2), the DAG/routing,
+  `gates`/`semaphore` future scopes (ARCHITECTURE §2; the `outbox` scope now
+  exists Runtime-owned since LEG-095 Phase 2, session 86b), the DAG/routing,
   federation (R-9).
 
 ## Contract & design

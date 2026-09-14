@@ -16,13 +16,15 @@ twice.
 ## Problem (modern-triangle mapping)
 
 The DRAFT referenced LEG-015 in-memory `Outbox` and `_queues`. In the modern
-architecture the acceptor's outbox **is** the per-task result queue
-(`result_queue_key(task_id)`) — the same queue the agent's flow already
-deposits the `ExecutionResultMessage` onto at the end of level 1
-(ARCHITECTURE §3, `_route_outcome` at `_deposit_result`). The write happens
-**during** flow execution; the ack is a separate consumer step. This gives
-"write-before-ack" **for free** — the result is always on the outbox before
-any ack can occur; no helper or explicit ordering is needed.
+architecture the acceptor's outbox is the per-task **record** in the `outbox`
+dict (LEG-095 Phase 2): the agent's flow deposits the `ExecutionResultMessage`
+onto the agent's shared result queue (`result:<agent>`) at the end of level 1
+(ARCHITECTURE §3, `_route_outcome` at `_deposit_result`), and the
+`RESULT_DRAIN` intake collects it into the record keyed by `task_id`. The
+write happens **during** flow execution; collection and ack are separate
+consumer steps. This gives "write-before-ack" **for free** — the result is
+always written before any ack can occur; no helper or explicit ordering is
+needed.
 
 Author-minted task ids (LEG-092) mean the result queue is keyed by the
 author's own `<node_id>:<uuid>`. The author polls the acceptor's outbox by
@@ -39,8 +41,10 @@ a second seed is ever minted (LEG-092).
 
 - **In scope:** `GET /outbox/{task_id}` (non-blocking poll, L1 guard), `DELETE
   /outbox/{task_id}` (destructive ack, L1 guard), the Runtime seams
-  `read_outbox`/`ack_outbox` that wrap the result queue, and the idempotency
-  guarantee at the queue-message level.
+  `read_outbox`/`ack_outbox` that read/consume the outbox record, and the
+  idempotency guarantee at the queue-message level.
+  *(Amended session 86b, LEG-095 Phase 2: outbox = per-task record fed by the
+  `RESULT_DRAIN` intake, not the physical result queue.)*
 - **Out of scope:** the author-side HTTP client (the acceptance is the
   endpoint; the authoring client is exercised by LEG-094); the result write
   itself (the agent flow handles it).
@@ -56,18 +60,21 @@ a second seed is ever minted (LEG-092).
   - Result present → **200** `{id, ready: true, result: {...}}` (the
     `ExecutionResultMessage` payload).
 - `DELETE /outbox/{task_id}` (L1 guard):
-  - Something consumed → **200** `{id, acked: true}` (destructive drain of
-    `result_queue_key`).
-  - Queue already empty → **200** `{id, acked: false}` (idempotent ack, no
+  - Record consumed → **200** `{id, acked: true}` (destructive consume of the
+    outbox record).
+  - Record absent → **200** `{id, acked: false}` (idempotent ack, no
     error).
-- `Runtime.read_outbox(task_id)` — non-destructive peek of
-  `result_queue_key(task_id)`. Returns the result dict or `None`.
-- `Runtime.ack_outbox(task_id)` — destructive get from
-  `result_queue_key(task_id)`. Returns `True` if something was consumed.
+- `Runtime.read_outbox(task_id)` — returns the collected record's payload, or
+  `None` when uncollected. A miss schedules one `RESULT_DRAIN` of the task's
+  agent queue (kick-on-miss, agent from the seed's launcher); no seed →
+  `None`, never an error.
+- `Runtime.ack_outbox(task_id)` — destructive consume of the record. Returns
+  `True` if something was consumed; absent → `False` (idempotent ack, never
+  an error, never schedules collection).
 - Write-before-ack is structural (not an API rule): the agent's
   `_deposit_result` writes the `ExecutionResultMessage` to `end_of_level_queue`
-  during execution; the ack is a separate consumer step. A crash after ack
-  never loses a result that was never written.
+  during execution; collection and ack are separate consumer steps. A crash
+  after ack never loses a result that was never written.
 - Lifecycle stays local (maintainer session 85q): the outbox surface never
   accepts an operator verb.
 
@@ -88,13 +95,15 @@ From `docs/PLAN.md` (LEG-093), verbatim:
 
 ## Tests (red-first)
 
-- Poll on a task_id with no result deposited → `ready: false`.
-- After depositing an `ExecutionResultMessage` on the task's result queue → poll
-  → `ready: true` with payload.
-- Ack consumes: DELETE → `acked: true`; re-poll → `ready: false`.
+- Poll on a task_id with no seed/result → `ready: false`.
+- After the flow writes the result on `result:<agent>` and the drain is
+  dispatched → poll → `ready: true` with payload.
+- Ack consumes the record: DELETE → `acked: true`; re-poll → `ready: false`.
 - Idempotent ack: DELETE on an empty outbox → `acked: false`.
 - Write-before-ack pin: the result is readable (GET → `ready: true`) before any
   ack has occurred (the ack never triggers the write).
+- Ack-without-poll pin: DELETE before any collection → `acked: false` and the
+  result is not lost (the next poll collects it).
 - Duplicate work item: POST the same work item twice → pump the manager → only
   **one** `ExecutionRequestMessage` on the class queue (idempotency at the
   queue-message level, the "not executed twice" guarantee).

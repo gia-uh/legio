@@ -31,7 +31,7 @@ from legio.flow import (
     ExecutionResultMessage,
 )
 from legio.manager import TaskStatus
-from legio.naming import queue_key, result_queue_key, validate_task_id
+from legio.naming import outbox_key, queue_key, result_queue_key, validate_task_id
 from legio.patterns import load_patterns
 from legio.patterns.schema1 import AgentSpec, AgentType, InputContract, IOType, OutputContract
 from legio.registry import ActivityState
@@ -869,7 +869,7 @@ async def test_submit_mints_node_task_id_and_deposits_first_step(beaver_db) -> N
         assert item.data["task_id"] == task_id
         assert item.data["current_index"] == 0
         assert item.data["level"] == 1
-        assert item.data["end_of_level_queue"] == result_queue_key(task_id)
+        assert item.data["end_of_level_queue"] == result_queue_key(cls)
         assert item.data["payload"] == {cls: {"text": "hello"}}
     finally:
         await _teardown(beaver_db, runtime, [cls], pump=pump)
@@ -972,14 +972,22 @@ async def test_runtime_status_flow_completed_and_owner_scoped(beaver_db) -> None
         steps = await agent.run()
         assert steps == 1
 
+        # Phase 2: the result lands on the agent's shared queue; status
+        # schedules its collection and the background pump dispatches it.
+        await runtime.status(task_id, "client-a")
+        for _ in range(200):
+            if await beaver_db.dict("outbox").fetch(task_id) is not None:
+                break
+            await asyncio.sleep(0.01)
+
         entry = await runtime.status(task_id, "client-a")
         assert entry.state.value == "completed"
         assert entry.output == {cls: {"transformed": "HELLO"}}
-        assert entry.result_key == result_queue_key(task_id)
+        assert entry.result_key == outbox_key(task_id)
 
-        result_item = await beaver_db.queue(queue_key(result_queue_key(task_id))).peek()
-        assert result_item is not None
-        result = ExecutionResultMessage.model_validate(result_item.data)
+        record = await beaver_db.dict("outbox").fetch(task_id)
+        assert record is not None
+        result = ExecutionResultMessage.model_validate(record)
         assert result.payload == {cls: {"transformed": "HELLO"}}
 
         with pytest.raises(PermissionError):

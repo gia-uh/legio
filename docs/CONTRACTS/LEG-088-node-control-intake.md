@@ -40,7 +40,9 @@ never mints a message.
 
 - An intent on `node_ops` reaches the target agent as a signed control message
   honored between dispatches; the operator never touches the agent queue;
-  footprint pin: the Runtime owns exactly `gates` + `node_ops`.
+  footprint pin: the Runtime owns exactly `gates` + `node_ops`
+  *(extended by LEG-095 to + `state_report`, and by LEG-095 Phase 2 to
+  + `outbox` — session 86b).*
 - Unknown/invalid intents surface visibly (rule 9) and never mint anything.
 
 ## Non-goals

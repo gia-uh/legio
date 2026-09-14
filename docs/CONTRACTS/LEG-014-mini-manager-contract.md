@@ -17,14 +17,16 @@ delivered to the client.
 
 ## Contract & design
 - Submission: `submit(client_id, agent, payload)` → creates a task, builds a
-  level-1 root token whose `end_of_level_queue = result_queue_key(task_id)`
-  (the final-result queue), polls step 1 into the starting agent's queue, tags
-  the `tasks` entry with owner `client_id`, returns `task_id`.
+  level-1 root token whose `end_of_level_queue = result_queue_key(agent_name)`
+  (the starting agent's shared final-result queue, LEG-095 Phase 2), polls
+  step 1 into the starting agent's queue, tags the `tasks` entry with owner
+  `client_id`, returns `task_id`.
 - Root delivery: when the root task finishes (end-of-sequence **and**
   `level == 1`) the closing agent writes the result to its
-  `end_of_level_queue`, i.e. the final-result queue `result:<task_id>` — there
+  `end_of_level_queue`, i.e. the final-result queue `result:<agent>` — there
   is **no** `results:{task_id}` store and **no** `client:{task_id}` queue. The
-  client reads it back via `status`.
+  `RESULT_DRAIN` intake collects it into the task's outbox record
+  (`outbox:<task_id>`); the client reads it back via `status`.
 - Ownership: `status`/results only readable by the owning client (LEG-017).
 
 ## Interface

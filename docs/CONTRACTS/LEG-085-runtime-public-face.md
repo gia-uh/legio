@@ -75,8 +75,11 @@ Runtime(db, *, node_id, manager=None, registry=None, lifecycle=None)
   visible). `node_id` must satisfy `legio.naming.validate_node_id`
   (`<name>@<host>`) — an invalid id raises `InvalidNameError` up front
   (castor-style: loud at construction, never mid-operation).
-- The Runtime owns **exactly one beaver scope**: `gates` (a `db.dict("gates")`,
-  §12.5.2) keyed by class = `{state: enabled|disabled}`. It reaches the
+- The Runtime owns **four beaver scopes**: `gates` (a `db.dict("gates")`,
+  §12.5.2) keyed by class = `{state: enabled|disabled}`; the `node_ops`
+  intake (`db.queue("node_ops")`, LEG-088); the `state_report` intake
+  (`db.queue("state_report")`, LEG-095); and the per-task outbox mirror
+  (`db.dict("outbox")`, LEG-095 Phase 2). It reaches the
   **Manager only through its public API** (`register` / `submit_task` /
   `status` / `control_mode` / `pause` / `resume` / `cancel` / `run`) and the
   **Registry through its read/write API** — it never opens the Manager's or the
@@ -174,7 +177,8 @@ surface, mounted on the **single task substrate** — `Manager.submit_task`:
      anything is minted or deposited (nothing enters a non-enabled class,
      §12.5.1). Row absent → open.
   2. `task_id = f"{node_id}:{uuid4()}"`; `result_queue = result_queue_key(
-     task_id)`; re-key the client payload under `route[0][1]`
+     first_class)` (the starting agent's shared `result:<agent>` queue, LEG-095
+     Phase 2); re-key the client payload under `route[0][1]`
      (`first_input_as`); build the root `FlowToken` (`level_route`,
      `current_index=0`, `end_of_level_queue = result_queue`, `level=1`,
      `launcher_class`, `task_id`, fresh `branch_id`, `root=True`).
@@ -182,7 +186,9 @@ surface, mounted on the **single task substrate** — `Manager.submit_task`:
      token=<token dump>, payload=<re-keyed payload>)` — the business record is
      the Manager-created `seed` task; the owner/token live in its `kwargs`
      (LEG-083 accepts extra-official kwargs; the Manager stays blind to their
-     meaning). Empty route → `ValueError` (as today).
+     meaning). Empty route → `ValueError` (as today). Then schedule collection:
+     `manager.submit_task(RESULT_DRAIN_TASK, first_class)` (scheduling, never
+     pumping — the node owns the executor).
   4. The `seed` callable (registered in-process at construction): validates the
      token is a **root** token (a non-root token raises a visible
      `RecoverableError`), deposits the root `ExecutionRequestMessage` into
@@ -192,8 +198,11 @@ surface, mounted on the **single task substrate** — `Manager.submit_task`:
   `manager.status(task_id)`; unknown `task_id` → `KeyError`; `kwargs["client_id"]
   != client_id` → `PermissionError` (owner-scoped); a FAILED seed raises its
   error visibly (`RecoverableError`); the completed result is read from the
-  final-result queue via a non-destructive `peek` (ARCHITECTURE §7 step 7), which flips the
-  reported state to `completed` with the result payload. Otherwise pending →
+  task's outbox record — collected there by the `RESULT_DRAIN` intake
+  (LEG-095 Phase 2), never peeked off the physical queue (ARCHITECTURE §7
+  step 7) — which flips the reported state to `completed` with the result
+  payload and `result_key = outbox:<task_id>`. On a miss the read schedules
+  one drain of the task's agent queue (kick-on-miss). Otherwise pending →
   `pending` / running → `running`.
 - **Ownership decision (teardown, session 83).** The legacy
   `legio.manager.submit/status` module functions, their module-global db/node

@@ -18,8 +18,10 @@ reads back via status — proving the R-2 plumbing with a domain-free example.
 
 ## Contract & design
 - In-repo (no consumer material): `transform` agent; a fake, deterministic tool
-  registered in the registry; root task result deposited to the task's
-  **final-result queue** (`result:<task_id>`) at flow close.
+  registered in the registry; root task result deposited to the starting
+  agent's **final-result queue** (`result:<transform>`) at flow close,
+  collected by the `RESULT_DRAIN` intake into the task's outbox record
+  (LEG-095 Phase 2).
 - Runs against real beaver in green.
 
 ## Interface

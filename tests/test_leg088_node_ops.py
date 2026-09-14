@@ -44,9 +44,11 @@ from legio.tools import AvailableToolsRegistry
 NODE_ID = "runtime-a@host1"
 KEY = bytes(range(32))
 
-# Beaver dict scopes the Manager/Registry legitimately own. The Runtime's own
-# share is exactly ``gates`` + ``node_ops`` (rule 13) — the only additions a
-# fully-exercised Runtime may make to the tree's footprint.
+# Beaver dict scopes the Manager/Registry legitimately own. In the operator-only
+# scenario below, the Runtime's own share is exactly ``gates`` + ``node_ops``
+# (rule 13). Later intakes extend the share lazily on first deposit
+# (``state_report``, LEG-095; ``outbox``, LEG-095 Phase 2 — pinned in their
+# own suites), so this pin scopes to the operator surface it exercises.
 _MANAGER_AND_REGISTRY_DICTS = {
     "tasks",
     "control",

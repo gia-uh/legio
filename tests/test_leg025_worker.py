@@ -233,6 +233,12 @@ async def test_agent_loop_deposits_message_to_completion(
     processed = await agent.run()
     assert processed == 1
 
+    # Phase 2: the result lands on the agent's shared queue; status schedules
+    # its collection (kick-on-miss) and the node pump dispatches the drain.
+    await runtime.status(task_id, "client-a")
+    for _ in range(10):
+        await runtime.manager.run()
+
     entry = await runtime.status(task_id, "client-a")
     assert entry.state.value == "completed"
     assert entry.output == {"flip": {"flipped": "cba"}}

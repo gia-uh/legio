@@ -964,7 +964,7 @@ Precondition: the class exists. Always in hot. Parameter `now` or `drain`
 |---|---|---|---|
 | 1 | Resolve parameter (`drain`: wait until queue empty, §4.6; `now`: proceed) | unchanged | unchanged |
 | 2 | Destroy all its instances | unchanged | all `does not exist` |
-| 3 | Destroy the queue | unchanged | — |
+| 3 | Destroy the queue + the class's shared result queue (`result:<name>`, LEG-095 Phase 2) | unchanged | — |
 | 4 | Remove the spec from the catalog | `does not exist` | — |
 | 5 | Cascade-disable dependents (they reference a destroyed class) | dependents become `created / disabled` | — |
 
@@ -1584,10 +1584,12 @@ another class's queue. Rules (decoupled, local, no oracle):
    any depositor (a submit or an internal task). This is the same mirror
    principle as the catalog — local, named, no central authority deciding
    routing.
-3. **Destroyed class = cleared queue + no gate.** beaver auto-creates a queue on
+3. **Destroyed class = cleared queues + no gate.** beaver auto-creates a queue on
    `put` and offers no queue-deletion API, so a `put` to a destroyed class would
    silently rebuild an orphan queue and make the class look alive. `destroy`
-   **clears the class queue and removes its gate row**; once the gate is gone,
+   **clears the class queue and its shared result queue** (`result:<name>`,
+   LEG-095 Phase 2 — per-task outbox records survive, consumed by `ack`) **and
+   removes its gate row**; once the gate is gone,
    every deposit to that class is **blocked at the gate** (step 2) — no global
    oracle is needed to "know" the class died, and a `put` failure must never be
    relied on as an existence signal.

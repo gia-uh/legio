@@ -18,8 +18,9 @@ feeding a tool step, validating pass-down of structured output into tool calls.
 ## Contract & design
 - In-repo example: `summarize` flow = `[linguistic → tool]`. Linguistic
   produces structured output (fake lingo); tool consumes the dot-opened
-  record; the final result lands in the task's **final-result queue**
-  (`result:<task_id>`) at flow close.
+  record; the final result lands in the starting agent's **final-result queue**
+  (`result:<summarize>`) at flow close, collected into the task's outbox
+  record (LEG-095 Phase 2).
 - Tests assert final-result-queue scoping and structured pass-down.
 
 ## Interface
