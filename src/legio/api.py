@@ -92,11 +92,17 @@ class CatalogAgentInterface(BaseModel):
 
 
 class CatalogAgentEntry(BaseModel):
-    """One served agent in the node's catalog (LEG-090)."""
+    """One served agent in the node's catalog (LEG-090).
+
+    ``input_as`` is the served agent's declared input scope (LEG-094 session
+    86e): a peer-author route step uses it to re-key the payload exactly as
+    this node's own agent reads it.
+    """
 
     agent: str
     interface: CatalogAgentInterface
     kind: str
+    input_as: str
 
 
 class CatalogResponse(BaseModel):
@@ -201,6 +207,7 @@ def _to_catalog_response(catalog: Catalog) -> CatalogResponse:
                     schema_version=SCHEMA_VERSION,
                 ),
                 kind=kind,
+                input_as=spec.input.input_as,
             )
         )
     return CatalogResponse(schema_version=SCHEMA_VERSION, agents=entries)

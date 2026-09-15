@@ -229,6 +229,10 @@ class Runtime:
         self.registry = registry if registry is not None else Registry(db)
         self._lifecycle = lifecycle if lifecycle is not None else LifecycleConfig()
         self._gates = db.dict("gates")
+        # LEG-094 §C: peer-offered steps are not local dependencies. The boot
+        # derives ``peer_steps`` (step → peer input_as) from the fetched rosters
+        # and the materializer threads it here so ``create_class`` can filter.
+        self._peer_steps: dict[str, str] = {}
         # LEG-088: the node control intake ('node_ops') — the Runtime's second
         # scope. Operator intents land here; the ``NODE_OP`` Manager fact drains
         # it (never the Runtime pumping). The Manager owns ``control`` and
@@ -1053,21 +1057,44 @@ class Runtime:
     # --- class lifecycle -------------------------------------------------------
 
     async def create_class(
-        self, spec: AgentSpec, *, spec_yaml: str | None = None, pool: int = 1
+        self,
+        spec: AgentSpec,
+        *,
+        spec_yaml: str | None = None,
+        pool: int = 1,
+        peer_steps: Mapping[str, str] | None = None,
     ) -> None:
         """Create a class (§5.2): record, cache the spec, gate at birth, then the
         pool. The class is born enabled iff it has a pool and its dependencies
         are satisfied; composite dependencies are the flattened branch steps.
-        ``spec_yaml`` feeds the runtime YAML cache when provided (§4.7)."""
+        ``spec_yaml`` feeds the runtime YAML cache when provided (§4.7).
+
+        Federation (LEG-094 §C): a composite's dependencies are the *local*
+        branch steps only. ``peer_steps`` (step → peer input_as) is the
+        roster-derived map the boot threads via ``Runtime._peer_steps``;
+        an explicit ``peer_steps`` here overrides the stored one. A step that is
+        a known peer is not a local dependency and does not block born-enabled.
+        """
         name = spec.name
         if await self.registry.class_state(name) is not None:
             logger.warning("runtime create_class noop class=%s (already exists)", name)
             return
         dependencies: list[str] = []
         if spec.type is AgentType.COMPOSITE:
+            raw: set[str] = set()
             for branch in spec.branches or []:
-                dependencies.extend(branch)
-            dependencies = sorted(set(dependencies))
+                raw.update(branch)
+            # LEG-094 §C: filter to local steps only.
+            effective: Mapping[str, str] | None = (
+                peer_steps if peer_steps is not None else (self._peer_steps or None)
+            )
+            if effective:
+                # Peer steps are not local dependencies.
+                dependencies = sorted(s for s in raw if s not in effective)
+            else:
+                # No federation context: every branch step is a local dependency
+                # (single-node semantics, and the missing-dependency tests).
+                dependencies = sorted(raw)
         await self._gates.set(name, {"state": ActivityState.DISABLED.value})
         await self.registry.record_class(
             name,

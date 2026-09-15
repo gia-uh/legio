@@ -461,6 +461,7 @@ async def test_fetch_peer_catalogs_parses_rosters() -> None:
                         "agent": "cutter",
                         "interface": {"capability": "cutter", "schema_version": 1000},
                         "kind": "tool",
+                        "input_as": "cutter_in",
                     }
                 ],
             },
@@ -469,6 +470,7 @@ async def test_fetch_peer_catalogs_parses_rosters() -> None:
     rosters = await fetch_peer_catalogs({NODE_B: PEER_B_URL}, TOKEN)
     assert set(rosters) == {NODE_B}
     assert [entry.agent for entry in rosters[NODE_B].agents] == ["cutter"]
+    assert rosters[NODE_B].agents[0].input_as == "cutter_in"
 
 
 @pytest.mark.asyncio
@@ -672,6 +674,7 @@ def _peer_roster(agent: str) -> CatalogResponse:
                     capability=agent, schema_version=1000
                 ),
                 kind="tool",
+                input_as=f"{agent}_in",
             )
         ],
     )

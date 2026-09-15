@@ -145,9 +145,16 @@ class StepResolver:
 
 @dataclass(frozen=True)
 class PeerCatalogEntry:
-    """One agent a peer's roster offers (the ``GET /catalog`` wire shape)."""
+    """One agent a peer's roster offers (the ``GET /catalog`` wire shape).
+
+    ``input_as`` is the agent's declared input scope (LEG-090, amended by
+    LEG-094 session 86e): the author uses it as the ``(class, input_as)`` route
+    step when the offer is accepted — messages are re-keyed under the executing
+    agent's own ``input_as``, local or peer, identically.
+    """
 
     agent: str
+    input_as: str
 
 
 @dataclass(frozen=True)
@@ -168,6 +175,40 @@ def _roster_names(roster: Any) -> Iterable[str]:
     if agents is not None:
         return [entry.agent for entry in agents]
     return roster
+
+
+def roster_steps(rosters: Mapping[str, Any]) -> dict[str, str]:
+    """Flatten rosters into the ``step name → input_as`` map the loader accepts.
+
+    First offering peer wins (the same order ``build_routes`` walks, so the
+    route and the input scope never disagree). Entries without an ``input_as``
+    (a pre-LEG-094 roster shape) are a visible ``RecoverableError`` — a peer
+    step whose input scope is unknown cannot be routed (rule 9).
+    """
+    steps: dict[str, str] = {}
+    for peer_id, roster in (rosters or {}).items():
+        for entry in _roster_entries(roster):
+            name = getattr(entry, "agent", entry)
+            input_as = getattr(entry, "input_as", None)
+            if input_as is None:
+                logger.warning(
+                    "federation roster entry missing input_as peer=%s agent=%s",
+                    peer_id,
+                    name,
+                )
+                raise RecoverableError(
+                    f"peer {peer_id!r} offers agent {name!r} without an input_as "
+                    "(LEG-090 roster must carry each entry's input_as)"
+                )
+            steps.setdefault(name, input_as)
+    return steps
+
+
+def _roster_entries(roster: Any) -> list[Any]:
+    agents = getattr(roster, "agents", None)
+    if agents is not None:
+        return list(agents)
+    return list(roster)
 
 
 def build_routes(
@@ -236,9 +277,23 @@ async def fetch_peer_catalogs(
             body = response.json()
             entries[peer_id] = PeerRoster(
                 agents=[
-                    PeerCatalogEntry(agent=item["agent"]) for item in body.get("agents", ())
+                    PeerCatalogEntry(
+                        agent=item["agent"], input_as=item.get("input_as")
+                    )
+                    for item in body.get("agents", ())
                 ]
             )
+            missing = [e.agent for e in entries[peer_id].agents if e.input_as is None]
+            if missing:
+                logger.warning(
+                    "federation catalog rosters lack input_as peer=%s agents=%s",
+                    peer_id,
+                    ",".join(missing),
+                )
+                raise RecoverableError(
+                    f"federation catalog peer={peer_id} url={base_url} offers agents "
+                    f"without an input_as: {missing}"
+                )
         logger.info("federation rosters fetched peers=%s", ",".join(sorted(entries)))
         return entries
     finally:
@@ -432,4 +487,5 @@ __all__ = [
     "UnresolvableAgentError",
     "build_routes",
     "fetch_peer_catalogs",
+    "roster_steps",
 ]

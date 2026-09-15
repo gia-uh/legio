@@ -420,10 +420,15 @@ are red for the yet-unimplemented surface.
 - **LEG-093** Outbox polling by the author (write-before-ack, idempotency).
   - **Accept**: author polls outbox, ack consumes; re-read after ack is empty;
     duplicate work-item (same id) is not executed twice.
-- **LEG-094** Multi-node example (3 symmetric nodes, domain-free).
+- **LEG-094** Multi-node directed example (3 symmetric nodes, domain-free;
+  spec session 86e).
   - **Accept**: A triggers a 2-level flow that delegates a capability to B (or
     C) and receives the final result, all with the federation token;
-    symmetric: B can trigger A the same way.
+    symmetric: B can trigger A the same way. Delegation rides one
+    `ExecutionRequestMessage` with stamped per-hop addressing (directed model,
+    85w); the roster advertises each entry's `input_as` (LEG-090 wire
+    amendment); unknown-everywhere branch steps fail at boot; composite
+    dependencies are the local steps (born-enabled).
 
 ### R-10 — Hardening & release
 

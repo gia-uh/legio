@@ -43,8 +43,11 @@ remains a pluggable option, not wired here.
 - Response derived from `pattern_catalog.served()`: for each served agent, its
   name (`agent`), its advertised interface (`interface.capability` = agent name,
   `interface.schema_version` = the flow/messages `SCHEMA_VERSION` the node
-  speaks), and its `kind` (`tool` | `linguistic` | `composite` from the
-  `AgentSpec`).
+  speaks), its `kind` (`tool` | `linguistic` | `composite` from the
+  `AgentSpec`), and its declared entry alias (`input_as` = the spec's
+  `input.input_as`). The `input_as` is the directed model's addressing key: a
+  peer uses it to re-key a delegated step's payload (LEG-094 §A, amending this
+  contract — session 86e).
 - Guard: `Authorization: Bearer <federation token>` (L1). No token → 401;
   wrong token → 401 (LEG-017 §3). No `peer_id` semantics needed for a roster
   read (a peer list arrives with LEG-092).
@@ -56,8 +59,8 @@ remains a pluggable option, not wired here.
 
 - `GET /catalog` → `200 {schema_version: <SCHEMA_VERSION>, agents:
   [{agent: str, interface: {capability: str, schema_version: int},
-  kind: str}]}`; `401 {code: "unauthorized"}` without a valid token;
-  `404` when the node has no federation configured.
+  kind: str, input_as: str}]}`; `401 {code: "unauthorized"}` without a valid
+  token; `404` when the node has no federation configured.
 
 ## Acceptance criteria
 

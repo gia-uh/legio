@@ -36,6 +36,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from beaver import AsyncBeaverDB
 from fastapi import FastAPI
 
@@ -43,7 +44,7 @@ from legio.agents import AgentBase, CompositeAgent, LinguisticAgent, ToolAgent
 from legio.api import create_app
 from legio.config import LlmConfig, LoadedConfig
 from legio.errors import UnrecoverableError
-from legio.federation import NodeDB, build_routes, fetch_peer_catalogs
+from legio.federation import NodeDB, build_routes, fetch_peer_catalogs, roster_steps
 from legio.flow import ControlVerifier, derive_control_key
 from legio.patterns import (
     AgentKind,
@@ -137,6 +138,7 @@ def _materialize_composite(
     db: AsyncBeaverDB,
     composite_classes: CompositeClasses,
     control_verifier: ControlVerifier | None,
+    peer_steps: Mapping[str, str] | None = None,
 ) -> AgentBase:
     """Materialize one composite through its concrete class, or raise."""
     composite_type = composite_classes.get(spec.name)
@@ -146,7 +148,7 @@ def _materialize_composite(
             f"composite {spec.name!r} has no concrete composite class injected; "
             "the composite's build_output_as is the pattern's model"
         )
-    branches = resolve_composite_branches(spec, catalog)
+    branches = resolve_composite_branches(spec, catalog, peer_steps=peer_steps)
     return composite_type(
         agent_id=spec.name,
         db=db,
@@ -170,6 +172,7 @@ def materialize_agents(
     composite_classes: CompositeClasses | None = None,
     control_verifiers: Mapping[str, ControlVerifier] | None = None,
     on_built: Callable[[str], None] | None = None,
+    peer_steps: Mapping[str, str] | None = None,
 ) -> dict[str, AgentBase]:
     """Build the standing agent map from a validated catalog, in DAG order.
 
@@ -235,6 +238,7 @@ def materialize_agents(
             db=db,
             composite_classes=classes,
             control_verifier=verifiers.get(spec.name),
+            peer_steps=peer_steps,
         )
         agents[spec.name] = agent
         if on_built is not None:
@@ -298,6 +302,7 @@ async def boot_node(
     control_key: bytes | None = None,
     on_built: Callable[[str], None] | None = None,
     peer_catalogs: Mapping[str, Any] | None = None,
+    federation_client: httpx.AsyncClient | None = None,
 ) -> BootedNode:
     """Boot a node from its LoadedConfig: connect → load → validate → materialize.
 
@@ -337,6 +342,7 @@ async def boot_node(
             control_key=control_key,
             on_built=on_built,
             peer_catalogs=peer_catalogs,
+            federation_client=federation_client,
         )
     except BaseException:
         if owns_database:
@@ -354,6 +360,7 @@ async def _boot_on_database(
     control_key: bytes | None,
     on_built: Callable[[str], None] | None,
     peer_catalogs: Mapping[str, Any] | None,
+    federation_client: httpx.AsyncClient | None = None,
 ) -> BootedNode:
     """Boot the node over an already-connected substrate (fail-fast, rule 9)."""
     cfg = loaded.config
@@ -364,16 +371,12 @@ async def _boot_on_database(
         "linguistic": cfg.patterns.linguistic,
         "composite": cfg.patterns.composite,
     }
-    catalog = load_pattern_dirs(pattern_dirs)
-
-    registry = available_tools_from_config(loaded)
-    served = {name for name in catalog.specs if catalog.is_served(name)}
-    verifiers = {name: ControlVerifier(key) for name in served}
 
     # LEG-095 Phase 3: the agents' single db handle is the routing proxy; the
     # Runtime/Manager/Registry keep the raw database (their scopes are
     # node-internal and must never route). Rosters are injected or fetched
-    # over HTTP (L1) — fail-fast with the peer named (rule 9).
+    # over HTTP (L1) — fail-fast with the peer named (rule 9). The fetch runs
+    # before the catalog load so peer-offered steps resolve at load time.
     peers = {peer.id: peer.url for peer in cfg.federation.peers}
     rosters = peer_catalogs
     if rosters is None and peers:
@@ -383,7 +386,21 @@ async def _boot_on_database(
             )
             rosters = {}
         else:
-            rosters = await fetch_peer_catalogs(peers, loaded.secrets.federation_token)
+            rosters = await fetch_peer_catalogs(
+                peers, loaded.secrets.federation_token, client=federation_client
+            )
+    peer_steps = roster_steps(rosters) if rosters else {}
+    # LEG-094 §C: remember the peer map on the Runtime so its
+    # ``create_class`` can filter composite dependencies to local steps only.
+    # The test drives ``create_class`` after boot, so the stored map is the
+    # only way the Runtime knows which branch steps are peers.
+    engine._peer_steps = dict(peer_steps)  # type: ignore[attr-defined]
+    catalog = load_pattern_dirs(pattern_dirs, peer_steps=peer_steps)
+
+    registry = available_tools_from_config(loaded)
+    served = {name for name in catalog.specs if catalog.is_served(name)}
+    verifiers = {name: ControlVerifier(key) for name in served}
+
     routes = build_routes(served, rosters)
     agents_db = NodeDB(
         database,
@@ -391,6 +408,7 @@ async def _boot_on_database(
         routes=routes,
         peers=peers,
         federation_token=loaded.secrets.federation_token,
+        client=federation_client,
     )
     agents = materialize_agents(
         catalog,
@@ -402,6 +420,7 @@ async def _boot_on_database(
         composite_classes=composite_classes,
         control_verifiers=verifiers,
         on_built=on_built,
+        peer_steps=peer_steps,
     )
     engine.mount_agents(agents)
 

@@ -114,6 +114,13 @@ branches:                                   # list of branches; each branch an o
   `(class, input_as)` routing pair is **resolved by the loader** when it builds
   the DAG of each level/branch (Schema 2, LEG-011); it is never declared in the
   agent definition.
+- **Federated resolution (amended by LEG-094, session 86e):** on a federated
+  boot the step's universe is the **local catalog ∪ the configured peers'
+  rosters**. A branch step resolving against a peer's roster becomes a *delegated
+  step*: its `(class, input_as)` pair uses the peer's advertised `input_as`
+  (LEG-090 wire) and its queue is routed to the owning peer by the `NodeDB`
+  (LEG-095 Phase 3). An unknown-everywhere step is a visible load/boot error as
+  before (rule 9); single-node catalog loads keep the exact LEG-010 semantics.
 - **Reuse:** definitions are source-agnostic; a composite references an agent by
   name as a step; the same agent may appear more than once in a flow **by
   position** (distinguished by `current_index`), unless inside its own

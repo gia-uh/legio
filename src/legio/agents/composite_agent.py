@@ -60,6 +60,7 @@ failure, never a silent drop). Errors are never silent (rule 9).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
@@ -166,6 +167,18 @@ class CompositeAgent(AgentBase):
                 await self._process_join_item(dict(gather_item.data))
                 handled = True
         if handled:
+            return True
+        # When a fan-out is pending, the gather queue must also wake the loop;
+        # blocking only on the class inbox would deadlock the join (the gather
+        # result arrives while the loop is suspended on the inbox). When pending,
+        # suspend cooperatively and let the next tick re-poll both inlets.
+        if await self._has_pending():
+            # Cooperative yield — the outer standing_loop will re-enter
+            # _standing_tick and re-poll both queues. This keeps the join
+            # live without busy-spinning (the queue's own producer wakeup is
+            # still via the inbox path, but the periodic re-poll catches the
+            # gather arrival within one tick).
+            await asyncio.sleep(0.01)
             return True
         qitem = await self._queue.get(block=True)
         return await self._dispatch_standing_item(dict(qitem.data))
