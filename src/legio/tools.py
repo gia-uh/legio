@@ -86,7 +86,8 @@ def resolve_parameters(
     """Resolve terse `parameters` against the incoming `payload`.
 
     Each value in `parameters` is either:
-    - a dotted path string starting with `{` and ending with `}` (e.g., `{payload.text}`)
+    - a dotted path string starting with `{` and ending with `}` (e.g., `{summ.text}`
+      for the agent's own `input_as` plus a key of its `input_schema`)
       → resolved against `payload` via dotted path lookup
     - a literal value (int, str, bool, etc.) → used as-is
 

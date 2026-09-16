@@ -88,7 +88,9 @@ validate → journal.
    (`db.dict(scope)`), so domains/nodes sharing a beaver do not collide on
    scopes.
 7. **Concurrency**: beaver locks with TTL + `renew` used only where genuine
-   mutual exclusion over a shared key is required; per-resource semaphores;
+   mutual exclusion over a shared key is required; there is no engine-side
+   semaphore cap (`semaphore` stays a future scope) and no per-resource
+   throttling in the engine;
    replicas never reach consensus through their own process state.
 8. **Single domain extension point**: the tool registry. Everything else is
    closed.

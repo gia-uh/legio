@@ -3,9 +3,12 @@
 - **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version); Slice 3 (fan-in exclusion) APPROVED by maintainer direction on 2026-09-16 (session 95, per-slot keys); Slice 4 (legacy fed plane) APPROVED by maintainer direction on 2026-09-16 (session 97, delete with type relocated); Slice 5 (minors/notes batches 5a–5e) APPROVED by maintainer direction on 2026-09-16 (session 99, batch plan); Slice 6 (complete execution semantics: always-off-loop + general awaitable + shape rejection) APPROVED on 2026-09-16 (session 102 scope/semantics, always-to-thread over contract amendment); Slice 7 (docs/trivial batch m3–m6/n1/n7/n8) APPROVED on 2026-09-16 (session 102);
 Slice 8 (post-re-audit hardening: m7/m8, coalesce ordering, fan-out race,
 finite budgets) APPROVED on 2026-09-16 (session 104: maintainer direction
-"check everything and implement what's necessary").
+"check everything and implement what's necessary");
+Slice 9 (fresh-audit hardening: strict numerics, validate-first destroy,
+loser cleanup, cancel-safe kick, prose/dependency/test gaps) APPROVED on
+2026-09-16 (session 108).
 - **Rasante:** R-10 (hardening)
-- **GitHub issue:** to be opened/mirrored by the maintainer
+- **GitHub issue:** #51 (created + closed with verification, session 106)
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
 - **Depends on:** LEG-013 (Schema 3), LEG-022 (ToolAgent), LEG-040/042 (composite), LEG-015 (federation), LEG-081 (CLI)
 
@@ -26,6 +29,7 @@ transport/lifecycle-separated architecture.
 7. **Slice 7 — docs/trivial batch (minors m3–m6, notes n1/n7/n8).** APPROVED 2026-09-16.
 8. **Slice 8 — post-re-audit hardening (minors m7–m9 decided/fixed, notes
    n2–n6/n9–n10 decided/fixed).** APPROVED 2026-09-16.
+9. **Slice 9 — fresh-audit hardening (11 minors F1–F11).** APPROVED 2026-09-16.
 
 ## Slice 1 contract (APPROVED)
 
@@ -256,6 +260,61 @@ Docs/trivial batch with zero behavior change:
 ## Validation case
 
 - Existing `transform` fake-tool paths unchanged and green.
+
+## Slice 9 contract (APPROVED)
+
+Fresh-audit hardening from the Session 106 re-audit (0 blocking, 0 major).
+Every finding below was independently verified against source before fixing:
+
+- **F1/F2 (bool coercion hole):** pydantic coerces `True → 1` before
+  `mode="after"` validators run, so `timeout: true` / `drain_timeout: true` /
+  `gather_budget: true` were silently accepted as `1`/`1.0`. All three seams
+  (`ToolPolicy`, `LifecycleParams`, `CompositeAgent`) reject booleans
+  explicitly. `retries: true` now fails at load too (a distinct authoring
+  error from Slice 1's nonzero-int case, which still passes load and fails
+  loudly at execution).
+- **F3 (PoolsConfig type guard):** pool sizes must be genuine integers
+  (`type(x) is int`, `>= 0`) — no silent `"3" → 3` / `1.0 → 1` / `True → 1`
+  coercion. `port`/`max_tokens_per_batch` left alone (fail downstream-loud;
+  out of scope).
+- **F4 (`control_ttl` unvalidated):** `Manager` requires a finite number
+  `> 0` at construction (same budget discipline as Slice 8).
+- **F5 (validate-before-mutate):** `destroy_class` rejects an unknown `mode`
+  before touching the gate — a failed call leaves no side effect.
+- **F6 (loser slot leak):** the atomic-close loser deletes the slot key it
+  just wrote (best-effort, `KeyError`-tolerant) before standing down. Loser
+  keys are disjoint from the winner's `expected` set by construction
+  (uuid4 branch ids), so the cleanup cannot disturb the winner.
+- **F7 (cancel-safe kick):** the coalesce-flag discard runs on
+  `BaseException` (covers `CancelledError`) and always re-raises.
+- **F8 (stale semaphore prose):** CONTRIBUTING's "per-resource semaphores"
+  rule reworded to the no-engine-side-cap truth (twin of Slice 7's ARCH fix).
+- **F9 (listed-but-unused dependency):** `pydantic-settings` removed from
+  `pyproject.toml`, `docs/DEPENDENCIES.md`, and the ARCH table (zero imports
+  in `src`/`tests`; env config reads `os.environ` directly). Lockfile
+  regenerated.
+- **F10 (vacuous test):** `test_reuse_by_position` implemented for real — one
+  shared agent definition reused by two composites validates in both.
+- **F11 (yaml-cache error shape):** the per-file wrap extends to `OSError`
+  (unreadable file, e.g. a directory named `*.yaml`) and
+  `UnicodeDecodeError` (non-UTF8 bytes are a `ValueError`, not a `YAMLError`)
+  alongside `YAMLError`.
+- **N9 (docstring example):** `resolve_parameters` illustrates
+  `{input_as}.{key}` instead of the unresolvable `{payload.text}`.
+
+## Acceptance criteria (Slice 9)
+
+- Bool/float/string pool sizes and bool budgets/timeouts fail loudly at the
+  boundary where they are declared; genuine ints and positive finite numbers
+  still pass.
+- `Manager(control_ttl=NaN|inf|negative|bool)` raises at construction.
+- `destroy_class(name, mode="bogus")` raises with the gate still open.
+- A simulated lost close deletes only the loser's slot and keeps the record.
+- A cancelled kick submit clears the coalesce flag and propagates.
+- No `pydantic-settings` in dependencies/docs; `uv lock` + full suite green.
+- The reuse test loads two composites sharing one agent definition.
+- Unreadable/non-UTF8 pattern files fail cache collection naming the file.
+- Full suite + ruff + pyright green; no other behavior changed.
 
 ## Slice 8 contract (APPROVED)
 

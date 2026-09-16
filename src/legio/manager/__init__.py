@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import math
 import uuid
 from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime
@@ -100,6 +101,13 @@ class Manager:
         if db is None:
             raise TypeError("Manager requires a connected AsyncBeaverDB (beaver system substrate)")
         validate_node_id(node_id)
+        if (
+            isinstance(control_ttl, bool)
+            or not isinstance(control_ttl, (int, float))
+            or not math.isfinite(control_ttl)
+            or control_ttl <= 0
+        ):
+            raise ValueError(f"control_ttl must be a finite number > 0 (got {control_ttl!r})")
         self._db = db
         self._node_id = node_id
         self._control_ttl = control_ttl

@@ -367,7 +367,7 @@ over the network.
 |---|---|
 | Queues/registries/locks | `beaver-db` |
 | LLM / linguistic agents | `lingo-ai` |
-| Types/validation/config | `pydantic` (+ `pydantic-settings`) |
+| Types/validation/config | `pydantic` |
 | API + federation endpoints | `fastapi` + `uvicorn` |
 | HTTP client (tools + nodes) | `httpx` |
 | Patterns YAML | `pyyaml` |

@@ -189,10 +189,8 @@ def _collect_spec_yamls(loaded: LoadedConfig) -> dict[str, str]:
                 source = yaml_file.read_text(encoding="utf-8")
                 segments = split_yaml_documents(source)
                 values = [yaml.safe_load(segment) for segment in segments]
-            except yaml.YAMLError as exc:
-                raise ConfigError(
-                    f"cannot parse pattern file {yaml_file}: {exc}"
-                ) from exc
+            except (yaml.YAMLError, OSError, UnicodeDecodeError) as exc:
+                raise ConfigError(f"cannot parse pattern file {yaml_file}: {exc}") from exc
             for segment, value in zip(segments, values, strict=True):
                 for name in _document_names(value):
                     yamls[name] = segment

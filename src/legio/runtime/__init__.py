@@ -591,7 +591,7 @@ class Runtime:
         self._drain_inflight.add(agent)
         try:
             await self.manager.submit_task(RESULT_DRAIN_TASK, agent)
-        except Exception:
+        except BaseException:
             self._drain_inflight.discard(agent)
             raise
 
@@ -1319,14 +1319,14 @@ class Runtime:
         if await self.registry.class_state(name) is None:
             logger.warning("runtime destroy_class noop class=%s (unknown)", name)
             return
+        if mode not in ("drain", "now"):
+            raise ValueError(f"unknown destroy mode {mode!r}")
         prior_gate = await self._gates.fetch(name)
         await self._gates.set(name, {"state": ActivityState.DISABLED.value})
         if mode == "drain":
             await self._await_queue_empty(name, prior_gate=prior_gate)
-        elif mode == "now":
+        else:  # mode == "now", checked above
             pass
-        else:
-            raise ValueError(f"unknown destroy mode {mode!r}")
         for instance in await self.registry.list_instances(name):
             await self.destroy_instance(name, instance.instance_id)
         await self._clear_queue(name)

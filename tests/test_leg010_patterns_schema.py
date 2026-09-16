@@ -339,8 +339,16 @@ def test_chain_wide_dotted_path_resolution() -> None:
 
 def test_reuse_by_position() -> None:
     """The same agent definition can appear in multiple composites by position."""
-    # This is tested by loading two different composites that reuse the same
-    # agent definition (not shown here; would need a catalog with shared specs)
+    first = COMPOSITE_SEQUENCE_YAML.replace("extract_and_summarize", "first_flow")
+    second = COMPOSITE_SEQUENCE_YAML.replace("extract_and_summarize", "second_flow")
+    stream = f"{TOOL_SPEC_YAML}\n---\n{LINGUISTIC_SPEC_YAML}\n---\n{first}\n---\n{second}"
+    catalog = load_patterns(stream)
+    first_spec = catalog.get("first_flow")
+    second_spec = catalog.get("second_flow")
+    assert first_spec is not None
+    assert second_spec is not None
+    assert first_spec.branches == [["extract", "summarize"]]
+    assert second_spec.branches == [["extract", "summarize"]]
 
 
 def test_tool_parameters_reject_implicit_path() -> None:

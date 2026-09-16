@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 from legio import naming
 from legio.errors import ConfigError, InvalidNameError
@@ -95,6 +95,25 @@ class PoolsConfig(BaseModel):
     per_kind: dict[AgentKind, int] = Field(default_factory=dict)
     default: int | None = None
 
+    @field_validator("per_pattern", "per_kind", mode="before")
+    @classmethod
+    def _reject_nonint_pool_map(cls, value: object) -> object:
+        if isinstance(value, dict):
+            for name, count in value.items():
+                if type(count) is not int:
+                    raise ValueError(
+                        f"pools pool size for {name!r} must be a genuine integer "
+                        f"(got {count!r}) — no bool/float/string coercion"
+                    )
+        return value
+
+    @field_validator("default", mode="before")
+    @classmethod
+    def _reject_nonint_pool_default(cls, value: object) -> object:
+        if value is not None and type(value) is not int:
+            raise ValueError(f"pools.default must be a genuine integer or null (got {value!r})")
+        return value
+
     @model_validator(mode="after")
     def _validate_pool_counts(self) -> PoolsConfig:
         for level, pools in (
@@ -136,6 +155,14 @@ class LifecycleParams(BaseModel):
 
     drain_timeout: float | None = None
     drain_interval: float | None = None
+
+    @field_validator("drain_timeout", "drain_interval", mode="before")
+    @classmethod
+    def _reject_bool_budget(cls, value: object) -> object:
+        if isinstance(value, bool):
+            # Pydantic wraps only ValueError into ValidationError.
+            raise ValueError("lifecycle budgets must be numbers, never booleans")  # noqa: TRY004
+        return value
 
     @model_validator(mode="after")
     def _validate_budgets(self) -> LifecycleParams:
@@ -295,6 +322,14 @@ class ToolPolicy(BaseModel):
 
     timeout: int | float | None = None
     retries: int | None = None
+
+    @field_validator("timeout", "retries", mode="before")
+    @classmethod
+    def _reject_bool_policy(cls, value: object) -> object:
+        if isinstance(value, bool):
+            # Pydantic wraps only ValueError into ValidationError.
+            raise ValueError("policy values must be numbers, never booleans")  # noqa: TRY004
+        return value
 
     @model_validator(mode="after")
     def _validate_policy(self) -> ToolPolicy:

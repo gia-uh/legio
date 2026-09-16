@@ -115,7 +115,11 @@ class CompositeAgent(AgentBase):
             output_schema=output_schema,
             control_verifier=control_verifier,
         )
-        if not math.isfinite(gather_budget) or gather_budget <= 0:
+        if (
+            isinstance(gather_budget, bool)
+            or not math.isfinite(gather_budget)
+            or gather_budget <= 0
+        ):
             raise ValueError(
                 f"composite agent {agent_id!r}: gather_budget must be a finite "
                 f"number > 0 (got {gather_budget!r}) — a non-positive budget "
@@ -423,6 +427,10 @@ class CompositeAgent(AgentBase):
                 self._agent_id,
                 result.task_id,
             )
+            try:
+                await self._slots.delete(slot_key)
+            except KeyError:
+                pass
             return
 
         logger.info("composite joined agent=%s task=%s", self._agent_id, result.task_id)

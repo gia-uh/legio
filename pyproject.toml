@@ -8,7 +8,6 @@ dependencies = [
     "beaver-db",
     "lingo-ai",
     "pydantic>=2",
-    "pydantic-settings",
     "pyyaml",
     "fastapi",
     "uvicorn",

@@ -11,7 +11,6 @@ removed before a reviewed PR to this file. Managed with `uv`. Python runtime:
 | `beaver-db` | registries, priority queues, locks (the substrate) | pinned by `uv.lock` at first install |
 | `lingo-ai` | LLM + structured output for linguistic agents | provides `LLM`, `eng.create/decide/choose`, `MockLLM`, native tool-calling |
 | `pydantic` (>=2) | types/validation of message, token, patterns, schemas | lingua franca of the system |
-| `pydantic-settings` | configuration from env | node id, paths, peers |
 | `pyyaml` | parse patterns YAML | |
 | `fastapi` | API + federation server endpoints | |
 | `uvicorn` | ASGI server for the above | |
@@ -29,6 +28,9 @@ removed before a reviewed PR to this file. Managed with `uv`. Python runtime:
 | `pyright` (optional) | type checking (optional; decide at R-0) |
 
 ## Excluded on purpose
+
+- `pydantic-settings`: listed but never imported (env config reads
+  `os.environ` directly); removed 2026-09-16 (LEG-103 Slice 9).
 
 - `castor-io`: outdated against current beaver, **never used**; legio implements
   its own generic task environment (the **Manager**) on beaver (see
