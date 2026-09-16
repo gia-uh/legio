@@ -100,7 +100,7 @@ async def test_pending_tick_collects_predeposited_gather_result(
     await fan_out_one(beaver_db, comp, "W-join")
     record = await comp._state.fetch("W-join")
     assert record is not None
-    branch_id = next(iter(record["slots"]))
+    branch_id = record["expected"][0]
 
     await beaver_db.queue(queue_key(gathering_key("comp"))).put(
         child_result(

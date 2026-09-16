@@ -1,6 +1,6 @@
 # LEG-103 — Audit hardening batch (subagent design/coupling audit, sessions 87-88)
 
-- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version).
+- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version); Slice 3 (fan-in exclusion) APPROVED by maintainer direction on 2026-09-16 (session 95, per-slot keys).
 - **Rasante:** R-10 (hardening)
 - **GitHub issue:** to be opened/mirrored by the maintainer
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
@@ -16,7 +16,7 @@ transport/lifecycle-separated architecture.
 
 1. **Slice 1 — tool execution/policy semantics (Major 1).** APPROVED 2026-09-16.
 2. **Slice 2 — composite pending-gather wakeup (Major 2).** APPROVED 2026-09-16 (Option A).
-3. **Slice 3 — composite fan-in exclusion (Major 3).** Spec pending.
+3. **Slice 3 — composite fan-in exclusion (Major 3).** APPROVED 2026-09-16 (per-slot keys).
 4. **Slice 4 — legacy global `fed` plane (Major 4).** Spec pending.
 5. **Slice 5 — CLI federation token ordering + verified minors/notes.** Spec pending.
 
@@ -72,11 +72,40 @@ an already-popped item between DELETE and return):
 - Non-positive budgets are refused loudly at construction.
 - Full suite + ruff + pyright green; no other behavior changed.
 
+## Slice 3 contract (APPROVED)
+
+Replaces the shared-mutable join record with per-slot keys (single-owner and
+beaver-lock designs rejected: affinity machinery and lock TTL semantics are
+foreign concepts to the flow; the atomic close below needs neither):
+
+- Fan-out writes one slot key per branch (`<task_id>:<branch_id>` →
+  `{index, result}`) in a dedicated slots scope, then the continuation record
+  carrying only the ordered `expected` branch list (record presence means all
+  slot keys exist).
+- Each `_fan_in` worker writes **only its own slot key**, then reads the
+  expected slots; partial joins return without writing anything shared.
+- The close is arbitrated by **one atomic op**: deleting the continuation
+  record — the first deleter builds and resumes, a loser finds it gone
+  (`KeyError`) and stands down with a debug event.
+- Unknown branch / missing slot / missing fan-out stay loud `ValueError`s
+  (rule 9 preserved); slot keys are deleted after resume (best-effort
+  cleanup); crash semantics unchanged (no replay anywhere in the engine).
+
+## Acceptance criteria (Slice 3)
+
+- Fan-out layout: continuation with ordered `expected`, no embedded slots;
+  slot keys carry fan-out index and empty result.
+- Two concurrent branch returns join exactly once: one advance, no stranded
+  record, no leftover slots.
+- Unknown-branch and no-fan-out results stay loud errors.
+- Full suite + ruff + pyright green; no other behavior changed.
+
 ## Tests
 
 - `tests/test_leg022_toolagent.py`: five new contract tests (red first).
 - `tests/test_tools.py`: async/slow/asyncgen fake tools (domain-free fixtures).
 - `tests/test_leg103_slice2_wakeup.py`: five new contract tests (red first).
+- `tests/test_leg103_slice3_fanin.py`: four new contract tests (red first).
 
 ## Validation case
 

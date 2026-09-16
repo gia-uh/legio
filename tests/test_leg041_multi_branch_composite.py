@@ -258,9 +258,14 @@ async def test_composite_does_not_fan_out_a_branch_into_a_closed_gate(
     # the blocked branch's slot carries a visible error — the fan-in sees it
     state = await beaver_db.dict("state:composite:comp").fetch("P-gate")
     assert state is not None
-    slots = state["slots"]
-    assert len(slots) == 2
-    errored = [slot["result"] for slot in slots.values() if slot["result"] is not None]
+    assert len(state["expected"]) == 2
+    slots = beaver_db.dict("state:composite:comp:slots")
+    errored = []
+    for branch_id in state["expected"]:
+        slot = await slots.fetch(f"P-gate:{branch_id}")
+        assert slot is not None
+        if slot["result"] is not None:
+            errored.append(slot["result"])
     assert len(errored) == 1
     assert "disabled" in errored[0]["error"]
 
