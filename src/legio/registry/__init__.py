@@ -236,7 +236,7 @@ class Registry:
             logger.warning("registry remove_class noop class=%s (absent)", name)
             return
         await self._catalog.delete(name)
-        doomed = [key async for key in self._instances.keys()]
+        doomed = [key async for key in self._instances]
         for key in doomed:
             if key.startswith(f"{name}:"):
                 await self._instances.delete(key)

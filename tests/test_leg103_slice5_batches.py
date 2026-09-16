@@ -66,8 +66,7 @@ def test_yaml_split_skips_blank_segments() -> None:
 def test_activity_state_is_owned_by_naming() -> None:
     """Agents read gate vocabulary from ``naming``, never from the lifecycle
     layer; the registry re-exports the same object for compatibility."""
-    from legio import naming
-    from legio import registry
+    from legio import naming, registry
 
     assert naming.ActivityState is registry.ActivityState
     assert naming.ActivityState.ENABLED.value == "enabled"

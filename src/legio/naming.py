@@ -129,9 +129,9 @@ def is_reserved_agent(agent_id: str) -> bool:
 
 
 __all__ = [
-    "ActivityState",
     "OUTBOX_SCOPE",
     "QUEUE_NAMESPACE",
+    "ActivityState",
     "gathering_key",
     "is_reserved_agent",
     "outbox_key",

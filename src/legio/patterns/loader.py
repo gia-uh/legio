@@ -7,6 +7,7 @@ chain-wide dotted-path resolution, contract compatibility, reuse, encapsulation.
 
 from __future__ import annotations
 
+import itertools
 import logging
 from collections.abc import Mapping
 from pathlib import Path
@@ -309,7 +310,7 @@ def split_yaml_documents(text: str) -> list[str]:
     starts = [document.start_mark.index for document in yaml.compose_all(text)]
     starts.append(len(text))
     segments: list[str] = []
-    for start, end in zip(starts, starts[1:]):
+    for start, end in itertools.pairwise(starts):
         segment = _strip_separator_lines(text[start:end])
         if segment.strip():
             segments.append(segment)
