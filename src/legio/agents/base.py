@@ -45,9 +45,8 @@ agent, atomic or composite (missing data or wrong strict types raise
 dispatch: the agent is a stateless poller (AGENTS.md rule 8) — nothing sleeps,
 nothing is locked, and the item is simply consumed once.
 
-No invented substrate layer exists: the agent speaks beaver natively,
-exactly as castor's Manager holds a ``db`` and calls ``db.dict``/``db.queue``
-directly.
+No invented substrate layer exists: the agent speaks beaver natively — it
+holds a ``db`` handle and calls ``db.dict``/``db.queue`` directly.
 
 Execution meets lifecycle at **deposit time** (§12.5): before advancing into
 another class the agent reads that class's gate row (``db.dict("gates")``,
@@ -76,9 +75,8 @@ from legio.flow import (
     ExecutionResultMessage,
     ReportedState,
 )
-from legio.naming import queue_key
+from legio.naming import ActivityState, queue_key
 from legio.patterns.compile import compile_schema
-from legio.registry import ActivityState
 
 logger = logging.getLogger(__name__)
 

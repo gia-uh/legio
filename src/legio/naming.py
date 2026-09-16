@@ -20,10 +20,22 @@ from __future__ import annotations
 
 import logging
 import re
+from enum import Enum
 
 from legio.errors import InvalidNameError
 
 logger = logging.getLogger(__name__)
+
+
+class ActivityState(str, Enum):
+    """Activity axis of a class or instance (§3/§4.8): ``enabled``/``disabled``.
+
+    Owned here (not by the Registry) so lower layers — agents read gate rows
+    — never import the lifecycle layer for vocabulary.
+    """
+
+    ENABLED = "enabled"
+    DISABLED = "disabled"
 
 QUEUE_NAMESPACE = "legio:queue:"
 
@@ -117,6 +129,7 @@ def is_reserved_agent(agent_id: str) -> bool:
 
 
 __all__ = [
+    "ActivityState",
     "OUTBOX_SCOPE",
     "QUEUE_NAMESPACE",
     "gathering_key",

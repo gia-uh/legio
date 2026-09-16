@@ -206,6 +206,7 @@ class Runtime:
         registry: Registry | None = None,
         lifecycle: LifecycleConfig | None = None,
         control_key: bytes | None = None,
+        peer_steps: Mapping[str, str] | None = None,
     ) -> None:
         """Bind the runtime to the connected beaver substrate and its node id.
 
@@ -217,6 +218,10 @@ class Runtime:
         ``control_key`` is the per-boot, in-process key the lifecycle facts
         mint with (LEG-082/§2.2); absent → derived from an entropy draw
         (random per boot, never persisted, never logged — rule 11).
+        ``peer_steps`` (step → peer input_as) is the explicit roster-derived
+        map the boot passes so ``create_class`` filters composite dependencies
+        to local steps only (LEG-094 §C); absent → every branch step counts
+        as a local dependency.
         """
         if db is None:
             raise TypeError(
@@ -230,9 +235,9 @@ class Runtime:
         self._lifecycle = lifecycle if lifecycle is not None else LifecycleConfig()
         self._gates = db.dict("gates")
         # LEG-094 §C: peer-offered steps are not local dependencies. The boot
-        # derives ``peer_steps`` (step → peer input_as) from the fetched rosters
-        # and the materializer threads it here so ``create_class`` can filter.
-        self._peer_steps: dict[str, str] = {}
+        # passes ``peer_steps`` (step → peer input_as) explicitly through the
+        # constructor so ``create_class`` can filter.
+        self._peer_steps: dict[str, str] = dict(peer_steps or {})
         # LEG-088: the node control intake ('node_ops') — the Runtime's second
         # scope. Operator intents land here; the ``NODE_OP`` Manager fact drains
         # it (never the Runtime pumping). The Manager owns ``control`` and
@@ -249,7 +254,6 @@ class Runtime:
         # keyed by task id; ``status``/``read_outbox``/``ack_outbox`` read
         # records, never the physical result queue.
         self._outbox = db.dict(OUTBOX_SCOPE)
-        self._pending_controls: dict[tuple[str, str, int], str] = {}
         self._instance_tasks: dict[tuple[str, str], str] = {}
         self._instance_sequence: dict[str, int] = {}
         # The authenticated control channel (LEG-082): the Runtime is the only
@@ -1071,7 +1075,7 @@ class Runtime:
 
         Federation (LEG-094 §C): a composite's dependencies are the *local*
         branch steps only. ``peer_steps`` (step → peer input_as) is the
-        roster-derived map the boot threads via ``Runtime._peer_steps``;
+        roster-derived map the boot passes through the constructor;
         an explicit ``peer_steps`` here overrides the stored one. A step that is
         a known peer is not a local dependency and does not block born-enabled.
         """

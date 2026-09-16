@@ -365,7 +365,6 @@ async def _boot_on_database(
     """Boot the node over an already-connected substrate (fail-fast, rule 9)."""
     cfg = loaded.config
     key = control_key if control_key is not None else derive_control_key(os.urandom(32))
-    engine = Runtime(database, node_id=cfg.node.id, control_key=key)
     pattern_dirs = {
         "tool": cfg.patterns.tool,
         "linguistic": cfg.patterns.linguistic,
@@ -390,11 +389,14 @@ async def _boot_on_database(
                 peers, loaded.secrets.federation_token, client=federation_client
             )
     peer_steps = roster_steps(rosters) if rosters else {}
-    # LEG-094 §C: remember the peer map on the Runtime so its
-    # ``create_class`` can filter composite dependencies to local steps only.
-    # The test drives ``create_class`` after boot, so the stored map is the
-    # only way the Runtime knows which branch steps are peers.
-    engine._peer_steps = dict(peer_steps)  # type: ignore[attr-defined]
+    # LEG-094 §C: the peer map travels through the explicit constructor seam
+    # so the Runtime's ``create_class`` can filter composite dependencies to
+    # local steps only. The test drives ``create_class`` after boot, so the
+    # stored map is the only way the Runtime knows which branch steps are
+    # peers.
+    engine = Runtime(
+        database, node_id=cfg.node.id, control_key=key, peer_steps=peer_steps
+    )
     catalog = load_pattern_dirs(pattern_dirs, peer_steps=peer_steps)
 
     registry = available_tools_from_config(loaded)

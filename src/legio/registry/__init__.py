@@ -18,11 +18,11 @@ beaver dicts addressed by scope name directly — no invented substrate layer.
 from __future__ import annotations
 
 import logging
-from enum import Enum
 
 from beaver import AsyncBeaverDB
 from pydantic import BaseModel, Field
 
+from legio.naming import ActivityState
 from legio.patterns.schema1 import AgentKind
 
 logger = logging.getLogger(__name__)
@@ -30,13 +30,6 @@ logger = logging.getLogger(__name__)
 _CATALOG_SCOPE = "catalog"
 _INSTANCES_SCOPE = "instances"
 _YAML_CACHE_SCOPE = "yaml_cache"
-
-
-class ActivityState(str, Enum):
-    """Activity axis of a class or instance (§3/§4.8): ``enabled``/``disabled``."""
-
-    ENABLED = "enabled"
-    DISABLED = "disabled"
 
 
 class ClassRecord(BaseModel):
@@ -243,7 +236,8 @@ class Registry:
             logger.warning("registry remove_class noop class=%s (absent)", name)
             return
         await self._catalog.delete(name)
-        async for key in self._instances.keys():
+        doomed = [key async for key in self._instances.keys()]
+        for key in doomed:
             if key.startswith(f"{name}:"):
                 await self._instances.delete(key)
         logger.info("registry remove_class class=%s", name)
