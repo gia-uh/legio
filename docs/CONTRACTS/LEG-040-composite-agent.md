@@ -64,9 +64,10 @@ by any lock. This is the polling, decoupled philosophy (AGENTS.md rule 8).
 - **Fan-in.** Each branch, on branch close, deposits its
   `ExecutionResultMessage` to the gathering queue **conserving its `branch_id`**
   (failures conserve it too — an `error` result, rule 9). The composite
-  accounts for fan-in **one result per `branch_id`**: its gathering bookkeeping
-  is keyed by `(task_id, branch_id)` under a lock (`state:<composite>`). The
-  join counts slots until all of the task's `branch_id`s are present.
+   accounts for fan-in **one result per `branch_id`**: its gathering bookkeeping
+   lives under per-slot keys (`<task_id>:<branch_id>` in a dedicated slots
+   scope) and the close is arbitrated by one atomic continuation delete. The
+   join counts slots until all of the task's `branch_id`s are present.
 
 - **Build.** On fan-in completion (all `branch_id`s accounted for), the
   composite **groups the branch results collision-free**: each branch's built

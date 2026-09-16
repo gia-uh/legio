@@ -117,9 +117,14 @@ class CompositeAgent(AgentBase):
         if gather_budget <= 0:
             raise ValueError(
                 f"composite agent {agent_id!r}: gather_budget must be positive "
-                f"(got {gather_budget!r}) — a zero budget would busy-spin"
+                f"(got {gather_budget!r}) — a non-positive budget would busy-spin"
             )
         self._gather_budget = gather_budget
+        logger.debug(
+            "composite created agent=%s gather_budget=%s",
+            agent_id,
+            gather_budget,
+        )
         # Each branch is a route of (class, input_as) — the branch's own
         # loader-resolved steps (re-keying info, §12.1).
         self._branches: list[tuple[tuple[str, str], ...]] = [tuple(branch) for branch in branches]

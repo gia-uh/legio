@@ -511,6 +511,7 @@ class RemoteQueue:
 
 
 __all__ = [
+    "AgentInterface",
     "InterfaceMismatchError",
     "Local",
     "NodeDB",

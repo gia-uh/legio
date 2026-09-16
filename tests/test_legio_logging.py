@@ -32,7 +32,7 @@ def test_module_loggers_exist_under_legio_tree() -> None:
         "legio.manager.client",
         "legio.agents.tool_agent",
         "legio.manager",
-        "legio.fed",
+        "legio.federation",
         "legio.security.middleware",
         "legio.naming",
         "legio.tools",

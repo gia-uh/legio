@@ -268,8 +268,6 @@ _LIFECYCLE_VERBS = {
     "disable-instance": "disable_instance",
     "destroy-instance": "destroy_instance",
 }
-_CREATE_VERBS = {"create-class", "recreate-class", "create-instance"}
-
 _STATE_LABEL = "absent"
 
 
