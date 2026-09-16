@@ -19,10 +19,11 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class Tool(Protocol):
-    """A substitutable execution resource — just a callable.
+    """A substitutable execution resource — a sync or async callable.
 
     The tool's signature (via `inspect`) is its contract. The tool does
     not expose pydantic schemas; the consuming agent validates I/O.
+    Async callables are awaited by the agent; async generators are rejected.
     """
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any: ...

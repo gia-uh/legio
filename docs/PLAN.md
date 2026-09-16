@@ -442,6 +442,11 @@ are red for the yet-unimplemented surface.
   validation suite green.
   - **Accept**: the consumer repo pins the released version; its validation
     suite runs green against it.
+- **LEG-103** Audit hardening batch (sessions 87-88 subagent design/coupling
+  audit). Spec: `docs/CONTRACTS/LEG-103-audit-hardening.md`.
+  - **Accept**: each approved backlog slice is fixed contract-first (red tests,
+    green implementation, full suite + lint + typecheck green, journal entry);
+    no consumer-domain, transport/lifecycle, or polling-model regressions.
 
 ## Ordering constraints
 

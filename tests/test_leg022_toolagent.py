@@ -268,3 +268,102 @@ async def test_no_due_item_returns_false(beaver_db: AsyncBeaverDB) -> None:
     )
 
     assert await agent.process_next() is False
+
+
+def _tool_agent(
+    beaver_db: AsyncBeaverDB,
+    *,
+    task_id: str,
+    tool_name: str,
+    implementation: str,
+    policy: dict,
+) -> tuple[ToolAgent, ExecutionRequestMessage]:
+    registry = AvailableToolsRegistry()
+    registry.declare(tool_name, implementation=implementation, policy=policy)
+    request = crafted_request(task_id=task_id, payload={"summ": {"text": "hello"}})
+    return ToolAgent(
+        agent_id="summ",
+        db=beaver_db,
+        available_tools=registry,
+        tool_name=tool_name,
+        parameters={"text": "{summ.text}"},
+        input_as="summ",
+        output_as="summ",
+    ), request
+
+
+async def _run_tool_case(
+    beaver_db: AsyncBeaverDB,
+    agent: ToolAgent,
+    request,
+) -> dict:
+    await beaver_db.queue(queue_key("summ")).put(request.model_dump(mode="json"), priority=0.0)
+    assert await agent.process_next() is True
+    result_item = await pop_one(beaver_db, "main_a")
+    assert result_item is not None
+    return dict(ExecutionResultMessage.model_validate(result_item).payload)
+
+
+@pytest.mark.asyncio
+async def test_async_tool_is_awaited_not_wrapped(beaver_db: AsyncBeaverDB) -> None:
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-async",
+        tool_name="async_transform",
+        implementation="tests.test_tools.fake_async_transform",
+        policy={"timeout": 30, "retries": 0},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert payload["summ"]["transformed"] == "HELLOHELLO"
+
+
+@pytest.mark.asyncio
+async def test_slow_sync_tool_hits_policy_timeout(beaver_db: AsyncBeaverDB) -> None:
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-sync-timeout",
+        tool_name="slow_transform",
+        implementation="tests.test_tools.fake_slow_transform",
+        policy={"timeout": 0.05, "retries": 0},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert "TimeoutError" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_slow_async_tool_hits_policy_timeout(beaver_db: AsyncBeaverDB) -> None:
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-async-timeout",
+        tool_name="slow_async_transform",
+        implementation="tests.test_tools.fake_slow_async_transform",
+        policy={"timeout": 0.05, "retries": 0},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert "TimeoutError" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_nonzero_retries_fail_loudly_without_retry(beaver_db: AsyncBeaverDB) -> None:
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-retries",
+        tool_name="transform",
+        implementation="tests.test_tools.fake_transform",
+        policy={"timeout": 30, "retries": 1},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert "retries" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_asyncgen_tool_fails_loudly(beaver_db: AsyncBeaverDB) -> None:
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-asyncgen",
+        tool_name="asyncgen_transform",
+        implementation="tests.test_tools.fake_asyncgen_transform",
+        policy={"timeout": 30, "retries": 0},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert "async generator" in payload["error"]

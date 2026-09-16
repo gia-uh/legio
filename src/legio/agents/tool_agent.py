@@ -4,7 +4,9 @@ The ToolAgent executes a `kind: tool` agent step. It receives the incoming
 payload from the request's single `payload` container (Schema 2), resolves the
 terse `parameters` (`{arg: dotted.path | literal}`) against it, loads the bound
 `tool: <name>` from `available_tools` (Schema 3), invokes it with the resolved
-kwargs, validates the call against the tool's signature at execution time,
+kwargs (sync tools run off the loop, async tools are awaited, both under the
+declared per-call `timeout`; `retries` stays 0), validates the call against
+the tool's signature at execution time,
 and builds the new payload with `build_payload` (AGENT_LIFECYCLE §12.1: the
 state travels in the messages — nothing staged out-of-message). The base routes
 by position. How the tool's raw output becomes the agent's `output_as` value is
@@ -18,6 +20,8 @@ deposited instead (see AGENTS.md rule 9).
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from collections.abc import Mapping
 from typing import Any
@@ -69,8 +73,16 @@ class ToolAgent(AgentBase):
             tool = self._available_tools.load_tool(self._tool_name)
             # Validate against tool's signature at execution time
             validate_callable_signature(tool, resolved_kwargs)
-            # Invoke
-            raw_output = tool(**resolved_kwargs)
+            # Enforce the declared Schema 3 policy: retries stay 0 (the engine
+            # never retries a step), timeout bounds one call for both sync
+            # (run off the loop) and async tools.
+            timeout, retries = self._tool_policy()
+            if retries is not None and retries != 0:
+                raise ValueError(
+                    f"tool {self._tool_name!r} declares retries={retries!r}: "
+                    "only retries=0 is supported (steps are never retried)"
+                )
+            raw_output = await self._invoke_tool(tool, resolved_kwargs, timeout)
             logger.debug(
                 "tool executed ok agent=%s task=%s tool=%s",
                 self._agent_id,
@@ -95,6 +107,38 @@ class ToolAgent(AgentBase):
 
         # Should not reach here
         return {"error": "tool produced no output"}
+
+    def _tool_policy(self) -> tuple[float | None, int | None]:
+        """Read the tool's declared ``(timeout, retries)`` policy.
+
+        ``timeout`` bounds one call in seconds (``None`` = unbounded);
+        ``retries`` must stay ``0``/``None`` — the engine never retries.
+        """
+        declaration = self._available_tools.get_declaration(self._tool_name)
+        policy = declaration.get("policy") or {}
+        timeout = policy.get("timeout")
+        retries = policy.get("retries")
+        return (float(timeout) if timeout is not None else None, retries)
+
+    async def _invoke_tool(self, tool: Any, kwargs: dict[str, Any], timeout: float | None) -> Any:
+        """Invoke a sync or async tool under the policy timeout.
+
+        Sync tools run off the event loop so one slow call cannot stall every
+        pump; async tools are awaited. Async generators are not a valid tool
+        shape and fail loudly instead of leaking an unconsumed object.
+        """
+        if inspect.isasyncgenfunction(tool):
+            raise TypeError(
+                f"tool {self._tool_name!r} is an async generator: "
+                "tools must be sync or async callables returning a value"
+            )
+        if inspect.iscoroutinefunction(tool):
+            if timeout is None:
+                return await tool(**kwargs)
+            return await asyncio.wait_for(tool(**kwargs), timeout)
+        if timeout is None:
+            return tool(**kwargs)
+        return await asyncio.wait_for(asyncio.to_thread(tool, **kwargs), timeout)
 
     async def build_output_as(self, info: Any) -> dict[str, Any]:
         """Basic tool-output model: the tool's raw output is the value.
