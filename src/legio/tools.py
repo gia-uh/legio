@@ -14,6 +14,8 @@ import logging
 from collections.abc import Mapping
 from typing import Any, Protocol, runtime_checkable
 
+from legio.errors import UnrecoverableError
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,7 +71,9 @@ class AvailableToolsRegistry:
             tool = getattr(module, attr)
         except (ImportError, AttributeError, ValueError) as exc:
             logger.error("failed to load tool name=%s path=%s error=%s", name, dotted_path, exc)
-            raise RuntimeError(f"cannot load tool {name!r} from {dotted_path!r}") from exc
+            raise UnrecoverableError(
+                f"cannot load tool {name!r} from {dotted_path!r}"
+            ) from exc
         if not callable(tool):
             raise TypeError(f"tool {name!r} resolved to non-callable: {tool!r}")
         return tool

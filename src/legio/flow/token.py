@@ -20,7 +20,12 @@ class FlowToken(ImmutableMessage):
     root: bool = False
 
     def is_final(self, total_steps: int) -> bool:
-        """Whether this token points at the last step of ``total_steps``."""
+        """Whether this token points at the last step of ``total_steps``.
+
+        Position-only helper: production routing derives finality inline
+        (``AgentBase._route_outcome``) as end-of-sequence AND ``level == 1``,
+        so this helper is level-blind by design — see ARCH §3.
+        """
         return self.current_index == total_steps - 1
 
 

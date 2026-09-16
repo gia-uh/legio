@@ -233,6 +233,16 @@ class EmbeddingConfig(BaseModel):
     model: str = "text-embedding-3-small"
     max_tokens_per_batch: int | None = None
 
+    @field_validator("max_tokens_per_batch", mode="before")
+    @classmethod
+    def _reject_nonint_batch(cls, value: object) -> object:
+        if value is not None and type(value) is not int:
+            raise ValueError(
+                f"services.embedding.max_tokens_per_batch must be a genuine "
+                f"integer or null (got {value!r})"
+            )
+        return value
+
 
 class ServicesConfig(BaseModel):
     """The two sibling inference services. Absent → not configured."""
@@ -258,6 +268,13 @@ class ApiConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8000
     clients: dict[str, ClientConfig] = Field(default_factory=dict)
+
+    @field_validator("port", mode="before")
+    @classmethod
+    def _reject_nonint_port(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError(f"api.port must be a genuine integer (got {value!r})")
+        return value
 
 
 class LoggingConfig(BaseModel):
@@ -547,8 +564,10 @@ def _error_message(exc: ValidationError | InvalidNameError) -> str:
 
 
 __all__ = [
+    "CLIENT_TOKEN_PREFIX",
     "DEFAULT_CONFIG_PATH",
     "DEFAULT_TOOLS_PATH",
+    "SECRET_ENV_NAMES",
     "ApiConfig",
     "CliOverrides",
     "ClientConfig",

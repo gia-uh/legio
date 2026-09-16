@@ -216,7 +216,11 @@ class Manager:
         except IndexError:
             return 0
         task_id = item.data
-        await self._dispatch(task_id)
+        try:
+            await self._dispatch(task_id)
+        except Exception:
+            logger.exception("manager dispatch crashed task=%s", task_id)
+            raise
         return 1
 
     async def _dispatch(self, task_id: str) -> None:

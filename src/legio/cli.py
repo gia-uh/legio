@@ -40,7 +40,7 @@ import threading
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from time import monotonic
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 import typer
 import uvicorn
@@ -178,6 +178,7 @@ def _collect_spec_yamls(loaded: LoadedConfig) -> dict[str, str]:
     """Collect ``name -> YAML text`` for every pattern document in the three
     dirs, to feed the runtime YAML cache (§8 step 3, §4.7 recreate-class)."""
     yamls: dict[str, str] = {}
+    origins: dict[str, Path] = {}
     directories = [
         loaded.config.patterns.tool,
         loaded.config.patterns.linguistic,
@@ -193,7 +194,14 @@ def _collect_spec_yamls(loaded: LoadedConfig) -> dict[str, str]:
                 raise ConfigError(f"cannot parse pattern file {yaml_file}: {exc}") from exc
             for segment, value in zip(segments, values, strict=True):
                 for name in _document_names(value):
+                    if name in yamls:
+                        raise ConfigError(
+                            f"duplicate pattern name {name!r} in {origins[name]} "
+                            f"and {yaml_file}: both files author the same name "
+                            "(the loader rejects duplicates loudly too)"
+                        )
                     yamls[name] = segment
+                    origins[name] = yaml_file
     return yamls
 
 
@@ -408,15 +416,26 @@ async def _dispatch_command(
 # --- typer command layer -------------------------------------------------------
 
 
+def _cli_failure(exc: BaseException) -> NoReturn:
+    """Report a CLI failure as a loud ``legio error:`` exit (rule 9).
+
+    `LegioError` passes through with its message; expected builtin failure
+    shapes (unknown class/task `KeyError`, bad-value `ValueError`, `OSError`)
+    are mapped to the same exit instead of a traceback. Genuine bugs (any
+    other exception) still traceback.
+    """
+    typer.echo(f"legio error: {exc}", err=True)
+    raise typer.Exit(code=1) from exc
+
+
 def _run_cli(coro: Coroutine[Any, Any, int]) -> None:
     """Run an async CLI command, converting failures into a loud CLI exit."""
     try:
         result = asyncio.run(coro)
     except KeyboardInterrupt:
         raise typer.Exit(code=130) from None
-    except LegioError as exc:
-        typer.echo(f"legio error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+    except (LegioError, KeyError, ValueError, OSError) as exc:
+        _cli_failure(exc)
     if result != 0:
         raise typer.Exit(code=result)
 
@@ -522,9 +541,8 @@ def _agent_run(ctx: typer.Context, command: str, **options: object) -> None:
         _dispatch()
     except KeyboardInterrupt:
         raise typer.Exit(code=130) from None
-    except LegioError as exc:
-        typer.echo(f"legio error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+    except (LegioError, KeyError, ValueError, OSError) as exc:
+        _cli_failure(exc)
 
 
 @agent_cmd.command("create-class")

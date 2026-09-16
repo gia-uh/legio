@@ -6,7 +6,10 @@ finite budgets) APPROVED on 2026-09-16 (session 104: maintainer direction
 "check everything and implement what's necessary");
 Slice 9 (fresh-audit hardening: strict numerics, validate-first destroy,
 loser cleanup, cancel-safe kick, prose/dependency/test gaps) APPROVED on
-2026-09-16 (session 108).
+2026-09-16 (session 108);
+Slice 10 (design/coupling audit hardening: version-aware delegation,
+guarded executor, strict verbs, taxonomy, intake hygiene) APPROVED on
+2026-09-16 (session 110: maintainer direction "resuelve esto").
 - **Rasante:** R-10 (hardening)
 - **GitHub issue:** #51 (created + closed with verification, session 106)
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
@@ -30,6 +33,8 @@ transport/lifecycle-separated architecture.
 8. **Slice 8 — post-re-audit hardening (minors m7–m9 decided/fixed, notes
    n2–n6/n9–n10 decided/fixed).** APPROVED 2026-09-16.
 9. **Slice 9 — fresh-audit hardening (11 minors F1–F11).** APPROVED 2026-09-16.
+10. **Slice 10 — design/coupling audit hardening (2 majors F1–F2, 9 minors
+    F3–F11).** APPROVED 2026-09-16.
 
 ## Slice 1 contract (APPROVED)
 
@@ -260,6 +265,75 @@ Docs/trivial batch with zero behavior change:
 ## Validation case
 
 - Existing `transform` fake-tool paths unchanged and green.
+
+## Slice 10 contract (APPROVED)
+
+Design/coupling audit hardening from the Session 109 re-audit (0 blocking).
+Decisions first (scope control), then fixes:
+
+- **F1 (major, version-blind delegation):** the Phase-3 cross-node leg gains
+  the version gate the work-item leg already has. `DepositRequest` carries
+  `schema_version` (defaulting to the node's own `SCHEMA_VERSION`, so old
+  clients keep working); the owner refuses a mismatch with 409
+  `interface_mismatch` (same code as work-items); the proxy stamps the
+  current version on every remote `put`. A stale-version delegation therefore
+  fails LOUDLY at deposit (visible `RecoverableError` → error result) instead
+  of executing silently. `StepResolver` stays the pure, tested decision unit
+  for work-item-style delegation; the static table routes by name and the
+  owner gate-checks the version — the federation.py agreement comment is
+  reworded to this truth.
+- **F2 (major, unguarded executor):** `Manager.run()` logs
+  `logger.exception` with the task id and re-raises on any escaping dispatch
+  error (the agent crash posture of `AgentBase._process_inbox_item`).
+  Cancellation (`CancelledError`, `BaseException`) still propagates
+  unlogged — a cancelled pump is a clean host shutdown, not a crash.
+- **F3 (bool timeout on the direct-registry seam):** `_tool_policy` rejects a
+  boolean timeout loudly, naming the tool (parity with the Slice 9 pydantic
+  seams).
+- **F4 (silent count/pool no-ops):** `create_instance(count < 1)` and
+  `create_class(pool < 0)` raise `ValueError` at verb entry.
+- **F5 (taxonomy):** `ContractError` derives from `UnrecoverableError`
+  (authoring/validation fatal), not bare `RuntimeError`. Behavior unchanged
+  (still surfaced as error results).
+- **F6 (untyped escapes):** tool load failure raises `UnrecoverableError`
+  (fatal authoring: bad dotted path), not bare `RuntimeError`; both CLI
+  boundaries map `KeyError`/`ValueError`/`OSError` to the loud
+  `legio error:` exit instead of a traceback (genuine bugs still traceback).
+- **F7 (node-op intake hygiene):** when the drain-task submit fails,
+  `deposit_node_op` best-effort removes the just-queued intent (a concurrent
+  deposit's drain covers leftovers either way) and the original error
+  propagates loudly. Documented race, same class as the Slice 8 kick fix.
+- **F8 (cache/loader duplicate divergence):** `_collect_spec_yamls` raises
+  `ConfigError` naming both files on a duplicate pattern name (the loader
+  already rejects duplicates loudly).
+- **F9 (destroy-crash posture):** keep-closed is the documented safe posture
+  (a half-destroyed class must not re-admit work); the `destroy_class`
+  docstring states it. Pinned by test, no behavior change.
+- **F10 (`__all__` completions):** `LingoFactory`/`CompositeClasses`
+  exported from `materializer`; `SECRET_ENV_NAMES`/`CLIENT_TOKEN_PREFIX`
+  exported from `config`.
+- **F11 (residual lax ints):** `ApiConfig.port` and
+  `EmbeddingConfig.max_tokens_per_batch` require genuine ints (no range
+  check — a bad port still fails downstream-loud at bind; out of scope).
+- **N2 (doc pointer):** `FlowToken.is_final` documents that production
+  routing derives finality inline including `level == 1` (helper kept as-is,
+  tests keep pinning it).
+
+## Acceptance criteria (Slice 10)
+
+- Cross-version `/deposits` → 409 `interface_mismatch`, nothing deposited;
+  current-version and versionless (defaulted) deposits → 200; every proxy
+  `put` stamps the current version on the wire.
+- A crashing fact logs the exception with its task id and still raises; the
+  pump fleet no longer shrinks silently in legio logs.
+- Bool timeouts, `count < 1`, `pool < 0` fail loudly at their boundary.
+- `ContractError` is a `LegioError`; tool load failure is an
+  `UnrecoverableError`; CLI maps builtins to `legio error:` exits.
+- Failed node-op submit leaves no stranded intent and propagates.
+- Duplicate cache names fail naming both files; mid-destroy crash keeps the
+  gate closed (pinned); new exports importable; bool/str/float ports and
+  float batch sizes refused.
+- Full suite + ruff + pyright green; no other behavior changed.
 
 ## Slice 9 contract (APPROVED)
 

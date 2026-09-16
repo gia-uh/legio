@@ -64,6 +64,7 @@ from typing import Any
 from beaver import AsyncBeaverDB
 from pydantic import BaseModel, ValidationError
 
+from legio.errors import UnrecoverableError
 from legio.flow import (
     CONTROL_MESSAGE_TYPE,
     STATE_REPORT_SCOPE,
@@ -88,7 +89,7 @@ _EVENT_STEP_ERROR = "step_error"
 _EVENT_IDLE = "idle"
 
 
-class ContractError(RuntimeError):
+class ContractError(UnrecoverableError):
     """A declared ``input_schema``/``output_schema`` contact was violated.
 
     Raised by the uniform runner when the data at an agent's edge does not

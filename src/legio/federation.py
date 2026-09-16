@@ -231,10 +231,12 @@ def build_routes(
 
     Local-first: an agent the node serves itself is *never* tabled. Then the
     first offering peer in configured order wins — the same order the
-    ``StepResolver`` walks, so the table and the resolver's verdict never
-    disagree (the resolver returns ``Remote`` exactly when the table routes
-    remote). A name no peer offers is a table miss → local (today's behavior;
-    the flow layer's own checks still apply).
+    ``StepResolver`` walks. The table routes by name only (rosters carry no
+    version); interface skew is enforced owner-side instead — every routed
+    deposit stamps the author's ``schema_version`` and the owner refuses a
+    mismatch loudly (``StepResolver`` stays the pure, tested decision unit
+    for work-item-style delegation). A name no peer offers is a table miss →
+    local (today's behavior; the flow layer's own checks still apply).
     """
     owned: dict[str, str] = {}
     local = frozenset(local_served)
@@ -462,7 +464,11 @@ class RemoteQueue:
         )
 
     async def put(self, data: dict[str, Any], priority: float) -> None:
-        """Deposit onto the owner's queue via ``POST /deposits`` (L1 bearer)."""
+        """Deposit onto the owner's queue via ``POST /deposits`` (L1 bearer).
+
+        The current flow ``schema_version`` is stamped on the wire so the
+        owner can refuse a stale peer loudly instead of executing it
+        silently (LEG-091 version gate, enforced owner-side)."""
         if not isinstance(data, dict):
             raise RecoverableError(
                 f"remote deposit queue={self._queue} peer={self._owner} "
@@ -474,7 +480,12 @@ class RemoteQueue:
         try:
             response = await self._client().post(
                 url,
-                json={"queue": self._queue, "item": data, "priority": priority},
+                json={
+                    "queue": self._queue,
+                    "item": data,
+                    "priority": priority,
+                    "schema_version": SCHEMA_VERSION,
+                },
                 headers=headers,
             )
         except httpx.HTTPError as exc:

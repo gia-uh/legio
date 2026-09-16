@@ -121,6 +121,11 @@ class ToolAgent(AgentBase):
         policy = declaration.get("policy") or {}
         timeout = policy.get("timeout")
         retries = policy.get("retries")
+        if isinstance(timeout, bool):
+            raise ValueError(  # noqa: TRY004 - value rejection, naming the tool
+                f"tool {self._tool_name!r} declares timeout={timeout!r}: "
+                "policy.timeout must be a finite number of seconds > 0, never a boolean"
+            )
         try:
             timeout_value = float(timeout) if timeout is not None else None
         except (TypeError, ValueError):

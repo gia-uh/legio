@@ -170,7 +170,11 @@ class DepositRequest(BaseModel):
     (``legio:queue:<...>``); the owner performs the local ``put``. ``item`` is a
     dict (a flow message's JSON shape — the endpoint is transport, it does not
     mint lifecycle); ``priority`` passes through (agents always send ``0.0``).
-    Extra fields are forbidden — federation transports work, never lifecycle.
+    ``schema_version`` is the flow schema version the author speaks: a mismatch
+    is refused like on work-items (the version gate may not be bypassed by
+    reaching the node as a branch step). It defaults to this node's version so
+    older clients keep working. Extra fields are forbidden — federation
+    transports work, never lifecycle.
     """
 
     model_config = {"extra": "forbid"}
@@ -178,6 +182,7 @@ class DepositRequest(BaseModel):
     queue: str = Field(min_length=1)
     item: dict[str, Any]
     priority: float = 0.0
+    schema_version: int = SCHEMA_VERSION
 
 
 class DepositResponse(BaseModel):
@@ -505,8 +510,10 @@ def create_app(
             ``put`` — no direct remote write ever exists. Validation order
             (visible, rule 9): L1 bearer → 401; no catalog → 503
             (``no_capacity``, a federated node must never serve silently
-            empty); malformed queue name → 422; agent/gather queue for an
-            unserved agent → 404; gate denial → 409; deposit → 200.
+            empty); version skew → 409 (``interface_mismatch`` — a stale
+            peer never executes silently); malformed queue name → 422;
+            agent/gather queue for an unserved agent → 404; gate denial →
+            409; deposit → 200.
             """
             token = _bearer_token(authorization)
             if token is None or not federation_store.is_valid(token):
@@ -515,6 +522,13 @@ def create_app(
             if pattern_catalog is None:
                 logger.error("api deposits no capacity queue=%s", body.queue)
                 return JSONResponse(status_code=503, content={"code": "no_capacity"})
+            if body.schema_version != SCHEMA_VERSION:
+                logger.warning(
+                    "api deposits interface_mismatch queue=%s schema=%s",
+                    body.queue,
+                    body.schema_version,
+                )
+                return JSONResponse(status_code=409, content={"code": "interface_mismatch"})
             if not body.queue.startswith(QUEUE_NAMESPACE) or len(body.queue) <= len(
                 QUEUE_NAMESPACE
             ):

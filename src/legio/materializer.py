@@ -483,6 +483,8 @@ class BootedNode:
 
 __all__ = [
     "BootedNode",
+    "CompositeClasses",
+    "LingoFactory",
     "available_tools_from_config",
     "boot_node",
     "default_lingo_factory",

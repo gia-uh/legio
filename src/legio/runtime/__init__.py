@@ -462,7 +462,29 @@ class Runtime:
                     f"unknown instance {op.instance_id!r} of class {op.class_name!r}"
                 )
         await self._node_ops.put(op.model_dump(mode="json"), priority=0.0)
-        task_id = await self.manager.submit_task(NODE_OP_TASK)
+        try:
+            task_id = await self.manager.submit_task(NODE_OP_TASK)
+        except BaseException:
+            # Best-effort rollback of the just-queued intent so a failed kick
+            # never strands an undrained item (a concurrent deposit's drain
+            # covers leftovers either way). The original error propagates,
+            # never silent (rule 9).
+            try:
+                await self._node_ops.get(block=False)
+            except IndexError:
+                logger.debug(
+                    "runtime node_op rollback empty verb=%s class=%s",
+                    op.verb,
+                    op.class_name,
+                )
+            except Exception as exc:  # noqa: BLE001 - best-effort rollback, real error re-raised
+                logger.warning(
+                    "runtime node_op rollback failed verb=%s class=%s error=%s",
+                    op.verb,
+                    op.class_name,
+                    exc,
+                )
+            raise
         logger.info(
             "runtime node_op deposit verb=%s class=%s instance=%s task=%s",
             op.verb,
@@ -1099,6 +1121,8 @@ class Runtime:
         an explicit ``peer_steps`` here overrides the stored one. A step that is
         a known peer is not a local dependency and does not block born-enabled.
         """
+        if pool < 0:
+            raise ValueError(f"pool must be >= 0 (got {pool!r})")
         name = spec.name
         if await self.registry.class_state(name) is not None:
             logger.warning("runtime create_class noop class=%s (already exists)", name)
@@ -1315,6 +1339,10 @@ class Runtime:
         The drain budgets come from the ``lifecycle`` config (§5.8/§10.2).
         The class's shared result queue (``result:<name>``, LEG-095 Phase 2)
         is cleared too; per-task outbox records survive (consumed by ``ack``).
+        Crash posture (documented, keep-closed-safe): once the gate is closed,
+        a failure in the destroy steps below propagates with the gate left
+        closed — a half-destroyed class must never re-admit work. Only the
+        drain timeout restores the gate (untouched class, §12.5.3).
         """
         if await self.registry.class_state(name) is None:
             logger.warning("runtime destroy_class noop class=%s (unknown)", name)
@@ -1394,6 +1422,8 @@ class Runtime:
     async def create_instance(self, name: str, *, count: int = 1) -> list[str]:
         """Create one or more instances of an existing class. Each instance is
         born disabled if the class is disabled, enabled otherwise (§5.1)."""
+        if count < 1:
+            raise ValueError(f"count must be >= 1 (got {count!r})")
         if await self.registry.class_state(name) is None:
             raise KeyError(f"unknown class {name!r}")
         born_state = await self.registry.class_state(name) or ActivityState.DISABLED
