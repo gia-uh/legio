@@ -123,22 +123,55 @@ class ToolAgent(AgentBase):
     async def _invoke_tool(self, tool: Any, kwargs: dict[str, Any], timeout: float | None) -> Any:
         """Invoke a sync or async tool under the policy timeout.
 
-        Sync tools run off the event loop so one slow call cannot stall every
-        pump; async tools are awaited. Async generators are not a valid tool
-        shape and fail loudly instead of leaking an unconsumed object.
+        Sync tools always run off the event loop (`asyncio.to_thread`) so one
+        slow call can never stall every pump — whether or not a timeout is
+        declared. Whatever the call returns, an awaitable is awaited (async
+        callables, sync callables handing back a coroutine, chained
+        awaitables). Generator shapes are not values and fail loudly instead
+        of leaking an unconsumed object into the payload.
         """
         if inspect.isasyncgenfunction(tool):
             raise TypeError(
                 f"tool {self._tool_name!r} is an async generator: "
                 "tools must be sync or async callables returning a value"
             )
+        if inspect.isgeneratorfunction(tool):
+            raise TypeError(
+                f"tool {self._tool_name!r} is a sync generator: "
+                "tools must be sync or async callables returning a value"
+            )
         if inspect.iscoroutinefunction(tool):
-            if timeout is None:
-                return await tool(**kwargs)
-            return await asyncio.wait_for(tool(**kwargs), timeout)
+            return await self._bound(self._await_async_callable(tool, kwargs), timeout)
+        return await self._bound(self._call_sync_shape(tool, kwargs), timeout)
+
+    async def _bound(self, awaitable: Any, timeout: float | None) -> Any:
+        """Await one tool-call awaitable under the declared timeout, if any."""
         if timeout is None:
-            return tool(**kwargs)
-        return await asyncio.wait_for(asyncio.to_thread(tool, **kwargs), timeout)
+            return await awaitable
+        return await asyncio.wait_for(awaitable, timeout)
+
+    async def _await_async_callable(self, tool: Any, kwargs: dict[str, Any]) -> Any:
+        """Await a known-async tool and any awaitable it hands back."""
+        result = await tool(**kwargs)
+        while inspect.isawaitable(result):
+            result = await result
+        return self._ensure_value_shape(result)
+
+    async def _call_sync_shape(self, tool: Any, kwargs: dict[str, Any]) -> Any:
+        """Run a sync-shape tool off the loop, then await any awaitable back."""
+        result = await asyncio.to_thread(tool, **kwargs)
+        while inspect.isawaitable(result):
+            result = await result
+        return self._ensure_value_shape(result)
+
+    def _ensure_value_shape(self, result: Any) -> Any:
+        """Reject generator objects: they are not tool values (rule 9)."""
+        if inspect.isasyncgen(result) or inspect.isgenerator(result):
+            raise TypeError(
+                f"tool {self._tool_name!r} produced a generator: "
+                "tools must return a value, never an iterator"
+            )
+        return result
 
     async def build_output_as(self, info: Any) -> dict[str, Any]:
         """Basic tool-output model: the tool's raw output is the value.

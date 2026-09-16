@@ -1,6 +1,6 @@
 # LEG-103 — Audit hardening batch (subagent design/coupling audit, sessions 87-88)
 
-- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version); Slice 3 (fan-in exclusion) APPROVED by maintainer direction on 2026-09-16 (session 95, per-slot keys); Slice 4 (legacy fed plane) APPROVED by maintainer direction on 2026-09-16 (session 97, delete with type relocated); Slice 5 (minors/notes batches 5a–5e) APPROVED by maintainer direction on 2026-09-16 (session 99, batch plan).
+- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version); Slice 3 (fan-in exclusion) APPROVED by maintainer direction on 2026-09-16 (session 95, per-slot keys); Slice 4 (legacy fed plane) APPROVED by maintainer direction on 2026-09-16 (session 97, delete with type relocated); Slice 5 (minors/notes batches 5a–5e) APPROVED by maintainer direction on 2026-09-16 (session 99, batch plan); Slice 6 (complete execution semantics: always-off-loop + general awaitable + shape rejection) APPROVED on 2026-09-16 (session 102 scope/semantics, always-to-thread over contract amendment); Slice 7 (docs/trivial batch m3–m6/n1/n7/n8) APPROVED on 2026-09-16 (session 102).
 - **Rasante:** R-10 (hardening)
 - **GitHub issue:** to be opened/mirrored by the maintainer
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
@@ -19,6 +19,8 @@ transport/lifecycle-separated architecture.
 3. **Slice 3 — composite fan-in exclusion (Major 3).** APPROVED 2026-09-16 (per-slot keys).
 4. **Slice 4 — legacy global `fed` plane (Major 4).** APPROVED 2026-09-16 (delete).
 5. **Slice 5 — CLI federation token ordering + verified minors/notes.** APPROVED 2026-09-16 (batches 5a–5e).
+6. **Slice 6 — complete tool execution semantics (Majors M1+M2).** APPROVED 2026-09-16.
+7. **Slice 7 — docs/trivial batch (minors m3–m6, notes n1/n7/n8).** APPROVED 2026-09-16.
 
 ## Slice 1 contract (APPROVED)
 
@@ -172,6 +174,79 @@ open questions:
 - `tests/test_leg103_slice3_fanin.py`: four new contract tests (red first).
 - `tests/test_leg103_slice5_batches.py`: Slice 5 batch tests (red first);
   the token-order case extends `test_leg081_cli.py` in place.
+- `tests/test_leg022_toolagent.py` (Slice 6): six new contract tests (red
+  first); `tests/test_tools.py` gains the Slice 6 domain-free shapes (async
+  callable instance, sync-returns-coroutine, sync generator, asyncgen-returning
+  shape, thread probe).
+- Slice 7: no new behavior tests (docs/`__all__`/dead-code/log-wording batch);
+  the `legio.fed` logger-string case is updated in place in
+  `tests/test_legio_logging.py`.
+
+## Slice 6 contract (APPROVED)
+
+Completes the Slice 1 execution model (Session 101 majors M1+M2). The code is
+fixed to match the declared contract — the contract is not amended to allow
+blocking:
+
+- Sync tools ALWAYS run off the event loop (`asyncio.to_thread`), whether or
+  not a timeout is declared (polling-only rule 8; the "Sync tools run off the
+  loop" sentence stays true as written). The timeout, when declared, still
+  bounds the wait via `asyncio.wait_for`; the stray-thread-on-timeout
+  semantics from Slice 1 carry over unchanged.
+- General awaitable rule: whatever the call returns, if it is awaitable it is
+  awaited (covers async callable instances with an async `__call__`, sync
+  callables returning a coroutine/future, and chained awaitables — awaited in
+  a loop until a plain value remains), still under the declared timeout.
+- Loud rejection of non-value shapes (rule 9): async-generator functions and
+  async-generator objects, sync-generator functions and sync-generator
+  objects all fail with a visible `TypeError` result instead of leaking an
+  unconsumed iterator into the payload.
+
+## Acceptance criteria (Slice 6)
+
+- A sync tool without a timeout executes off the loop (its thread differs
+  from the event-loop thread) and its value lands under `output_as`.
+- An async callable instance is awaited: its value (not a coroutine) lands
+  under `output_as`.
+- A sync callable returning a coroutine is awaited: its value lands under
+  `output_as`.
+- A sync generator tool fails loudly (visible `error`, never a leaked
+  generator).
+- A sync shape returning an async generator fails loudly.
+- Full suite + ruff + pyright green; no other behavior changed.
+
+## Slice 7 contract (APPROVED)
+
+Docs/trivial batch with zero behavior change:
+
+- **m3:** `docs/ARCHITECTURE.md:163` drops the "guarded by a per-tool
+  concurrency semaphore" promise (no such mechanism exists after the LEG-082
+  withdrawal; `semaphore` stays a future scope per §2) — the shared resource
+  is described as shared with no engine-side cap.
+- **m4:** `docs/ARCHITECTURE.md:217` drops the "under lock" fan-in sentence —
+  bookkeeping is per-slot keys plus the atomic continuation-delete close
+  (Slice 3).
+- **m5:** `docs/CONTRACTS/LEG-040-composite-agent.md:68` drops the same stale
+  "under a lock" sentence for the same per-slot mechanism.
+- **m6:** `AgentInterface` joins `__all__` in `src/legio/federation.py`.
+- **n1:** the `"legio.fed"` logger string in `tests/test_legio_logging.py`
+  becomes the production `"legio.federation"` plane name.
+- **n7:** the dead `_CREATE_VERBS` set in `src/legio/cli.py` is deleted (only
+  `_LIFECYCLE_VERBS` dispatches).
+- **n8 (budget log nit):** the `gather_budget` validation message no longer
+  says "zero" for every non-positive value, and construction logs the budget
+  at DEBUG (rule 11).
+
+## Acceptance criteria (Slice 7)
+
+- No "per-tool concurrency semaphore" promise remains in ARCH §5; no "under
+  lock" fan-in sentence remains in ARCH §7 or LEG-040 §Fan-in.
+- `AgentInterface` is importable from `legio.federation.__all__`.
+- No `legio.fed` string remains in tests; no `_CREATE_VERBS` symbol remains
+  in `src`.
+- Non-positive `gather_budget` still refused loudly; construction emits the
+  budget at DEBUG.
+- Full suite + ruff + pyright green; no behavior changed.
 
 ## Validation case
 

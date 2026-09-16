@@ -277,6 +277,7 @@ def _tool_agent(
     tool_name: str,
     implementation: str,
     policy: dict,
+    parameters: dict | None = None,
 ) -> tuple[ToolAgent, ExecutionRequestMessage]:
     registry = AvailableToolsRegistry()
     registry.declare(tool_name, implementation=implementation, policy=policy)
@@ -286,7 +287,7 @@ def _tool_agent(
         db=beaver_db,
         available_tools=registry,
         tool_name=tool_name,
-        parameters={"text": "{summ.text}"},
+        parameters=parameters if parameters is not None else {"text": "{summ.text}"},
         input_as="summ",
         output_as="summ",
     ), request
@@ -367,3 +368,90 @@ async def test_asyncgen_tool_fails_loudly(beaver_db: AsyncBeaverDB) -> None:
     )
     payload = await _run_tool_case(beaver_db, agent, request)
     assert "async generator" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_sync_tool_without_timeout_returns_value(beaver_db: AsyncBeaverDB) -> None:
+    """Slice 6 (M1): an unbounded sync tool still produces its value."""
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-sync-notimeout",
+        tool_name="transform",
+        implementation="tests.test_tools.fake_transform",
+        policy={"retries": 0},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert payload["summ"]["transformed"] == "HELLOHELLO"
+
+
+@pytest.mark.asyncio
+async def test_sync_tool_without_timeout_runs_off_loop(beaver_db: AsyncBeaverDB) -> None:
+    """Slice 6 (M1): an unbounded sync tool never runs on the loop thread."""
+    import threading
+
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-sync-offloop",
+        tool_name="thread_probe",
+        implementation="tests.test_tools.fake_thread_probe",
+        policy={"retries": 0},
+        parameters={},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert payload["summ"]["thread"] != threading.current_thread().name
+
+
+@pytest.mark.asyncio
+async def test_async_callable_instance_is_awaited(beaver_db: AsyncBeaverDB) -> None:
+    """Slice 6 (M2): an async `__call__` instance is awaited, not wrapped."""
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-async-instance",
+        tool_name="async_double",
+        implementation="tests.test_tools.async_double",
+        policy={"timeout": 30, "retries": 0},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert payload["summ"]["transformed"] == "HELLO"
+
+
+@pytest.mark.asyncio
+async def test_sync_returning_coroutine_is_awaited(beaver_db: AsyncBeaverDB) -> None:
+    """Slice 6 (M2): a sync shape handing back a coroutine is awaited."""
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-sync-coro",
+        tool_name="returning_coroutine",
+        implementation="tests.test_tools.fake_returning_coroutine",
+        policy={"timeout": 30, "retries": 0},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert payload["summ"]["transformed"] == "HELLO"
+
+
+@pytest.mark.asyncio
+async def test_sync_generator_fails_loudly(beaver_db: AsyncBeaverDB) -> None:
+    """Slice 6 (M2): a sync generator is not a value — loud error, no leak."""
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-syncgen",
+        tool_name="sync_generator",
+        implementation="tests.test_tools.fake_sync_generator",
+        policy={"timeout": 30, "retries": 0},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert "generator" in payload["error"]
+
+
+@pytest.mark.asyncio
+async def test_sync_returning_asyncgen_fails_loudly(beaver_db: AsyncBeaverDB) -> None:
+    """Slice 6 (M2): a sync shape handing back an async generator fails loudly."""
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-returned-asyncgen",
+        tool_name="returning_asyncgen",
+        implementation="tests.test_tools.fake_returning_asyncgen",
+        policy={"timeout": 30, "retries": 0},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert "generator" in payload["error"]

@@ -39,3 +39,39 @@ async def fake_slow_async_transform(text: str) -> dict:
 async def fake_asyncgen_transform(text: str):  # type: ignore[no-untyped-def]
     """Domain-free async generator: not a valid tool shape, must fail loudly."""
     yield {"transformed": str(text).upper()}
+
+
+class _AsyncDouble:
+    """Domain-free async callable instance: awaited like an async function."""
+
+    async def __call__(self, text: str) -> dict:
+        return {"transformed": str(text).upper()}
+
+
+async_double = _AsyncDouble()
+
+
+def fake_returning_coroutine(text: str):  # type: ignore[no-untyped-def]
+    """Domain-free sync shape handing back a coroutine: must be awaited."""
+    async def _inner() -> dict:
+        return {"transformed": str(text).upper()}
+    return _inner()
+
+
+def fake_sync_generator(text: str):  # type: ignore[no-untyped-def]
+    """Domain-free sync generator: not a valid tool shape, must fail loudly."""
+    yield {"transformed": str(text).upper()}
+
+
+def fake_returning_asyncgen(text: str):  # type: ignore[no-untyped-def]
+    """Domain-free sync shape handing back an async generator: must fail."""
+    async def _gen():  # type: ignore[no-untyped-def]
+        yield {"transformed": str(text).upper()}
+    return _gen()
+
+
+def fake_thread_probe() -> dict:
+    """Domain-free probe reporting the executing thread (off-loop check)."""
+    import threading
+
+    return {"thread": threading.current_thread().name}
