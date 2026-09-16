@@ -40,11 +40,23 @@ from beaver.dicts import AsyncBeaverDict
 from beaver.queues import AsyncBeaverQueue
 
 from legio.errors import LegioError, RecoverableError
-from legio.fed import AgentInterface
 from legio.flow import SCHEMA_VERSION
 from legio.naming import QUEUE_NAMESPACE
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class AgentInterface:
+    """A versioned agent capability a node offers to (or reads from) a peer.
+
+    Relocated here from the retired LEG-015 in-memory plane (LEG-103 Slice 4):
+    the production federation reuses only this value type — no registry, no
+    queues, no global state travel with it.
+    """
+
+    capability: str
+    schema_version: int
 
 #: A well-formed task id — ``<origin>:<uuid>`` (LEG-016). ``NodeDB`` parses the
 #: author origin out of ``result:<task_id>`` queue names; anything that does not

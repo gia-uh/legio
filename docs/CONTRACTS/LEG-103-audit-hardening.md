@@ -1,6 +1,6 @@
 # LEG-103 — Audit hardening batch (subagent design/coupling audit, sessions 87-88)
 
-- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version); Slice 3 (fan-in exclusion) APPROVED by maintainer direction on 2026-09-16 (session 95, per-slot keys).
+- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version); Slice 3 (fan-in exclusion) APPROVED by maintainer direction on 2026-09-16 (session 95, per-slot keys); Slice 4 (legacy fed plane) APPROVED by maintainer direction on 2026-09-16 (session 97, delete with type relocated).
 - **Rasante:** R-10 (hardening)
 - **GitHub issue:** to be opened/mirrored by the maintainer
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
@@ -17,7 +17,7 @@ transport/lifecycle-separated architecture.
 1. **Slice 1 — tool execution/policy semantics (Major 1).** APPROVED 2026-09-16.
 2. **Slice 2 — composite pending-gather wakeup (Major 2).** APPROVED 2026-09-16 (Option A).
 3. **Slice 3 — composite fan-in exclusion (Major 3).** APPROVED 2026-09-16 (per-slot keys).
-4. **Slice 4 — legacy global `fed` plane (Major 4).** Spec pending.
+4. **Slice 4 — legacy global `fed` plane (Major 4).** APPROVED 2026-09-16 (delete).
 5. **Slice 5 — CLI federation token ordering + verified minors/notes.** Spec pending.
 
 ## Slice 1 contract (APPROVED)
@@ -99,6 +99,28 @@ foreign concepts to the flow; the atomic close below needs neither):
   record, no leftover slots.
 - Unknown-branch and no-fan-out results stay loud errors.
 - Full suite + ruff + pyright green; no other behavior changed.
+
+## Slice 4 contract (APPROVED)
+
+Delete (isolate/bless rejected: hiding or blessing the module-global `_NODES`
+keeps the no-global-state violation and the wrong-plane import hazard):
+
+- Delete `src/legio/fed.py` (the LEG-015-era in-memory symmetric plane:
+  module-global node registry, process-resident queues and outbox).
+- Relocate the one production-used value, `AgentInterface`, into
+  `legio.federation` (frozen dataclass, same shape); production imports the
+  type from there.
+- Retire `tests/test_leg015_federation.py`: every behavior it pins is covered
+  on the production plane — catalog by `test_leg090`, interface mismatch by
+  `test_leg091`/`test_leg092`, deposit by `test_leg092`, dedupe and outbox
+  poll/ack by `test_leg093`/`test_leg095_result_drain`.
+- Historical journal entries keep mentioning `legio.fed`; they are immutable
+  history and stay as-is.
+
+## Acceptance criteria (Slice 4)
+
+- No `legio.fed` module, import, or global state remains in `src` or tests.
+- Full suite + ruff + pyright green with no legacy-plane tests.
 
 ## Tests
 

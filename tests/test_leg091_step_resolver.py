@@ -18,8 +18,8 @@ import logging
 
 import pytest
 
-from legio.fed import AgentInterface
 from legio.federation import (
+    AgentInterface,
     InterfaceMismatchError,
     Local,
     Remote,
