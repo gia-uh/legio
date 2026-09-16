@@ -282,10 +282,43 @@ def _load_all_documents(
             _load_specs_from_yaml(document, catalog, peer_steps=peer_steps)
 
 
+def _strip_separator_lines(segment: str) -> str:
+    """Drop document-boundary lines (``---``/``...``) from a segment's ends.
+
+    Only boundary lines are dropped: a separator-looking line inside a literal
+    block is always indented, and boundaries detected by the parser land at
+    the segment ends by construction.
+    """
+    lines = segment.splitlines(keepends=True)
+    while lines and lines[0].strip() == "---":
+        lines.pop(0)
+    while lines and lines[-1].strip() in ("---", "..."):
+        lines.pop()
+    return "".join(lines)
+
+
+def split_yaml_documents(text: str) -> list[str]:
+    """Split a YAML stream into raw per-document segments using the parser.
+
+    Boundaries come from ``yaml.compose_all`` marks — the same parser family
+    ``safe_load_all`` uses — so a ``---`` line inside a literal block never
+    splits. Each segment parses standalone with ``yaml.safe_load``.
+    """
+    starts = [document.start_mark.index for document in yaml.compose_all(text)]
+    starts.append(len(text))
+    segments: list[str] = []
+    for start, end in zip(starts, starts[1:]):
+        segment = _strip_separator_lines(text[start:end])
+        if segment.strip():
+            segments.append(segment)
+    return segments
+
+
 __all__ = [
     "Catalog",
     "load_pattern_dirs",
     "load_patterns",
     "resolve_branch",
     "resolve_composite_branches",
+    "split_yaml_documents",
 ]

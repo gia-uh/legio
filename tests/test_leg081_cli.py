@@ -401,6 +401,8 @@ def test_cli_server_federation_without_token_refuses_before_boot(
         output = process.stdout.read()
         assert returncode == 1, output
         assert "LEGIO_FEDERATION_TOKEN" in output
+        # Refusal happens before boot: the node database is never created.
+        assert not Path(node_dirs["db"]).exists()
     finally:
         if process.poll() is None:
             process.kill()

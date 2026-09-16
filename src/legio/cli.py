@@ -51,7 +51,7 @@ from legio.config import CliOverrides, LoadedConfig, load
 from legio.errors import LegioError
 from legio.manager import TaskStatus
 from legio.materializer import BootedNode, boot_node
-from legio.patterns.loader import load_patterns
+from legio.patterns.loader import load_patterns, split_yaml_documents
 from legio.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -186,28 +186,11 @@ def _collect_spec_yamls(loaded: LoadedConfig) -> dict[str, str]:
     for directory in directories:
         for yaml_file in sorted(Path(directory).rglob("*.yaml")):
             source = yaml_file.read_text(encoding="utf-8")
-            for segment in _split_documents(source):
+            for segment in split_yaml_documents(source):
                 value = yaml.safe_load(segment)
                 for name in _document_names(value):
                     yamls[name] = segment
     return yamls
-
-
-def _split_documents(text: str) -> list[str]:
-    """Split a YAML stream into its ``---``-separated documents (safe_load_all
-    does the same stream split; segmenting keeps each document's raw text)."""
-    segments: list[str] = []
-    current: list[str] = []
-    for line in text.splitlines(keepends=True):
-        if line.strip() == "---":
-            if current:
-                segments.append("".join(current))
-            current = []
-        else:
-            current.append(line)
-    if current:
-        segments.append("".join(current))
-    return segments
 
 
 def _document_names(value: object) -> list[str]:
@@ -721,13 +704,12 @@ async def serve_node(
     Configuration wins over option arguments: an explicit CLI ``--host``/
     ``--port`` override the config's ``api.host``/``api.port``.
     """
-    booted = await boot_node(loaded)
     if federation and loaded.secrets.federation_token is None:
-        await booted.db.close()
         raise LegioError(
             "--federation requires LEGIO_FEDERATION_TOKEN (the federation "
             "surface is guarded by the shared token, LEG-017 §2)"
         )
+    booted = await boot_node(loaded)
     bind_host = host or loaded.config.api.host
     bind_port = port or loaded.config.api.port
     count = executor_pump_count(booted)
