@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -113,12 +114,28 @@ class ToolAgent(AgentBase):
 
         ``timeout`` bounds one call in seconds (``None`` = unbounded);
         ``retries`` must stay ``0``/``None`` — the engine never retries.
+        The file path is validated at load (`ToolPolicy`); this guards the
+        direct-registry path just as loudly (rule 9).
         """
         declaration = self._available_tools.get_declaration(self._tool_name)
         policy = declaration.get("policy") or {}
         timeout = policy.get("timeout")
         retries = policy.get("retries")
-        return (float(timeout) if timeout is not None else None, retries)
+        try:
+            timeout_value = float(timeout) if timeout is not None else None
+        except (TypeError, ValueError):
+            timeout_value = None
+            invalid = True
+        else:
+            invalid = timeout_value is not None and (
+                not math.isfinite(timeout_value) or timeout_value <= 0
+            )
+        if invalid:
+            raise ValueError(
+                f"tool {self._tool_name!r} declares timeout={timeout!r}: "
+                "policy.timeout must be a finite number of seconds > 0"
+            )
+        return (timeout_value, retries)
 
     async def _invoke_tool(self, tool: Any, kwargs: dict[str, Any], timeout: float | None) -> Any:
         """Invoke a sync or async tool under the policy timeout.

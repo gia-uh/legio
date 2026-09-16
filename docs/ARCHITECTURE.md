@@ -114,8 +114,13 @@ single container for both roles).
    step's resolved `input_as` (§12.1). On fan-in completion it decrements `level`
    (−1) and resumes its level (`current_index + 1`), with `end_of_level_queue` the
    one its creator supplied. A composite-as-branch at level 2 closes to its
-   gathering; only a last-of-sequence at `level == 1` delivers the final result.
-   Partition is by queue, never by message type: no inlet inspects one.
+    gathering; only a last-of-sequence at `level == 1` delivers the final result.
+    Partition is by queue, never by message type: no inlet inspects one. While
+    a fan-out is pending and both inlets are dry, the tick suspends on the
+    class inbox with a bounded substrate wait (`get(block=True,
+    timeout=gather_budget)`, default 0.5 s) and then re-polls gathering once —
+    inbox work/control wakes it at once, so the join keeps its liveness with
+    no legio timer.
 - It is a CPS-style continuation: *what am I (my class), where am I in my
   level's route, where does my level end, at what branch depth*.
 

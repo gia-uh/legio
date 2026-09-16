@@ -66,6 +66,7 @@ failure, never a silent drop). Errors are never silent (rule 9).
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -114,10 +115,11 @@ class CompositeAgent(AgentBase):
             output_schema=output_schema,
             control_verifier=control_verifier,
         )
-        if gather_budget <= 0:
+        if not math.isfinite(gather_budget) or gather_budget <= 0:
             raise ValueError(
-                f"composite agent {agent_id!r}: gather_budget must be positive "
-                f"(got {gather_budget!r}) — a non-positive budget would busy-spin"
+                f"composite agent {agent_id!r}: gather_budget must be a finite "
+                f"number > 0 (got {gather_budget!r}) — a non-positive budget "
+                "would busy-spin and a non-finite one never wakes"
             )
         self._gather_budget = gather_budget
         logger.debug(
@@ -337,6 +339,23 @@ class CompositeAgent(AgentBase):
             )
             await self._deliver(first_class, child.model_dump(mode="json"))
             await self._slots.set(slot_key, {"index": index, "result": None})
+
+        # Lost-race check: a concurrent fan-out for this task may have won
+        # while this worker was depositing. The loser deletes only its own
+        # slots and stands down, leaving the winner's fan-out intact — never
+        # orphan slots, never an overwritten continuation (rule 9).
+        if await self._state.fetch(request.task_id) is not None:
+            for branch_slot in expected:
+                try:
+                    await self._slots.delete(f"{request.task_id}:{branch_slot}")
+                except KeyError:
+                    pass
+            logger.debug(
+                "composite fan-out lost race agent=%s task=%s",
+                self._agent_id,
+                request.task_id,
+            )
+            return
 
         record = {
             "continuation": {

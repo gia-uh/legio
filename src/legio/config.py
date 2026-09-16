@@ -19,6 +19,7 @@ secrets never travel through YAML.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import socket
 from collections.abc import Mapping
@@ -142,8 +143,8 @@ class LifecycleParams(BaseModel):
             ("drain_timeout", self.drain_timeout),
             ("drain_interval", self.drain_interval),
         ):
-            if value is not None and value <= 0:
-                raise ValueError(f"lifecycle.{name} must be > 0")
+            if value is not None and (not math.isfinite(value) or value <= 0):
+                raise ValueError(f"lifecycle.{name} must be a finite number > 0")
         return self
 
 
@@ -294,6 +295,19 @@ class ToolPolicy(BaseModel):
 
     timeout: int | float | None = None
     retries: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_policy(self) -> ToolPolicy:
+        if self.timeout is not None and (
+            not isinstance(self.timeout, (int, float))
+            or isinstance(self.timeout, bool)
+            or not math.isfinite(self.timeout)
+            or self.timeout <= 0
+        ):
+            raise ValueError("policy.timeout must be a finite number of seconds > 0")
+        if self.retries is not None and (not isinstance(self.retries, int) or self.retries < 0):
+            raise ValueError("policy.retries must be an integer >= 0")
+        return self
 
 
 class ToolDeclaration(BaseModel):

@@ -89,6 +89,7 @@ from legio.manager import Manager, TaskRecord, TaskStatus
 from legio.naming import (
     OUTBOX_SCOPE,
     QUEUE_NAMESPACE,
+    ActivityState,
     outbox_key,
     queue_key,
     result_queue_key,
@@ -97,7 +98,7 @@ from legio.naming import (
 )
 from legio.patterns import Catalog, load_patterns
 from legio.patterns.schema1 import AgentKind, AgentSpec, AgentType
-from legio.registry import ActivityState, ClassRecord, InstanceRecord, Registry
+from legio.registry import ClassRecord, InstanceRecord, Registry
 
 logger = logging.getLogger(__name__)
 
@@ -580,13 +581,19 @@ class Runtime:
         pumping — the node's executor dispatches the fact).
 
         Kicks coalesce while a drain is already scheduled: repeated read-miss
-        polls must not mint duplicate persistent tasks.
+        polls must not mint duplicate persistent tasks. The flag is added
+        before the submit but discarded when the submit raises — otherwise a
+        failed kick would strand the queue behind a stale flag (rule 9).
         """
         if agent in self._drain_inflight:
             logger.debug("runtime result_drain coalesced agent=%s", agent)
             return
         self._drain_inflight.add(agent)
-        await self.manager.submit_task(RESULT_DRAIN_TASK, agent)
+        try:
+            await self.manager.submit_task(RESULT_DRAIN_TASK, agent)
+        except Exception:
+            self._drain_inflight.discard(agent)
+            raise
 
     async def _result_drain_fact(self, agent: str) -> dict[str, Any]:
         """The result-drain intake (LEG-095 Phase 2): pop one flow-end result

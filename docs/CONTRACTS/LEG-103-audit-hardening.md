@@ -1,6 +1,9 @@
 # LEG-103 — Audit hardening batch (subagent design/coupling audit, sessions 87-88)
 
-- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version); Slice 3 (fan-in exclusion) APPROVED by maintainer direction on 2026-09-16 (session 95, per-slot keys); Slice 4 (legacy fed plane) APPROVED by maintainer direction on 2026-09-16 (session 97, delete with type relocated); Slice 5 (minors/notes batches 5a–5e) APPROVED by maintainer direction on 2026-09-16 (session 99, batch plan); Slice 6 (complete execution semantics: always-off-loop + general awaitable + shape rejection) APPROVED on 2026-09-16 (session 102 scope/semantics, always-to-thread over contract amendment); Slice 7 (docs/trivial batch m3–m6/n1/n7/n8) APPROVED on 2026-09-16 (session 102).
+- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version); Slice 3 (fan-in exclusion) APPROVED by maintainer direction on 2026-09-16 (session 95, per-slot keys); Slice 4 (legacy fed plane) APPROVED by maintainer direction on 2026-09-16 (session 97, delete with type relocated); Slice 5 (minors/notes batches 5a–5e) APPROVED by maintainer direction on 2026-09-16 (session 99, batch plan); Slice 6 (complete execution semantics: always-off-loop + general awaitable + shape rejection) APPROVED on 2026-09-16 (session 102 scope/semantics, always-to-thread over contract amendment); Slice 7 (docs/trivial batch m3–m6/n1/n7/n8) APPROVED on 2026-09-16 (session 102);
+Slice 8 (post-re-audit hardening: m7/m8, coalesce ordering, fan-out race,
+finite budgets) APPROVED on 2026-09-16 (session 104: maintainer direction
+"check everything and implement what's necessary").
 - **Rasante:** R-10 (hardening)
 - **GitHub issue:** to be opened/mirrored by the maintainer
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
@@ -21,6 +24,8 @@ transport/lifecycle-separated architecture.
 5. **Slice 5 — CLI federation token ordering + verified minors/notes.** APPROVED 2026-09-16 (batches 5a–5e).
 6. **Slice 6 — complete tool execution semantics (Majors M1+M2).** APPROVED 2026-09-16.
 7. **Slice 7 — docs/trivial batch (minors m3–m6, notes n1/n7/n8).** APPROVED 2026-09-16.
+8. **Slice 8 — post-re-audit hardening (minors m7–m9 decided/fixed, notes
+   n2–n6/n9–n10 decided/fixed).** APPROVED 2026-09-16.
 
 ## Slice 1 contract (APPROVED)
 
@@ -251,6 +256,81 @@ Docs/trivial batch with zero behavior change:
 ## Validation case
 
 - Existing `transform` fake-tool paths unchanged and green.
+
+## Slice 8 contract (APPROVED)
+
+Post-re-audit hardening from the maintainer's "check everything" direction
+(session 104). Every remaining Session 101 minor/note was re-verified against
+source; the fixes below are the necessary ones, the rest are explicit
+no-change decisions recorded here:
+
+- **m7 (ToolPolicy.timeout unvalidated):** `ToolPolicy` refuses a non-positive
+  or non-finite `timeout` at load (`ConfigError` via `load_tools_file`;
+  `retries` keeps its Slice 1 semantics — `None`/`>= 0` passes load so a
+  nonzero value still fails loudly at execution without retrying). The
+  direct-registry path (`AvailableToolsRegistry.declare`, bypasses file
+  validation) is guarded at execution: `_tool_policy` raises a loud
+  `ValueError` naming the policy instead of handing a meaningless timeout to
+  `asyncio.wait_for`.
+- **Finite budgets (NaN/inf note):** `NaN` slips through every `<= 0` check
+  (`NaN <= 0` is `False`) and `inf` passes as a pseudo-unbounded wait. All
+  three budget seams now require a finite value: `CompositeAgent`
+  `gather_budget`, `LifecycleParams` drain budgets, and the `ToolPolicy`
+  timeout above.
+- **m8 (bare `safe_load` in `_collect_spec_yamls`):** a `YAMLError` is wrapped
+  in a `ConfigError` naming the file (same convention as `config._read_yaml`)
+  instead of escaping raw.
+- **Coalesce-add ordering (note):** `_kick_result_drain` added the agent to
+  `_drain_inflight` *before* `submit_task`; a submit failure left the flag set
+  forever and stranded the queue. The flag is now discarded when the submit
+  raises (the error still propagates loudly, rule 9).
+- **Duplicate fan-out race (note):** two concurrent fan-outs for one task
+  could both pass the exists-check, write orphan slots under different
+  branch ids, and let the last record win (the loser's branches then fail as
+  unknown). After writing its slots each worker re-checks the continuation:
+  on a lost race it deletes only its own slots and stands down, leaving the
+  winner's fan-out intact. A residual same-instant window keeps today's
+  behavior (loud, never silent).
+- **Registry import-source tidy (n10):** `Runtime` imports the vocabulary it
+  uses (`ActivityState`) from its owner `legio.naming`, not via the
+  `legio.registry` re-export (Slice 5b ownership).
+- **ARCH Slice 2 completeness (n9):** ARCH §3/§7 now name the bounded
+  substrate wait (`get(block=True, timeout=gather_budget)`, default 0.5 s) so
+  the architecture text matches the shipped Slice 2 mechanism.
+
+Decided with no code change (verified, recorded):
+
+- **m9 (post-close duplicates vs the standing loop):** kept loud. Downgrading
+  to warning would contradict the Slice 3 acceptance criteria (unknown-branch
+  and no-fan-out stay loud errors) and the engine-wide poison-item posture
+  (`_process_inbox_item` likewise crashes loudly instead of skipping). A
+  duplicate after close is either a redelivery (benign, and its loud error
+  names the task/branch for the operator) or a genuine routing anomaly —
+  neither may die silently.
+- **Strip edge (note):** probed `split_yaml_documents`/`_strip_separator_lines`
+  against comment-only docs, CRLF, trailing-space separators, `...` end
+  markers, BOM, empty docs, and `--`-in-literal-block — all split correctly;
+  no change.
+- **Upgrade migration (note):** exact-match `schema_version` rejection stays.
+  There is no live-migration story by design: upgrades drain and redeploy
+  (fail-fast versioning, LEG-011); a lenient major-only gate would be a new
+  semantic requiring its own spec.
+
+## Acceptance criteria (Slice 8)
+
+- Negative/zero/NaN tool timeouts fail at load (`ConfigError`); a bad timeout
+  through the direct-registry path fails loudly at execution naming the
+  policy; `retries: 1` still passes load and fails at execution (Slice 1).
+- NaN/inf `gather_budget` and NaN/inf lifecycle budgets are refused loudly.
+- A syntactically broken pattern file fails YAML-cache collection with a
+  `ConfigError` naming the file.
+- A failed drain-kick submit clears the coalesce flag (loud error, re-kick
+  works).
+- A lost fan-out race deletes only the loser's slots and keeps the winner's
+  record; sequential double fan-out stays a no-op.
+- `ActivityState` in `runtime` imports from `legio.naming`; ARCH names the
+  bounded substrate wait.
+- Full suite + ruff + pyright green; no other behavior changed.
 
 ## Definition of done (per slice)
 

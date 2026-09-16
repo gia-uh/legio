@@ -48,7 +48,7 @@ import yaml
 
 from legio import logging as legio_logging
 from legio.config import CliOverrides, LoadedConfig, load
-from legio.errors import LegioError
+from legio.errors import ConfigError, LegioError
 from legio.manager import TaskStatus
 from legio.materializer import BootedNode, boot_node
 from legio.patterns.loader import load_patterns, split_yaml_documents
@@ -185,9 +185,15 @@ def _collect_spec_yamls(loaded: LoadedConfig) -> dict[str, str]:
     ]
     for directory in directories:
         for yaml_file in sorted(Path(directory).rglob("*.yaml")):
-            source = yaml_file.read_text(encoding="utf-8")
-            for segment in split_yaml_documents(source):
-                value = yaml.safe_load(segment)
+            try:
+                source = yaml_file.read_text(encoding="utf-8")
+                segments = split_yaml_documents(source)
+                values = [yaml.safe_load(segment) for segment in segments]
+            except yaml.YAMLError as exc:
+                raise ConfigError(
+                    f"cannot parse pattern file {yaml_file}: {exc}"
+                ) from exc
+            for segment, value in zip(segments, values, strict=True):
                 for name in _document_names(value):
                     yamls[name] = segment
     return yamls
