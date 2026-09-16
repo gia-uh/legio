@@ -254,6 +254,10 @@ class Runtime:
         # keyed by task id; ``status``/``read_outbox``/``ack_outbox`` read
         # records, never the physical result queue.
         self._outbox = db.dict(OUTBOX_SCOPE)
+        # Kick coalescing (LEG-103 Slice 5c): agents with a result-drain
+        # already scheduled. Best-effort, in-memory only — losing it merely
+        # re-kicks; the drain fact itself is idempotent.
+        self._drain_inflight: set[str] = set()
         self._instance_tasks: dict[tuple[str, str], str] = {}
         self._instance_sequence: dict[str, int] = {}
         # The authenticated control channel (LEG-082): the Runtime is the only
@@ -573,7 +577,15 @@ class Runtime:
 
     async def _kick_result_drain(self, agent: str) -> None:
         """Schedule collection of ``agent``'s result queue (scheduling, never
-        pumping — the node's executor dispatches the fact)."""
+        pumping — the node's executor dispatches the fact).
+
+        Kicks coalesce while a drain is already scheduled: repeated read-miss
+        polls must not mint duplicate persistent tasks.
+        """
+        if agent in self._drain_inflight:
+            logger.debug("runtime result_drain coalesced agent=%s", agent)
+            return
+        self._drain_inflight.add(agent)
         await self.manager.submit_task(RESULT_DRAIN_TASK, agent)
 
     async def _result_drain_fact(self, agent: str) -> dict[str, Any]:
@@ -587,6 +599,7 @@ class Runtime:
         computed result must never strand on the queue of a class disabled
         after it was produced.
         """
+        self._drain_inflight.discard(agent)
         queue = self._db.queue(queue_key(result_queue_key(agent)))
         try:
             item = await queue.get(block=False)

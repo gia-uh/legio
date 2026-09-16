@@ -160,18 +160,25 @@ class Manager:
 
     async def control_mode(self, task_id: str) -> str | None:
         """Return the stored cooperative control mode (``run``/``pause``/
-        ``cancel``) for a task, or ``None`` when no explicit control
-        instruction is set (equivalent to ``run``)."""
+        cancel``) for a task, or ``None`` when no explicit control
+        instruction is set (equivalent to ``run`` — including after the
+        ``control_ttl`` row expires, per the documented reversion)."""
         control = await self._control.fetch(task_id)
         if control is None:
             return None
         return control.get("mode")
 
     async def pause(self, task_id: str) -> None:
-        """Cooperative non-terminal suspension (disable ≠ destroy, rule 8)."""
+        """Cooperative non-terminal suspension (disable ≠ destroy, rule 8).
+
+        The control row carries ``control_ttl``: when it expires the mode
+        reads back as ``run`` (documented reversion, never a hidden timer —
+        expiry is lazy, observed on the next read, and the set event below
+        always names the TTL in force).
+        """
         await self._require_task(task_id)
         await self._set_control(task_id, "pause")
-        logger.info("manager pause task=%s", task_id)
+        logger.info("manager pause task=%s ttl=%s", task_id, self._control_ttl)
 
     async def resume(self, task_id: str) -> None:
         """Release a paused task back to ``run`` (non-terminal)."""
@@ -179,7 +186,7 @@ class Manager:
         await self._set_control(task_id, "run")
         if record.status == TaskStatus.PENDING or task_id in self._parked:
             await self._pending.put(task_id, priority=0.0)
-        logger.info("manager resume task=%s", task_id)
+        logger.info("manager resume task=%s ttl=%s", task_id, self._control_ttl)
 
     async def cancel(self, task_id: str) -> None:
         """Request a cooperative, terminal cancel."""
@@ -187,7 +194,7 @@ class Manager:
         await self._set_control(task_id, "cancel")
         if record.status == TaskStatus.PENDING or task_id in self._parked:
             await self._pending.put(task_id, priority=0.0)
-        logger.info("manager cancel task=%s", task_id)
+        logger.info("manager cancel task=%s ttl=%s", task_id, self._control_ttl)
 
     async def run(self) -> int:
         """One polling pass: pop the next pending task and dispatch it.

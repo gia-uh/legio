@@ -11,10 +11,15 @@ travels through the explicit ``Runtime`` constructor seam.
 
 from __future__ import annotations
 
+import hashlib
+import logging
+
 import pytest
 import yaml
 from beaver import AsyncBeaverDB
 
+from legio.errors import code
+from legio.manager import Manager
 from legio.patterns.loader import split_yaml_documents
 from legio.patterns.schema1 import (
     AgentSpec,
@@ -24,6 +29,7 @@ from legio.patterns.schema1 import (
     OutputContract,
 )
 from legio.runtime import Runtime
+from legio.security import ClientTokenStore
 
 
 def test_yaml_split_ignores_separator_inside_literal_block() -> None:
@@ -95,3 +101,50 @@ async def test_runtime_peer_steps_filter_is_explicit(beaver_db: AsyncBeaverDB) -
     plain = Runtime(beaver_db, node_id="slice5@host")
     await plain.create_class(_federated_composite_spec("fed_plain"), pool=0)
     assert await _recorded_dependencies(plain, "fed_plain") == ["peer_step"]
+
+
+def test_token_store_logs_grants_and_revocations(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Security-state mutations are observable — without ever logging the
+    secret itself."""
+    caplog.set_level(logging.INFO, logger="legio.security")
+    store = ClientTokenStore()
+    store.register("consumer-a", token="s3cr3t", agents=["main"])
+    store.revoke("consumer-a")
+    text = caplog.text
+    assert "consumer-a" in text
+    assert "s3cr3t" not in text
+
+
+@pytest.mark.asyncio
+async def test_manager_pause_logs_its_ttl(
+    beaver_db: AsyncBeaverDB, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The pause row carries a TTL, so the set event names it — expiry
+    semantics stay documented instead of silent."""
+    caplog.set_level(logging.INFO, logger="legio.manager")
+    manager = Manager(beaver_db, node_id="slice5@host")
+    task_id = await manager.submit_task("probe")
+    await manager.pause(task_id)
+    assert "ttl=60" in caplog.text
+
+
+def test_error_code_fallback_is_deterministic() -> None:
+    """The empty-slug fallback must be stable across processes (no
+    ``abs(hash())`` randomization)."""
+    assert code("!!!") == "err_" + hashlib.md5(b"!!!").hexdigest()[:8]
+    assert code("boom") == "boom"
+
+
+@pytest.mark.asyncio
+async def test_result_drain_kicks_coalesce(beaver_db: AsyncBeaverDB) -> None:
+    """Repeated read-miss kicks while a drain is already scheduled do not
+    mint duplicate persistent tasks; once the drain runs, kicking works."""
+    runtime = Runtime(beaver_db, node_id="slice5@host")
+    await runtime._kick_result_drain("ghost_agent")
+    await runtime._kick_result_drain("ghost_agent")
+    assert await runtime.manager._pending.count() == 1
+    await runtime._result_drain_fact("ghost_agent")
+    await runtime._kick_result_drain("ghost_agent")
+    assert await runtime.manager._pending.count() == 2

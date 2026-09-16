@@ -7,7 +7,10 @@ tokens guard client submit/status endpoints. Both are consumed by a single
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -39,11 +42,19 @@ class ClientTokenStore:
         """Register (or re-register) a consumer's token."""
         registered = ClientToken(consumer_id=consumer_id, token=token, agents=agents)
         self._tokens[consumer_id] = registered
+        # The secret itself is never logged (rule 11 observes the decision,
+        # never the credential).
+        logger.info(
+            "client token registered consumer=%s restricted=%s",
+            consumer_id,
+            agents is not None,
+        )
         return registered
 
     def revoke(self, consumer_id: str) -> None:
         """Immediately invalidate a consumer's token."""
         self._tokens.pop(consumer_id, None)
+        logger.info("client token revoked consumer=%s", consumer_id)
 
     def is_valid(self, consumer_id: str, token: str) -> bool:
         stored = self._tokens.get(consumer_id)

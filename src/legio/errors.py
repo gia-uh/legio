@@ -9,14 +9,19 @@ policy — errors surface as visible results.
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 
 def code(message: str) -> str:
-    """Derive a stable, human-readable error code from a message."""
+    """Derive a stable, human-readable error code from a message.
+
+    The empty-slug fallback is a truncated md5 (deterministic across
+    processes — never ``abs(hash())``, which CPython randomizes per run).
+    """
     slug = re.sub(r"[^a-z0-9]+", "_", message.lower()).strip("_")
     if not slug:
-        slug = f"err_{abs(hash(message))}"
+        slug = f"err_{hashlib.md5(message.encode()).hexdigest()[:8]}"
     return slug
 
 

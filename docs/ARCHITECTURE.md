@@ -317,8 +317,9 @@ api:
 - **Task ownership**: every task is tagged with its `client_id`; `status` and
   results are only readable with the token of that `client_id`.
 
-**A token of one level never grants the other; a single middleware enforces
-the endpoint → token map.**
+**A token of one level never grants the other; the endpoint → token map is
+owned by the pluggable `AuthMiddleware` policy (`legio.security.middleware`),
+enforced inline by the served surface through the token stores.**
 
 **Hook for the consumer**: the node is embedded in an application. The app may
 wrap or replace the auth middleware (e.g. user login on top of the client
