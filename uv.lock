@@ -255,6 +255,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
+    { name = "typer" },
     { name = "uvicorn" },
 ]
 
@@ -276,6 +277,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2" },
     { name = "pydantic-settings" },
     { name = "pyyaml" },
+    { name = "typer" },
     { name = "uvicorn" },
 ]
 

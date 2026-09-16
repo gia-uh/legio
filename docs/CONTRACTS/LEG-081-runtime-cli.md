@@ -1,6 +1,7 @@
 # LEG-081 — Runtime CLI (typer)
 
-- **Status:** DRAFT (awaiting maintainer approval)
+- **Status:** APPROVED (maintainer approval, session 86h; typer approved as a
+  direct runtime dependency, session 86h)
 - **Rasante:** R-8
 - **GitHub issue:** #41
 - **Source:** `docs/PLAN.md` (LEG-081)
@@ -27,6 +28,14 @@ hosts domain logic (rule: domain-free library).
 - `legio agent <command>`: maps 1:1 to the Runtime lifecycle verbs
   (create/enable/disable/destroy at the class and instance levels, §4.8) — a
   thin wrapper over the Runtime, no new logic.
+- **`legio agent` transport (boot-in-process, approved session 86h):** control
+  signing keys are per-boot, in-process, never persisted (LEG-082), so a
+  separate process cannot mint valid control messages (2026-09-13 insight);
+  each `legio agent` invocation therefore boots the node in-process from the
+  same config (a fresh per-boot key + matching verifiers) and drives its own
+  executor — the verb reaches the Runtime directly (`deposit_node_op` for
+  enable/disable/destroy, direct verbs for create/recreate/reads). There is no
+  lifecycle-over-HTTP surface (federation transports work, never lifecycle).
 - **YAML is the data language of the lifecycle:** `create-class` takes the
   pattern spec as `<spec.yaml>` and `recreate-class` is driven by the cached
   YAML (`get_cached_spec`, §4.7); `--pool N` accompanies the spec at create

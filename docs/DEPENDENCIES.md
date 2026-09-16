@@ -16,6 +16,7 @@ removed before a reviewed PR to this file. Managed with `uv`. Python runtime:
 | `fastapi` | API + federation server endpoints | |
 | `uvicorn` | ASGI server for the above | |
 | `httpx` | HTTP client for federation + tool calls | async |
+| `typer` | Runtime CLI (`legio server` / `legio agent`, LEG-081) | approved 2026-09-15 (session 86h); already pinned in `uv.lock` via `beaver-db`, promoted to a direct runtime dependency |
 
 ## Dev
 

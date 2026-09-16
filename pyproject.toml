@@ -13,7 +13,11 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "httpx",
+    "typer",
 ]
+
+[project.scripts]
+legio = "legio.cli:main"
 
 [dependency-groups]
 dev = [
