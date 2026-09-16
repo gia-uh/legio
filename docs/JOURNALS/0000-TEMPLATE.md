@@ -8,7 +8,7 @@ resumes between sessions: the latest entry must say exactly where things stand.
 # <YYYY-MM-DD> — Session n
 
 ## Scope
-Issues/rasante worked on (e.g. LEG-020..LEG-023, R-2). Goal of the session.
+Issues/slice worked on (e.g. LEG-020..LEG-023, R-2). Goal of the session.
 
 ## Work done (per issue)
 - **LEG-0xx**: what was built/changed; key decisions.

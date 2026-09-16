@@ -32,7 +32,7 @@ Hard rule:
 `legio` itself never ships consumer material — only in-repo fictitious-domain
 examples. Consumer names, patterns and data never enter this repository.
 
-Work order per rasante: write contracts/specs → agree them → implement →
+Work order per slice: write contracts/specs → agree them → implement →
 validate → journal.
 
 ## 2. Contract-first, TDD
@@ -46,11 +46,11 @@ validate → journal.
 ## 3. Validation and dogfooding
 
 - Inside `legio`, the **examples are tests** (they must not bitrot): a minimal
-  fictitious domain exercising each rasante without depending on any consumer.
+  fictitious domain exercising each slice without depending on any consumer.
 - A consumer repository depends on `legio` in editable mode during
   development; each `legio` release ships with semver and that consumer's
   validation case in green pinned to the exact version.
-- "Done" for a rasante: written contract + contract tests + implementation +
+- "Done" for a slice: written contract + contract tests + implementation +
   validation cases green + docs.
 
 ## 4. Git, CI and releases

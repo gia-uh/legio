@@ -290,7 +290,9 @@ def _resolve_route(agent_name: str, catalog: Catalog | None) -> tuple[tuple[str,
     same visible error (no silent one-task fallback that would leave a minted
     task no standing vehicle ever completes). Without a catalog no declared
     input contract exists to read a real ``input_as``, so the agent name is
-    returned as a single-agent route.
+    returned as a single-agent route. That fallback is embedded/test-only by
+    design (LEG-103 Slice 5e): booted nodes always pass their catalog
+    (``BootedNode.app``), so production never routes without one.
     """
     if catalog is not None:
         spec = catalog.specs.get(agent_name)

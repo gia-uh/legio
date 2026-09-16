@@ -323,6 +323,13 @@ class NodeDB(AsyncBeaverDB):
     boot closes the raw db), so ``isinstance(node_db, AsyncBeaverDB)`` holds
     and materialization signatures are untouched.
 
+    Lifecycle hazard, documented not hidden (LEG-103 Slice 5e): attribute
+    delegation means a holder *could* reach the raw ``close`` through the
+    proxy — agents must never do that; shutdown goes through ``NodeDB.aclose``
+    (deposit client only) and then the boot-owned raw ``close``. An injected
+    HTTP client is never closed here: its lifecycle belongs to its caller.
+
+
     ``queue(name)`` applies pure name rules (no I/O at route time):
 
     - ``legio:queue:result:<task_id>`` → the author origin is parsed from the

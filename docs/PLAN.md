@@ -11,13 +11,13 @@ Read `docs/ARCHITECTURE.md` for the design these issues implement, and
 `docs/CONTRIBUTING.md` for the methodology (contract-first TDD, dogfooding,
 vertical slices).
 
-## Rasantes (vertical slices)
+## Slices (vertical slices)
 
 `R-0` Foundation → `R-1` Contracts v1 → `R-2` Walking skeleton → `R-3` Atomics
 → `R-4` Composites → `R-5` Token → `R-7` Patterns engine → `R-8` Runtime →
 `R-9` Federation → `R-10` Hardening & release.
 
-Per-rasante definition of done: written contract + contract tests + implementation
+Per-slice definition of done: written contract + contract tests + implementation
 + validation case green (an external consumer repo or the in-repo fictitious
 domain) + docs + journal entry.
 
@@ -455,4 +455,4 @@ are red for the yet-unimplemented surface.
 - No implementation issue starts before its contract spec (the LEG-01x range
   covering it) is approved and its contract tests exist (red).
 - No dependency is used before `docs/DEPENDENCIES.md` is approved.
-- Per-rasante DoD requires the journal entry and the green validation case.
+- Per-slice DoD requires the journal entry and the green validation case.

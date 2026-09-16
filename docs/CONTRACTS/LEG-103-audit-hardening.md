@@ -1,6 +1,6 @@
 # LEG-103 — Audit hardening batch (subagent design/coupling audit, sessions 87-88)
 
-- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version); Slice 3 (fan-in exclusion) APPROVED by maintainer direction on 2026-09-16 (session 95, per-slot keys); Slice 4 (legacy fed plane) APPROVED by maintainer direction on 2026-09-16 (session 97, delete with type relocated).
+- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version); Slice 3 (fan-in exclusion) APPROVED by maintainer direction on 2026-09-16 (session 95, per-slot keys); Slice 4 (legacy fed plane) APPROVED by maintainer direction on 2026-09-16 (session 97, delete with type relocated); Slice 5 (minors/notes batches 5a–5e) APPROVED by maintainer direction on 2026-09-16 (session 99, batch plan).
 - **Rasante:** R-10 (hardening)
 - **GitHub issue:** to be opened/mirrored by the maintainer
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
@@ -18,7 +18,7 @@ transport/lifecycle-separated architecture.
 2. **Slice 2 — composite pending-gather wakeup (Major 2).** APPROVED 2026-09-16 (Option A).
 3. **Slice 3 — composite fan-in exclusion (Major 3).** APPROVED 2026-09-16 (per-slot keys).
 4. **Slice 4 — legacy global `fed` plane (Major 4).** APPROVED 2026-09-16 (delete).
-5. **Slice 5 — CLI federation token ordering + verified minors/notes.** Spec pending.
+5. **Slice 5 — CLI federation token ordering + verified minors/notes.** APPROVED 2026-09-16 (batches 5a–5e).
 
 ## Slice 1 contract (APPROVED)
 
@@ -122,12 +122,56 @@ keeps the no-global-state violation and the wrong-plane import hazard):
 - No `legio.fed` module, import, or global state remains in `src` or tests.
 - Full suite + ruff + pyright green with no legacy-plane tests.
 
+## Slice 5 contract (APPROVED)
+
+Five batches, one commit each; decisions made inline where the audit left
+open questions:
+
+- **5a (CLI):** refuse `--federation` without token **before** boot (no
+  substrate side effects); YAML collection splits via the parser
+  (`loader.split_yaml_documents`), single ingestion path.
+- **5b (layering/hygiene):** `ActivityState` owned by `naming` (registry
+  re-exports); peer map through the explicit `Runtime` constructor seam;
+  duplicate ledger init removed; `remove_class` snapshots keys before
+  deleting; `castor` reference dropped.
+- **5c (observability):** INFO on token register/revoke (never the secret);
+  pause/resume/cancel logs name the TTL and expiry-reverts-to-run is
+  documented; error-code fallback is deterministic md5 (API's hardcoded
+  taxonomy stays); ARCH wording reflects inline enforcement owned by the
+  `AuthMiddleware` policy (wiring the surface through it rejected as churn);
+  result-drain kicks coalesce via a best-effort in-memory set (full task GC
+  stays an open R-10 question).
+- **5d (clocks/resources/robustness):** drain wait on a monotonic deadline;
+  proxy deposit client has an owned lifecycle (`ensure_client`/`aclose`,
+  injected clients untouched, closed at CLI teardown); parked-hold crash
+  loss accepted and documented (no requeue churn).
+- **5e (docs/notes):** prose fixed to English (AGENTS, CONTRIBUTING, PLAN
+  headings, payload, journal template); the `Rasante:` metadata field label
+  across contracts is retained as established vocabulary (renaming ~40 files
+  is churn without design value); loader TODO resolved to execution-time
+  only; no-catalog API fallback documented as embedded/test-only (booted
+  nodes always pass a catalog); proxy lifecycle hazard documented; implicit
+  env/host/clock seams unchanged (explicit seams tested).
+
+## Acceptance criteria (Slice 5)
+
+- Refusal without token creates no database file.
+- Literal-block `---` never splits YAML collection.
+- Agents import vocabulary from `naming`; peer filter works via constructor.
+- Token/pause events logged; error codes deterministic; drain kicks coalesce.
+- Drain clock monotonic; proxy client closed at teardown; parked semantics
+  documented.
+- No non-English prose in living docs/code (metadata field label excepted).
+- Full suite + ruff + pyright green; no other behavior changed.
+
 ## Tests
 
 - `tests/test_leg022_toolagent.py`: five new contract tests (red first).
 - `tests/test_tools.py`: async/slow/asyncgen fake tools (domain-free fixtures).
 - `tests/test_leg103_slice2_wakeup.py`: five new contract tests (red first).
 - `tests/test_leg103_slice3_fanin.py`: four new contract tests (red first).
+- `tests/test_leg103_slice5_batches.py`: Slice 5 batch tests (red first);
+  the token-order case extends `test_leg081_cli.py` in place.
 
 ## Validation case
 

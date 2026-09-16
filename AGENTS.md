@@ -1,7 +1,7 @@
 # AGENTS.md — Working rules for implementing agents
 
 This file is the operational contract for every coding agent that works on
-`legio`. Read it fully before doing anything. It is the "pauta de guía" for
+`legio`. Read it fully before doing anything. It is the guiding checklist for
 implementing agents.
 
 ## Non-negotiable rules

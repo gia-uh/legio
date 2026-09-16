@@ -68,7 +68,9 @@ def _validate_agent_spec(
     if spec.kind is not None and spec.kind.value == "tool":
         # terse parameters must be explicit `{input_as}.{key}` (§4.12)
         _validate_tool_parameters(spec)
-        # TODO: tool signature coherence checked at load where possible (LEG-022)
+        # Tool-signature coherence stays execution-time only (LEG-013 two
+        # verification domains; LEG-103 Slice 5e): the tool loads dynamically,
+        # so its contract is not verifiable at load.
 
     elif spec.kind is not None and spec.kind.value == "linguistic" and spec.prompt:
         # prompt variables ↔ input_schema

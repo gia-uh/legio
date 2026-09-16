@@ -5,7 +5,7 @@ Each agent receives the incoming ``payload``, reads only what it needs under its
 new payload** under its ``output_as``. The payload is **construction, not
 accumulation**: ``build_payload`` produces exactly ``{output_as: output}`` — it
 never merges or extends the incoming payload, and it never mutates state. The
-re-keying (cambio de clave) to the next agent's ``input_as`` is the handoff
+re-keying (key change) to the next agent's ``input_as`` is the handoff
 step's responsibility (AGENT_LIFECYCLE §12.1, Session 20), not this builder's.
 
 ``output`` is any produced value, not only a mapping: with no declared
