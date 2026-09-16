@@ -302,6 +302,8 @@ async def agent_command(
         return await _dispatch_command(booted, command, options)
     finally:
         await _shutdown_pumps(pumps, stop)
+        if booted.agents_db is not None:
+            await booted.agents_db.aclose()
         await booted.db.close()
 
 
@@ -736,6 +738,8 @@ async def serve_node(
     finally:
         restore_signals()
         await _shutdown_pumps(pumps, stop, grace=_SHUTDOWN_SETTLE)
+        if booted.agents_db is not None:
+            await booted.agents_db.aclose()
         await booted.db.close()
     return 0
 

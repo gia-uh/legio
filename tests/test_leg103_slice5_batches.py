@@ -14,11 +14,13 @@ from __future__ import annotations
 import hashlib
 import logging
 
+import httpx
 import pytest
 import yaml
 from beaver import AsyncBeaverDB
 
 from legio.errors import code
+from legio.federation import NodeDB
 from legio.manager import Manager
 from legio.patterns.loader import split_yaml_documents
 from legio.patterns.schema1 import (
@@ -148,3 +150,24 @@ async def test_result_drain_kicks_coalesce(beaver_db: AsyncBeaverDB) -> None:
     await runtime._result_drain_fact("ghost_agent")
     await runtime._kick_result_drain("ghost_agent")
     assert await runtime.manager._pending.count() == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_closes_only_the_client_it_owns(
+    beaver_db: AsyncBeaverDB,
+) -> None:
+    """The proxy's lazy deposit client has an owned lifecycle; an injected
+    client stays open for its caller."""
+    proxy = NodeDB(beaver_db, node_id="slice5@host")
+    owned = proxy.ensure_client()
+    assert proxy._client is owned
+    await proxy.aclose()
+    assert proxy._client is None
+
+    injected = httpx.AsyncClient()
+    try:
+        borrowed = NodeDB(beaver_db, node_id="slice5@host", client=injected)
+        await borrowed.aclose()
+        assert injected.is_closed is False
+    finally:
+        await injected.aclose()

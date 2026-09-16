@@ -1339,9 +1339,10 @@ class Runtime:
         gate is restored to its pre-destroy value (absent row = open, §12.5.3)."""
         timeout, interval = await self._lifecycle_budget(name)
         queue = self._db.queue(queue_key(name))
-        waited = 0.0
+        start = time.monotonic()
+        deadline = start + timeout
         while await queue.count() > 0:
-            if waited >= timeout:
+            if time.monotonic() >= deadline:
                 if prior_gate is None:
                     await self._gates.delete(name)
                 else:
@@ -1351,8 +1352,9 @@ class Runtime:
                     "class left untouched (gate restored)"
                 )
             await asyncio.sleep(interval)
-            waited += interval
-        logger.info("runtime drain_done class=%s waited=%.2fs", name, waited)
+        logger.info(
+            "runtime drain_done class=%s waited=%.2fs", name, time.monotonic() - start
+        )
 
     async def _clear_queue(self, name: str) -> None:
         """Drain-and-discard the class queue (beaver has no queue deletion)."""

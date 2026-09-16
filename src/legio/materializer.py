@@ -434,6 +434,7 @@ async def _boot_on_database(
         db=database,
         runtime=engine,
         client_store=client_store,
+        agents_db=agents_db,
     )
     logger.info(
         "node booted db=%s node=%s agents=%d starting=%s",
@@ -455,6 +456,7 @@ class BootedNode:
     db: AsyncBeaverDB
     runtime: Runtime
     client_store: ClientTokenStore | None = None
+    agents_db: NodeDB | None = None
 
     @property
     def app(self) -> FastAPI:

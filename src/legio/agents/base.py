@@ -145,6 +145,9 @@ class AgentBase:
         # While the loop is parked (a ``disable`` honored) inbox work is held
         # in-memory — never requeued/re-popped (that would churn the queue),
         # and released losslessly on ``enable``/``terminate_with_drain``.
+        # Accepted crash semantics (LEG-103 Slice 5d): a crash while parked
+        # loses held items — lossless only on the honored control paths above,
+        # never via requeue churn.
         self._paused_hold: list[dict[str, Any]] = []
 
     def set_hooks(self, *, monitor: Monitor | None = None) -> None:

@@ -356,9 +356,29 @@ class NodeDB(AsyncBeaverDB):
         self._peers = dict(peers or {})
         self._token = federation_token
         self._client = client
+        self._owns_client = client is None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._db, name)
+
+    def ensure_client(self) -> httpx.AsyncClient:
+        """The shared remote-deposit client, created lazily and owned here."""
+        if self._client is None:
+            self._client = httpx.AsyncClient()
+            self._owns_client = True
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the lazily created deposit client, if the proxy owns one.
+
+        An injected client stays open: its lifecycle belongs to the caller.
+        The raw database is never touched here — only the boot closes it.
+        """
+        client, self._client = self._client, None
+        if client is not None and self._owns_client:
+            self._owns_client = False
+            await client.aclose()
+            logger.info("federation proxy client closed node=%s", self._node_id)
 
     def queue(self, name: str, model: type[object] | None = None) -> AsyncBeaverQueue[Any]:
         """Route a beaver queue by name: local beaver or a remote ``put`` shim."""
@@ -426,11 +446,7 @@ class RemoteQueue:
         return f"{base.rstrip('/')}/deposits"
 
     def _client(self) -> httpx.AsyncClient:
-        client = self._proxy._client
-        if client is None:
-            client = httpx.AsyncClient()
-            self._proxy._client = client
-        return client
+        return self._proxy.ensure_client()
 
     def _read_denied(self) -> RecoverableError:
         return RecoverableError(
