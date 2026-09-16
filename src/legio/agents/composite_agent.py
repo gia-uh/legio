@@ -49,9 +49,12 @@ steps by the shared ``_dispatch_standing_item``. A composite has
   (−1) and resumes its own level through the uniform Schema 2 advance, with the
   ``end_of_level_queue`` its creator supplied.
 
-Nothing waits and nothing is locked (rule 8): branches run as soon as their
-deposit lands on their queue; the join is bookkeeping, not polling-blocking;
-the collection cycle is **gated by pending bookkeeping**, never a blind poll.
+No legio timer and no lock lives on this path (rule 8): branches run as soon
+as their deposit lands on their queue; the join is bookkeeping, not
+polling-blocking; the collection cycle is **gated by pending bookkeeping**,
+never a blind poll. An idle pending tick suspends on the class inbox with a
+bounded substrate wait (inbox work/control wakes it at once), then re-polls
+gathering once.
 Each branch deposit reads the target class's gate (§12.5): a disabled class
 blocks the branch deposit at fan-out (§12.5.5 — the slot records a visible
 ``error`` result so the fan-in still completes and the composite surfaces the
@@ -60,7 +63,6 @@ failure, never a silent drop). Errors are never silent (rule 9).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
@@ -77,6 +79,14 @@ logger = logging.getLogger(__name__)
 # several keys.
 _STATE_SCOPE = "state:composite"
 
+#: Default bound for one idle pending-gather wait (LEG-103 Slice 2, Option A):
+#: with a pending fan-out and both inlets dry, the tick suspends on the class
+#: inbox for at most this long (beaver's own blocking get), then re-polls the
+#: gathering queue. Inbox work/control wakes it immediately, so the join keeps
+#: its current liveness with no legio timer. A future beaver event mechanism
+#: replaces this cadence.
+_DEFAULT_GATHER_BUDGET = 0.5
+
 
 class CompositeAgent(AgentBase):
     """The unified composite runner: ramify to branches, gather, build."""
@@ -92,6 +102,7 @@ class CompositeAgent(AgentBase):
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
         control_verifier: ControlVerifier | None = None,
+        gather_budget: float = _DEFAULT_GATHER_BUDGET,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -101,6 +112,12 @@ class CompositeAgent(AgentBase):
             output_schema=output_schema,
             control_verifier=control_verifier,
         )
+        if gather_budget <= 0:
+            raise ValueError(
+                f"composite agent {agent_id!r}: gather_budget must be positive "
+                f"(got {gather_budget!r}) — a zero budget would busy-spin"
+            )
+        self._gather_budget = gather_budget
         # Each branch is a route of (class, input_as) — the branch's own
         # loader-resolved steps (re-keying info, §12.1).
         self._branches: list[tuple[tuple[str, str], ...]] = [tuple(branch) for branch in branches]
@@ -143,12 +160,18 @@ class CompositeAgent(AgentBase):
 
     async def _standing_tick(self) -> bool:
         """The composite's standing cycle (LEG-082 over §12.3): the two-inlet
-        poll, then — when both inlets were idle — suspend on the class inbox
-        for the next item (control or work).
+        poll, then — when both inlets were idle — suspend for the next item.
 
         The inbox inlet uses the shared ``_dispatch_standing_item`` so a
         ``ControlMessage`` is honored between dispatches exactly like an atomic
         agent's; the gated collection (fan-in) keeps its textbook §12.3 cycle.
+
+        When a fan-out is pending, the gather queue must also wake the loop;
+        blocking only on the class inbox would deadlock the join (the gather
+        result arrives while the loop is suspended on the inbox). So a pending
+        tick suspends on the inbox with a bounded substrate wait (LEG-103
+        Slice 2, Option A): inbox work/control wakes it immediately, then it
+        re-polls gathering once. No legio timer remains on this path.
         """
         handled = False
         try:
@@ -165,20 +188,23 @@ class CompositeAgent(AgentBase):
                 pass
             else:
                 await self._process_join_item(dict(gather_item.data))
-                handled = True
+                return True
         if handled:
             return True
-        # When a fan-out is pending, the gather queue must also wake the loop;
-        # blocking only on the class inbox would deadlock the join (the gather
-        # result arrives while the loop is suspended on the inbox). When pending,
-        # suspend cooperatively and let the next tick re-poll both inlets.
         if await self._has_pending():
-            # Cooperative yield — the outer standing_loop will re-enter
-            # _standing_tick and re-poll both queues. This keeps the join
-            # live without busy-spinning (the queue's own producer wakeup is
-            # still via the inbox path, but the periodic re-poll catches the
-            # gather arrival within one tick).
-            await asyncio.sleep(0.01)
+            try:
+                inbox_item = await self._queue.get(block=True, timeout=self._gather_budget)
+            except TimeoutError:
+                pass
+            else:
+                await self._dispatch_standing_item(dict(inbox_item.data))
+                return True
+            try:
+                gather_item = await self._gather_queue.get(block=False)
+            except IndexError:
+                pass
+            else:
+                await self._process_join_item(dict(gather_item.data))
             return True
         qitem = await self._queue.get(block=True)
         return await self._dispatch_standing_item(dict(qitem.data))

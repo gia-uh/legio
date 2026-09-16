@@ -1,6 +1,6 @@
 # LEG-103 — Audit hardening batch (subagent design/coupling audit, sessions 87-88)
 
-- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89).
+- **Status:** DRAFT overall; Slice 1 (tool execution semantics) APPROVED by maintainer direction on 2026-09-16 (session 89); Slice 2 (pending-gather wakeup) APPROVED by maintainer direction on 2026-09-16 (session 93, Option A; beaver events reserved for a future version).
 - **Rasante:** R-10 (hardening)
 - **GitHub issue:** to be opened/mirrored by the maintainer
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
@@ -15,7 +15,7 @@ transport/lifecycle-separated architecture.
 ## Backlog (audit order)
 
 1. **Slice 1 — tool execution/policy semantics (Major 1).** APPROVED 2026-09-16.
-2. **Slice 2 — composite pending-gather wakeup (Major 2).** Spec pending.
+2. **Slice 2 — composite pending-gather wakeup (Major 2).** APPROVED 2026-09-16 (Option A).
 3. **Slice 3 — composite fan-in exclusion (Major 3).** Spec pending.
 4. **Slice 4 — legacy global `fed` plane (Major 4).** Spec pending.
 5. **Slice 5 — CLI federation token ordering + verified minors/notes.** Spec pending.
@@ -44,10 +44,39 @@ execution mechanism … decided at implementation”):
 - An async-generator tool fails loudly.
 - Full suite + ruff + pyright green; no other behavior changed.
 
+## Slice 2 contract (APPROVED)
+
+Replaces the unbounded `asyncio.sleep(0.01)` pending-gather re-poll with
+Option A (dual concurrent gets rejected: cancelling a beaver `get` can strand
+an already-popped item between DELETE and return):
+
+- With a pending fan-out and both inlets dry, the tick suspends on the class
+  inbox with a **bounded substrate wait** (`get(block=True,
+  timeout=gather_budget)`, default `0.5` s), then re-polls gathering once.
+- Inbox work/control wakes the tick **immediately** — control between
+  dispatches is preserved and the 86e deadlock fix holds with no legio timer.
+- Join liveness is unchanged: no spurious missing-branch failures; the fast
+  paths (non-blocking inbox/gather polls first) are untouched.
+- `gather_budget` is an explicit constructor seam (must be positive, refused
+  loudly otherwise) so tests drive small budgets; the materializer keeps the
+  default.
+
+## Acceptance criteria (Slice 2)
+
+- Pending + dry inlets: the tick suspends ~budget on the inbox (no ~0.01 s
+  spin-back).
+- No sub-0.05 s `asyncio.sleep` fires during an idle pending tick (only the
+  substrate's own cadence may appear).
+- A pre-deposited gather result is still collected, completing the join.
+- New inbox work while pending is fanned out at once, never waiting the budget.
+- Non-positive budgets are refused loudly at construction.
+- Full suite + ruff + pyright green; no other behavior changed.
+
 ## Tests
 
 - `tests/test_leg022_toolagent.py`: five new contract tests (red first).
 - `tests/test_tools.py`: async/slow/asyncgen fake tools (domain-free fixtures).
+- `tests/test_leg103_slice2_wakeup.py`: five new contract tests (red first).
 
 ## Validation case
 
