@@ -427,6 +427,13 @@ class AgentBase:
             )
             await self._emit(_EVENT_START, request)
             await self._run_guarded(request)
+        except asyncio.CancelledError:
+            logger.info(
+                "agent cancelled agent=%s task=%s",
+                self._agent_id,
+                item.get("task_id", "?"),
+            )
+            raise
         except Exception:
             logger.exception(
                 "agent crashed agent=%s task=%s",
@@ -460,6 +467,13 @@ class AgentBase:
                 )
             if new_payload is not None:
                 self._verify_output_contract(new_payload)
+        except asyncio.CancelledError:
+            logger.info(
+                "agent cancelled agent=%s task=%s",
+                self._agent_id,
+                request.task_id,
+            )
+            raise
         except Exception as exc:  # noqa: BLE001 - surfaced, never swallowed
             error = f"{type(exc).__name__}: {exc}"
             logger.warning(

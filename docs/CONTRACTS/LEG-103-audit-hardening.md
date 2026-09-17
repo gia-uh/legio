@@ -17,7 +17,10 @@ APPROVED on 2026-09-16 (session 112: maintainer direction
 Slice 12 (sixth-audit hardening: uniform pattern policy, seed-envelope
 reads, loader YAMLError wrap, token/config/CLI/log hardening) APPROVED on
 2026-09-16 (session 120: maintainer direction "implementa los planes tanto
-de los majors como los minors").
+de los majors como los minors");
+Slice 13 (seventh-audit hardening: registry index, composite counter,
+proxy surface, log/ledger/seed hygiene) APPROVED on 2026-09-16 (session
+122: maintainer direction "arregla todo").
 - **Rasante:** R-10 (hardening)
 - **GitHub issue:** #51 (created + closed with verification, session 106)
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
@@ -47,6 +50,8 @@ transport/lifecycle-separated architecture.
     2026-09-16.
 12. **Slice 12 — sixth-audit hardening (majors M1/M3/M4(c), minors
     m1–m10; M2 withdrawn, M4(a)/(b) withdrawn).** APPROVED 2026-09-16.
+13. **Slice 13 — seventh-audit hardening (3 majors M1–M3, 11 minors
+    m1–m11).** APPROVED 2026-09-16.
 
 ## Slice 1 contract (APPROVED)
 
@@ -629,3 +634,107 @@ Decided with no code change (verified, recorded):
 
 - Spec slice approved, red tests, green implementation, full suite + lint +
   typecheck green, journal entry appended, maintainer closes the issue.
+
+## Slice 13 contract (APPROVED)
+
+Seventh-audit hardening from the Session 121 re-audit (0 blocking).
+Decisions first (scope control), then fixes:
+
+- **M1 (Registry O(N) instance scan):** `_effective_class_state`
+  (`registry:349-353`) scans all instances via `async for` with prefix
+  match on every instance-related call. Fix: add a secondary index
+  scope `instances_by_class` (`class_name → set[instance_id]`) updated
+  atomically on `create_instance` / `destroy_instance` /
+  `record_instance` / `remove_instance`. `_effective_class_state` becomes
+  O(1) lookup; API `class_state` unchanged (public/private split
+  preserved). No migration needed (index built lazily on first write).
+- **M2 (Composite pending O(N) count):** `_has_pending`
+  (`composite_agent:241`) calls `count()` on the state dict per
+  collection cycle. Fix: maintain an integer `_pending_count` on the
+  composite instance, incremented on fan-out (slot write) and
+  decremented on fan-in (slot consume). `_has_pending` becomes
+  `return self._pending_count > 0` — O(1), no beaver round-trip. The
+  counter is authoritative; beaver state remains the source of truth for
+  crash recovery (ledger is rebuilt on boot if needed — v1 keeps beaver
+  as source, counter as cache; mismatch is impossible by construction
+  since fan-out/join are the only writers).
+- **M3 (NodeDB proxy safe surface):** `NodeDB.__getattr__`
+  (`federation.py:371-372`) delegates `close()` and all other methods
+  to the underlying `AsyncBeaverDB`. Fix: replace `__getattr__` with
+  explicit delegation of only `queue`, `dict`, `lock` (the three
+  primitives the ARCH §9 proxy needs). `close()`, `ensure_client`,
+  internal attrs raise `AttributeError`. The proxy is a **queue router**,
+  not a substrate lifecycle handle — agents must never close the shared
+  handle.
+- **m1 (Token registry linear scan):** `ClientTokenStore.resolve_consumer_id`
+  (`security:79-82`) linear scans all tokens. Fix: add a reverse index
+  `token → consumer_id` (dict) updated on `register`/`revoke`. Lookup
+  becomes O(1). Token sets are small but unbounded growth path removed.
+- **m2 (Pending-controls eviction orphans seq):** `_pending_controls`
+  eviction (`runtime:375-379`) deletes the ledger entry but leaves
+  `_control_sequence` entry intact. Fix: on eviction, delete the
+  corresponding sequence entry too. A late report then correctly takes
+  the orphan path (not a stale-seq false positive).
+- **m3 (NodeDB client cleanup gap):** `NodeDB.ensure_client` lazily
+  creates an `httpx.AsyncClient` (`federation:375-378`); `close()` not
+  proxied. Fix: add `NodeDB.aclose()` that closes the owned client (if
+  any); document that callers must `aclose()` the proxy (boot code path
+  already tears down correctly; this hardens the contract).
+- **m4 (Agent step error missing key=value):** `AgentBase._process_inbox_item`
+  (`base:428`) emits WARNING without `key=value`. Fix: add
+  `agent=`, `task=`, `error=` fields.
+- **m5 (Cancelled step missing key=value):** `AgentBase._run_guarded`
+  (`base:456-459`) catches `CancelledError` → re-raises without log
+  event. Fix: emit INFO `key=value` on cancel before re-raise.
+- **m6 (Proxy surface wider than needed):** `NodeDB.__getattr__` exposes
+  `lock`, `dict` in addition to `queue`. Fix: explicit delegation list
+  (same as M3) — only `queue` is actually used by ARCH §9.
+- **m7 (Kick race narrow window):** `_kick_result_drain`
+  (`runtime:610-618`) adds to `_drain_inflight` then submits; a
+  `CancelledError` between add and `try` would leave flag set. Fix:
+  move the add inside the `try` (add → submit → `finally` discard on
+  submit failure) — flag is always removed on submit failure; cancel
+  during add is impossible (no await between add and try).
+- **m8 (Destroy TTL order):** `destroy_class` (`runtime:1355-1365`)
+  cancels the control TTL key (`_control.pop`) before awaiting the
+  destroy fact — if the fact fails after cancel, the control entry is
+  gone and a late report would orphan. Fix: reorder to match Slice 9 F5
+  (validate-first): await the fact first, then cancel TTL on success.
+- **m9 (is_final level-blind doc):** `FlowToken.is_final`
+  (`flow/token:22-28`) documents position-only finality; production
+  routing requires `level == 1` AND end-of-sequence. Docstring already
+  notes this (Slice 10 N2); no code change, just confirm doc accuracy.
+- **m10 (Seed-record token validation gap):** `read_outbox`
+  (`runtime:1056`) validates `record.name == SEED_TASK` but then
+  `FlowToken.model_validate(record.kwargs["token"])` — a crafted seed
+  record without `token` could 500. Fix: after envelope check, validate
+  required kwargs keys (`token`, `client_id`) present; missing →
+  `None`/`unknown task` consistent with envelope contract.
+- **m11 (Defensive client_id check):** `status` (`runtime:1088-1090`)
+  uses `.get("client_id")` — missing key returns `None`, denying even
+  owner if record corrupt. Fix: use `in` check (`"client_id" in record.kwargs`)
+  so missing key is distinguishable from mismatch.
+
+## Acceptance criteria (Slice 13)
+
+- `class_state` on a node with 10k instances across 100 classes is O(1)
+  (wall-clock < 1 ms cold); no scan loop in profiler.
+- Composite with 500 pending branches: `_has_pending` is O(1) (no
+  `count()` round-trip in profiler).
+- `NodeDB` proxy has no `close`/`ensure_client`/`lock`/`dict`
+  attributes; attempting access raises `AttributeError`; `queue` works
+  identically.
+- `resolve_consumer_id` is O(1) (dict lookup) on 10k tokens.
+- Evicted pending control has its seq removed; late report takes orphan
+  path correctly.
+- `NodeDB.aclose()` closes owned client; proxy used as async context
+  manager in boot path.
+- All four raise points carry `key=value` logs (`agent=`, `task=`,
+  `error=`, `verb=`, `origin=`).
+- Kick flag added inside `try`; cancel during add impossible.
+- Destroy order: fact awaited, then TTL cancelled.
+- `is_final` docstring unchanged (level-blind by design; note verified).
+- `read_outbox` validates `token`/`client_id` keys post-envelope;
+  missing → `None`.
+- `status` uses `in` for `client_id` check; missing key → unknown task.
+- Full suite + ruff + pyright green; no other behavior changed.

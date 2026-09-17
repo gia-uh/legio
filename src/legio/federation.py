@@ -37,6 +37,7 @@ from typing import Any
 import httpx
 from beaver import AsyncBeaverDB
 from beaver.dicts import AsyncBeaverDict
+from beaver.locks import AsyncBeaverLock
 from beaver.queues import AsyncBeaverQueue
 
 from legio.errors import RecoverableError, UnrecoverableError
@@ -368,15 +369,36 @@ class NodeDB(AsyncBeaverDB):
         self._client = client
         self._owns_client = client is None
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._db, name)
+    def queue(self, name: str, model: type[object] | None = None) -> AsyncBeaverQueue[Any]:
+        """Route a beaver queue by name: local beaver or a remote ``put`` shim."""
+        owner = self._queue_owner(name)
+        if owner is None:
+            return self._db.queue(name, model=model)
+        return RemoteQueue(self, name, owner)  # type: ignore[return-value]
 
-    def ensure_client(self) -> httpx.AsyncClient:
-        """The shared remote-deposit client, created lazily and owned here."""
-        if self._client is None:
-            self._client = httpx.AsyncClient()
-            self._owns_client = True
-        return self._client
+    def dict(
+        self, name: str, model: type[Any] | None = None, secret: str | None = None
+    ) -> AsyncBeaverDict[Any]:
+        """Node-local dict scopes: delegate straight to the raw db."""
+        return self._db.dict(name, model=model, secret=secret)
+
+    def lock(
+        self, name: str, timeout=None, lock_ttl=60.0, poll_interval=0.1
+    ) -> AsyncBeaverLock:
+        """Node-local lock: delegate straight to the raw db."""
+        return self._db.lock(name, timeout, lock_ttl, poll_interval)
+
+    # The proxy is a queue router, not a substrate lifecycle handle.
+    # These inherited methods are explicitly disabled on the proxy surface.
+    def close(self):
+        raise AttributeError(
+            "NodeDB proxy has no 'close' method; use 'aclose()' for async cleanup"
+        )
+
+    def ensure_client(self) -> None:
+        raise AttributeError(
+            "NodeDB proxy has no 'ensure_client' method; internal use only"
+        )
 
     async def aclose(self) -> None:
         """Close the lazily created deposit client, if the proxy owns one.
@@ -390,18 +412,12 @@ class NodeDB(AsyncBeaverDB):
             await client.aclose()
             logger.info("federation proxy client closed node=%s", self._node_id)
 
-    def queue(self, name: str, model: type[object] | None = None) -> AsyncBeaverQueue[Any]:
-        """Route a beaver queue by name: local beaver or a remote ``put`` shim."""
-        owner = self._queue_owner(name)
-        if owner is None:
-            return self._db.queue(name, model=model)
-        return RemoteQueue(self, name, owner)  # type: ignore[return-value]
-
-    def dict(
-        self, name: str, model: type[Any] | None = None, secret: str | None = None
-    ) -> AsyncBeaverDict[Any]:
-        """Node-local dict scopes: delegate straight to the raw db."""
-        return self._db.dict(name, model=model, secret=secret)
+    def _ensure_client(self) -> httpx.AsyncClient:
+        """Internal: get or create the HTTP client for remote deposits."""
+        if self._client is None:
+            self._client = httpx.AsyncClient()
+            self._owns_client = True
+        return self._client
 
     def _queue_owner(self, name: str) -> str | None:
         """The owning peer of a full beaver queue name, or ``None`` for local."""
@@ -461,7 +477,7 @@ class RemoteQueue:
         return f"{base.rstrip('/')}/deposits"
 
     def _client(self) -> httpx.AsyncClient:
-        return self._proxy.ensure_client()
+        return self._proxy._ensure_client()
 
     def _read_denied(self) -> RecoverableError:
         return RecoverableError(

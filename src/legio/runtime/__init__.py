@@ -376,7 +376,10 @@ class Runtime:
         self._pending_controls[(instance_id, action, seq)] = class_name
         while len(self._pending_controls) > _PENDING_CONTROLS_CAP:
             oldest, _ = next(iter(self._pending_controls.items()))
+            class_name = self._pending_controls[oldest]
             del self._pending_controls[oldest]
+            # Also remove the corresponding sequence entry to avoid stale seq
+            self._control_sequence.pop((class_name, oldest[0]), None)
             logger.warning(
                 "runtime pending_controls evicted instance=%s action=%s seq=%s (cap)",
                 oldest[0],
@@ -1073,6 +1076,10 @@ class Runtime:
             # Envelope check (no kwargs-shape knowledge): only a business
             # seed carries an outbox — internal facts read empty, never crash.
             return None
+        # m10: validate required kwargs keys post-envelope; missing → None
+        required_keys = ("token", "client_id")
+        if not all(k in record.kwargs for k in required_keys):
+            return None
         token = FlowToken.model_validate(record.kwargs["token"])
         data = await self._outbox.fetch(task_id)
         if data is None:
@@ -1102,7 +1109,10 @@ class Runtime:
             # are not business tasks — stable unknown, never a shape crash.
             logger.warning("runtime status unknown task=%s", task_id)
             raise KeyError(f"unknown task {task_id!r}")
-        if record.kwargs.get("client_id") != client_id:
+        if "client_id" not in record.kwargs:
+            logger.warning("runtime status unknown task=%s (missing client_id)", task_id)
+            raise KeyError(f"unknown task {task_id!r}")
+        if record.kwargs["client_id"] != client_id:
             logger.warning(
                 "runtime status denied task=%s owner=%s requester=%s",
                 task_id,

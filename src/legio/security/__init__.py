@@ -39,6 +39,7 @@ class ClientTokenStore:
 
     def __init__(self) -> None:
         self._tokens: dict[str, ClientToken] = {}
+        self._token_to_consumer: dict[str, str] = {}
 
     def register(
         self,
@@ -51,11 +52,16 @@ class ClientTokenStore:
         for registered in self._tokens.values():
             if registered.consumer_id != consumer_id and _secrets_equal(registered.token, token):
                 raise ValueError(
-                    f"token already held by consumer {registered.consumer_id!r}: "
+                    f"token already held by consumer {registered.consumer_id}: "
                     "one secret, one owner (ambiguous ownership is refused)"
                 )
+        # If token already exists for this consumer, remove old reverse index
+        old_token = self._tokens.get(consumer_id)
+        if old_token is not None:
+            self._token_to_consumer.pop(old_token.token, None)
         registered = ClientToken(consumer_id=consumer_id, token=token, agents=agents)
         self._tokens[consumer_id] = registered
+        self._token_to_consumer[token] = consumer_id
         # The secret itself is never logged (rule 11 observes the decision,
         # never the credential).
         logger.info(
@@ -67,9 +73,11 @@ class ClientTokenStore:
 
     def revoke(self, consumer_id: str) -> None:
         """Immediately invalidate a consumer's token."""
-        if self._tokens.pop(consumer_id, None) is None:
+        registered = self._tokens.pop(consumer_id, None)
+        if registered is None:
             logger.info("client token revoke noop consumer=%s (unknown)", consumer_id)
             return
+        self._token_to_consumer.pop(registered.token, None)
         logger.info("client token revoked consumer=%s", consumer_id)
 
     def is_valid(self, consumer_id: str, token: str) -> bool:
@@ -78,10 +86,7 @@ class ClientTokenStore:
 
     def resolve_consumer_id(self, token: str) -> str | None:
         """Return the consumer id holding ``token``, or ``None`` if unknown."""
-        for registered in self._tokens.values():
-            if _secrets_equal(registered.token, token):
-                return registered.consumer_id
-        return None
+        return self._token_to_consumer.get(token)
 
     def allowed_starting_agent(self, consumer_id: str, agent: str) -> bool:
         stored = self._tokens.get(consumer_id)
