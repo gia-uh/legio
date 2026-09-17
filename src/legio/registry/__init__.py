@@ -18,6 +18,7 @@ beaver dicts addressed by scope name directly — no invented substrate layer.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from beaver import AsyncBeaverDB
 from pydantic import BaseModel, Field
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 _CATALOG_SCOPE = "catalog"
 _INSTANCES_SCOPE = "instances"
+_INSTANCES_BY_CLASS_SCOPE = "instances_by_class"
 _YAML_CACHE_SCOPE = "yaml_cache"
 
 
@@ -62,6 +64,33 @@ def _instance_key(class_name: str, instance_id: str) -> str:
     return f"{class_name}:{instance_id}"
 
 
+async def _add_to_class_index(
+    instances_by_class: Any, class_name: str, instance_id: str
+) -> None:
+    """Add instance_id to the class's instance set (stored as list for beaver)."""
+    existing = await instances_by_class.fetch(class_name)
+    if existing is None:
+        await instances_by_class.set(class_name, [instance_id])
+    else:
+        instances = list(existing)
+        if instance_id not in instances:
+            instances.append(instance_id)
+            await instances_by_class.set(class_name, instances)
+
+
+async def _remove_from_class_index(
+    instances_by_class: Any, class_name: str, instance_id: str
+) -> None:
+    """Remove instance_id from the class's instance set; delete key if empty."""
+    existing = await instances_by_class.fetch(class_name)
+    if existing is not None:
+        instances = [iid for iid in existing if iid != instance_id]
+        if instances:
+            await instances_by_class.set(class_name, instances)
+        else:
+            await instances_by_class.delete(class_name)
+
+
 class Registry:
     """The posterior mirror: records facts, answers granular queries.
 
@@ -81,6 +110,7 @@ class Registry:
 
     _CATALOG_SCOPE = _CATALOG_SCOPE
     _INSTANCES_SCOPE = _INSTANCES_SCOPE
+    _INSTANCES_BY_CLASS_SCOPE = _INSTANCES_BY_CLASS_SCOPE
     _YAML_CACHE_SCOPE = _YAML_CACHE_SCOPE
 
     def __init__(self, db: AsyncBeaverDB) -> None:
@@ -89,8 +119,9 @@ class Registry:
         self._db = db
         self._catalog = db.dict(self._CATALOG_SCOPE)
         self._instances = db.dict(self._INSTANCES_SCOPE)
+        self._instances_by_class = db.dict(self._INSTANCES_BY_CLASS_SCOPE)
         self._yaml_cache = db.dict(self._YAML_CACHE_SCOPE)
-        logger.info("registry up scopes=catalog,instances,yaml_cache")
+        logger.info("registry up scopes=catalog,instances,instances_by_class,yaml_cache")
 
     async def record_class(
         self,
@@ -170,6 +201,7 @@ class Registry:
             state=state,
         )
         await self._instances.set(key, record.model_dump(mode="json"))
+        await _add_to_class_index(self._instances_by_class, class_name, instance_id)
         logger.info(
             "registry record_instance class=%s instance=%s state=%s",
             class_name,
@@ -220,6 +252,7 @@ class Registry:
             )
             return
         await self._instances.delete(key)
+        await _remove_from_class_index(self._instances_by_class, class_name, instance_id)
         logger.info(
             "registry remove_instance class=%s instance=%s",
             class_name,
@@ -240,6 +273,10 @@ class Registry:
         for key in doomed:
             if key.startswith(f"{name}:"):
                 await self._instances.delete(key)
+        try:
+            await self._instances_by_class.delete(name)
+        except KeyError:
+            pass
         logger.info("registry remove_class class=%s", name)
 
     async def list_classes(self) -> list[ClassRecord]:
@@ -315,9 +352,12 @@ class Registry:
     async def list_instances(self, class_name: str) -> list[InstanceRecord]:
         """The class's recorded instances and their state (empty if none)."""
         result: list[InstanceRecord] = []
-        async for key, data in self._instances.items():
-            if key.startswith(f"{class_name}:"):
-                result.append(InstanceRecord.model_validate(dict(data)))
+        instance_ids = await self._instances_by_class.fetch(class_name)
+        if instance_ids is not None:
+            for instance_id in instance_ids:
+                data = await self._instances.fetch(_instance_key(class_name, instance_id))
+                if data is not None:
+                    result.append(InstanceRecord.model_validate(dict(data)))
         return result
 
     async def get_instance(self, class_name: str, instance_id: str) -> InstanceRecord | None:
@@ -345,12 +385,9 @@ class Registry:
         record = ClassRecord.model_validate(await self._catalog.fetch(name))
         if record.state != ActivityState.ENABLED:
             return ActivityState.DISABLED
-        has_instances = False
-        async for key in self._instances.keys():
-            if key.startswith(f"{name}:"):
-                has_instances = True
-                break
-        return ActivityState.ENABLED if has_instances else ActivityState.DISABLED
+        # O(1) lookup via secondary index instead of O(N) scan
+        instances = await self._instances_by_class.fetch(name)
+        return ActivityState.ENABLED if instances else ActivityState.DISABLED
 
 
 __all__ = [

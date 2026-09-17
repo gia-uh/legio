@@ -158,7 +158,7 @@ async def test_proxy_closes_only_the_client_it_owns(
     """The proxy's lazy deposit client has an owned lifecycle; an injected
     client stays open for its caller."""
     proxy = NodeDB(beaver_db, node_id="slice5@host")
-    owned = proxy.ensure_client()
+    owned = proxy._ensure_client()
     assert proxy._client is owned
     await proxy.aclose()
     assert proxy._client is None
