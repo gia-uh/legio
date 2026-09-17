@@ -7,11 +7,12 @@ and terse call vocabulary. No v1 legacy fields (`input_mapping`, etc.).
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Iterable
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from legio.errors import UnrecoverableError
 
@@ -74,6 +75,44 @@ class OutputContract(BaseModel):
         return self
 
 
+class AgentPolicy(BaseModel):
+    """One agent's execution policy (Schema 1, every type — NOT tool policy).
+
+    ``timeout`` bounds one handling of one inbox item, enforced by the
+    common runner (`AgentBase._run_guarded`); expiry is a visible
+    `TimeoutError` result. This is the step layer: tool policy
+    (`ToolPolicy`, Schema 3) bounds each *call attempt* inside a tool
+    step instead — different layer, different owner, no cross-checks.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    timeout: int | float | None = Field(
+        default=None,
+        description="Seconds bounding one step handling (None = unbounded, declared)",
+    )
+
+    @field_validator("timeout", mode="before")
+    @classmethod
+    def _reject_non_number_timeout(cls, value: object) -> object:
+        if isinstance(value, (bool, str)):
+            # Pydantic wraps only ValueError into ValidationError.
+            raise ValueError(  # noqa: TRY004 - value rejection, naming the bound
+                f"pattern policy.timeout must be a genuine number of seconds > 0 (got {value!r})"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _validate_timeout(self) -> AgentPolicy:
+        if self.timeout is not None and (
+            not isinstance(self.timeout, (int, float)) or not math.isfinite(self.timeout) or self.timeout <= 0
+        ):
+            raise ValueError(
+                f"pattern policy.timeout must be a finite number of seconds > 0 (got {self.timeout!r})"
+            )
+        return self
+
+
 class AgentSpec(BaseModel):
     """One agent spec: type × kind with mandatory symmetric contracts."""
 
@@ -104,6 +143,13 @@ class AgentSpec(BaseModel):
     branches: list[list[str]] | None = Field(
         default=None,
         description="List of branches; each branch an ordered list of bare pattern names",
+    )
+
+    # Execution policy — EVERY type (uniform step bound, enforced by the
+    # common runner; distinct from Schema 3 tool policy)
+    policy: AgentPolicy | None = Field(
+        default=None,
+        description="Step execution policy (timeout bounds one inbox-item handling)",
     )
 
     @model_validator(mode="after")

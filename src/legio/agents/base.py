@@ -57,7 +57,9 @@ while an **error-result deposit is exempt** and always proceeds (§12.5.5).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
@@ -116,10 +118,24 @@ class AgentBase:
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
         control_verifier: ControlVerifier | None = None,
+        execution_timeout: float | None = None,
     ) -> None:
         self._agent_id = agent_id
         self._db = db
         self._output_as = output_as
+        if execution_timeout is not None and (
+            isinstance(execution_timeout, bool)
+            or not isinstance(execution_timeout, (int, float))
+            or not math.isfinite(execution_timeout)
+            or execution_timeout <= 0
+        ):
+            raise ValueError(
+                f"agent {agent_id!r}: execution_timeout must be a finite number "
+                f"of seconds > 0 or None (got {execution_timeout!r})"
+            )
+        self._execution_timeout = (
+            float(execution_timeout) if execution_timeout is not None else None
+        )
         # The agent's declared contracts, compiled once to strict pydantic
         # models (superset check, §12.1): None when the pattern declares no
         # schema (plain text default — nothing to verify).
@@ -433,7 +449,15 @@ class AgentBase:
         new_payload: dict[str, Any] | None = None
         try:
             self._verify_input_contract(request)
-            new_payload = await self._handle(request)
+            if self._execution_timeout is None:
+                new_payload = await self._handle(request)
+            else:
+                # Uniform step bound (every type): one handling of one item
+                # runs under the declared pattern policy; expiry surfaces
+                # through the existing error-result path below, never silent.
+                new_payload = await asyncio.wait_for(
+                    self._handle(request), self._execution_timeout
+                )
             if new_payload is not None:
                 self._verify_output_contract(new_payload)
         except Exception as exc:  # noqa: BLE001 - surfaced, never swallowed

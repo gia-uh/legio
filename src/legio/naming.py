@@ -94,7 +94,7 @@ _RESERVED_AGENT_PREFIX = "client:"
 
 def _guard(valid: bool, name: str) -> None:
     if not valid:
-        logger.warning("invalid identifier %r rejected", name)
+        logger.warning("invalid identifier name=%r rejected", name)
         raise InvalidNameError(f"invalid identifier {name!r}")
 
 

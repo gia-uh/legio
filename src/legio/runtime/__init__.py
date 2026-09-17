@@ -104,6 +104,10 @@ logger = logging.getLogger(__name__)
 
 BRING_UP_TASK = "bring_up"
 SEED_TASK = "seed"
+# LEG-095 — the pending-report ledger is bounded: entries live mint → report,
+# but a dead agent never reports, so over-cap eviction drops oldest-first
+# with a visible warning (a late report then takes the existing orphan path).
+_PENDING_CONTROLS_CAP = 1024
 ENABLE_INSTANCE = "enable_instance"
 DISABLE_INSTANCE = "disable_instance"
 DESTROY_INSTANCE = "destroy_instance"
@@ -370,6 +374,15 @@ class Runtime:
         seq = self._control_sequence.get((class_name, instance_id), 0) + 1
         self._control_sequence[(class_name, instance_id)] = seq
         self._pending_controls[(instance_id, action, seq)] = class_name
+        while len(self._pending_controls) > _PENDING_CONTROLS_CAP:
+            oldest, _ = next(iter(self._pending_controls.items()))
+            del self._pending_controls[oldest]
+            logger.warning(
+                "runtime pending_controls evicted instance=%s action=%s seq=%s (cap)",
+                oldest[0],
+                oldest[1],
+                oldest[2],
+            )
         logger.info(
             "runtime control minted class=%s instance=%s action=%s seq=%s "
             "pending_report=True",
@@ -705,12 +718,24 @@ class Runtime:
         try:
             op = NodeOp(verb=cast(_NODE_OP_VERB, verb), class_name=class_name, instance_id=instance_id)
         except ValidationError as exc:
+            logger.warning("runtime node_op deny verb=%s (unknown verb)", verb)
             raise RecoverableError(f"unknown node op verb {verb!r}") from exc
         if op.verb in INSTANCE_OP_VERBS and op.instance_id is None:
+            logger.warning(
+                "runtime node_op deny verb=%s class=%s (instance required)",
+                op.verb,
+                op.class_name,
+            )
             raise RecoverableError(
                 f"node op verb {op.verb!r} requires an instance"
             )
         if op.verb in CLASS_OP_VERBS and op.instance_id is not None:
+            logger.warning(
+                "runtime node_op deny verb=%s class=%s instance=%s (class verbs take no instance)",
+                op.verb,
+                op.class_name,
+                op.instance_id,
+            )
             raise RecoverableError(
                 f"node op verb {op.verb!r} is a class verb and does not take an instance"
             )
@@ -1044,6 +1069,10 @@ class Runtime:
         record = await self.manager.status(task_id)
         if record is None:
             return None
+        if record.name != SEED_TASK:
+            # Envelope check (no kwargs-shape knowledge): only a business
+            # seed carries an outbox — internal facts read empty, never crash.
+            return None
         token = FlowToken.model_validate(record.kwargs["token"])
         data = await self._outbox.fetch(task_id)
         if data is None:
@@ -1066,6 +1095,11 @@ class Runtime:
         """
         record = await self.manager.status(task_id)
         if record is None:
+            logger.warning("runtime status unknown task=%s", task_id)
+            raise KeyError(f"unknown task {task_id!r}")
+        if record.name != SEED_TASK:
+            # Envelope check (no kwargs-shape knowledge): internal facts
+            # are not business tasks — stable unknown, never a shape crash.
             logger.warning("runtime status unknown task=%s", task_id)
             raise KeyError(f"unknown task {task_id!r}")
         if record.kwargs.get("client_id") != client_id:

@@ -301,7 +301,12 @@ class Manager:
         record.result = result
         record.finished_at = _utc_now_iso()
         await self._tasks.set(task_id, record.model_dump(mode="json"))
-        logger.info("manager success task=%s name=%s result=%r", task_id, record.name, result)
+        logger.info(
+            "manager success task=%s name=%s result=%s",
+            task_id,
+            record.name,
+            _summarize_result(result),
+        )
 
     async def _drive_parked(self, task_id: str, record: TaskRecord) -> None:
         generator = self._parked[task_id]
@@ -341,10 +346,10 @@ class Manager:
                 record.finished_at = _utc_now_iso()
                 await self._tasks.set(task_id, record.model_dump(mode="json"))
                 logger.info(
-                    "manager success task=%s name=%s result=%r",
+                    "manager success task=%s name=%s result=%s",
                     task_id,
                     record.name,
-                    result,
+                    _summarize_result(result),
                 )
                 return
             except asyncio.CancelledError:
@@ -379,6 +384,16 @@ class Manager:
 
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _summarize_result(result: Any) -> str:
+    """Loggable result shape: type plus length when sized — values never
+    reach the logs (rules 7/11: decisions, not data)."""
+    name = type(result).__name__
+    try:
+        return f"{name}[{len(result)}]"
+    except TypeError:
+        return name
 
 
 __all__ = ["AsyncBeaverDB", "Manager", "TaskRecord", "TaskStatus"]

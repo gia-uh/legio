@@ -33,12 +33,13 @@ mounted (404): no federation surface.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from typing import Any
 
 from fastapi import FastAPI, Header, Query
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from legio.errors import (
     InvalidNameError,
@@ -129,6 +130,13 @@ class WorkItemRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     schema_version: int
 
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def _reject_nonint_version(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError(f"work item schema_version must be a genuine integer (got {value!r})")
+        return value
+
 
 class WorkItemResponse(BaseModel):
     """The acceptor's receipt for a deposited work item (LEG-092)."""
@@ -136,6 +144,14 @@ class WorkItemResponse(BaseModel):
     id: str
     deposited: bool
     deduplicated: bool = False
+
+
+class HealthResponse(BaseModel):
+    """Liveness probe (ARCH §10 federation surface): the node answers
+    with or without a catalog — health must hold especially when
+    nothing is configured."""
+
+    status: str
 
 
 class OutboxPollResponse(BaseModel):
@@ -183,6 +199,26 @@ class DepositRequest(BaseModel):
     item: dict[str, Any]
     priority: float = 0.0
     schema_version: int = SCHEMA_VERSION
+
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _reject_nonfinite_priority(cls, value: object) -> object:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            raise ValueError(
+                f"deposit priority must be a finite number (got {value!r})"
+            )
+        return value
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def _reject_nonint_version(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError(f"deposit schema_version must be a genuine integer (got {value!r})")
+        return value
 
 
 class DepositResponse(BaseModel):
@@ -409,16 +445,26 @@ def create_app(
     if federation_token is not None:
         federation_store = FederationTokenStore(federation_token)
 
+        @app.get("/health", response_model=HealthResponse)
+        async def health(
+            authorization: str | None = Header(default=None),
+        ) -> HealthResponse | JSONResponse:
+            token = _bearer_token(authorization)
+            if token is None or not federation_store.is_valid(token):
+                logger.warning("api health unauthorized has_token=%s", token is not None)
+                return _unauthorized()
+            return HealthResponse(status="ok")
+
         @app.get("/catalog", response_model=CatalogResponse)
         async def catalog(
             authorization: str | None = Header(default=None),
         ) -> CatalogResponse | JSONResponse:
             token = _bearer_token(authorization)
             if token is None or not federation_store.is_valid(token):
-                logger.warning("api catalog unauthorized")
+                logger.warning("api catalog unauthorized has_token=%s", token is not None)
                 return _unauthorized()
             if pattern_catalog is None:
-                logger.error("api catalog no capacity")
+                logger.error("api catalog no_capacity configured=false")
                 return JSONResponse(status_code=503, content={"code": "no_capacity"})
             return _to_catalog_response(pattern_catalog)
 

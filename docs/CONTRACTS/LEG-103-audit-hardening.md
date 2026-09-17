@@ -13,7 +13,11 @@ guarded executor, strict verbs, taxonomy, intake hygiene) APPROVED on
 Slice 11 (fifth-audit hardening: middleware predicate, yaml/config parity,
 tool/taxonomy gaps, bool residuals, leg order uniformity, clear logging)
 APPROVED on 2026-09-16 (session 112: maintainer direction
-"arregla todos los minors").
+"arregla todos los minors");
+Slice 12 (sixth-audit hardening: uniform pattern policy, seed-envelope
+reads, loader YAMLError wrap, token/config/CLI/log hardening) APPROVED on
+2026-09-16 (session 120: maintainer direction "implementa los planes tanto
+de los majors como los minors").
 - **Rasante:** R-10 (hardening)
 - **GitHub issue:** #51 (created + closed with verification, session 106)
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
@@ -41,6 +45,8 @@ transport/lifecycle-separated architecture.
     F3–F11).** APPROVED 2026-09-16.
 11. **Slice 11 — fifth-audit hardening (8 minors M1–M8).** APPROVED
     2026-09-16.
+12. **Slice 12 — sixth-audit hardening (majors M1/M3/M4(c), minors
+    m1–m10; M2 withdrawn, M4(a)/(b) withdrawn).** APPROVED 2026-09-16.
 
 ## Slice 1 contract (APPROVED)
 
@@ -398,6 +404,95 @@ Decisions first (scope control), then fixes:
   `interface_mismatch` (uniform with deposits); nothing deposited.
 - Destroying a class with queued items logs the inbox clear with the
   class and count.
+- Full suite + ruff + pyright green; no other behavior changed.
+
+## Slice 12 contract (APPROVED)
+
+Sixth-audit hardening from the Session 113 re-audit. M2 is WITHDRAWN
+(counting proof, Session 118: per-deposit kicks + destructive single-pop
++ eternal pumps make poison-stranding impossible through in-repo paths —
+nothing to implement); M4(a)/(b) stay withdrawn (loud-at-use, unproven
+harm; wiring the validator would add a patterns→naming edge). Decisions
+first (scope control), then fixes:
+
+- **M1 (uniform pattern policy, all types):** every pattern may declare
+  `policy: {timeout}` (`AgentPolicy`, Schema 1/2 — NOT tool.policy,
+  which stays the per-attempt tool-invocation bound). Authorship split:
+  capacity = operator (pools, tools.yaml), step nature = pattern author.
+  `AgentPolicy` forbids extras (a `retries` copy-paste from tool policy
+  fails fast — the schema itself keeps the two policies distinct);
+  `timeout` must be a genuine number, finite, `> 0`, else the whole
+  load is refused naming file+pattern. Absent/empty → `None`
+  (unbounded, today's behavior — zero regression) + a boot WARNING per
+  unbounded pattern (visible, pinned). Enforcement is single and
+  common: `AgentBase._run_guarded` wraps `_handle` in `wait_for`;
+  `TimeoutError` flows into the existing error-result path unchanged.
+  Constructors take `execution_timeout` (validated once in
+  `AgentBase.__init__`); the materializer passes `spec.policy.timeout`
+  for all three types; `ToolAgent` keeps its inner tool-policy layer —
+  outer step / inner attempt, documented, NO cross-validation v1 (the
+  loader never sees tool declarations; a misconfigured pair still fails
+  loudly at runtime). For composites the bound covers each tick's
+  handling; cross-tick flow deadlines are explicitly out of scope.
+  `gather_budget` is untouched (mechanical wait-slice cap, ARCH §3,
+  Slice 9 — not an execution bound; removal would need its own spec).
+- **M3 (seed-envelope reads):** `read_outbox`/`status` branch on the
+  generic envelope field `record.name == SEED_TASK` (the Runtime's own
+  constant) — unknown/non-seed reads empty/`unknown task` exactly as
+  today for genuinely-unknown ids. `kwargs` shapes are read only
+  post-match (safe by construction: the same component built them at
+  submit). No new stores (no dual-write), no Manager changes, no
+  migration (pre-release).
+- **M4(c) (loader YAMLError wrap):** `_load_all_documents` wraps
+  `yaml.YAMLError → UnrecoverableError` with a source label (the
+  loader's documented contract; both imports already present) —
+  dir-walk passes the file, text input passes `"inline"`.
+  `OSError`/`UnicodeDecodeError` already ride the CLI map; names and
+  empty branches stay as-is per the withdrawals.
+- **m1:** `DepositRequest.priority` rejects bools and non-finite values
+  (`mode="before"`, genuine number).
+- **m2:** string rejection joins the bool rejectors on
+  `LifecycleParams` budgets and `ToolPolicy` (messages extended; no
+  test pins the old ones); `schema_version` on both request models
+  requires genuine ints (Slice 11 F11 discipline).
+- **m3:** `_as_int` accepts only genuine ints (`None` → default,
+  else loud `ValueError`) — no test uses the coercion.
+- **m4:** token compares use `hmac.compare_digest` (utf-8 bytes, total
+  function — no new exceptions on any input).
+- **m5:** cross-consumer duplicate token secrets are refused loudly
+  (naming the holder); same-consumer re-register stays legal;
+  revoking an absent id logs a distinct noop (no false "revoked").
+- **m6:** `key=value` on the naming guard and the catalog
+  `unauthorized`/`no_capacity` events (non-secret fields only).
+- **m7:** log the four unlogged raise points (local-hit resolve,
+  non-callable raise, verb-shape rejects, unknown result origin),
+  levels matched to their neighbors.
+- **m8:** `_pending_controls` is capped (1024 entries — orders above
+  any sane outstanding-control count; pools are small ints):
+  over-cap evicts oldest-first with a visible warning (a late report
+  then takes the existing orphan path — safe degradation).
+- **m9:** manager success logs carry the result summary (type +
+  length-or-name), never values (rules 7/11: log decisions, not data).
+- **m10:** mount `GET /health` (`{"status": "ok"}`, L1 bearer like every
+  ARCH §10 federation endpoint, no catalog required — health must
+  answer especially with nothing configured). The predicate entry
+  becomes true; ARCH already promises the route, so no doc change.
+
+## Acceptance criteria (Slice 12)
+
+- Any pattern of any type bounds its step handling when declaring
+  `policy.timeout`; hung-LLM probe fails fast with `TimeoutError`;
+  patterns without policy behave exactly as today (plus one boot
+  WARNING each); `retries` under pattern policy fails the load.
+- Internal task ids read empty/`unknown task` on outbox+status (no
+  500); seed lifecycle + kick-on-miss unchanged; zero unguarded
+  `kwargs` shape reads in `runtime` (grep-verified).
+- Bad YAML fails as `UnrecoverableError` (file named for dir loads)
+  on boot and create-class paths.
+- Bool/NaN/inf priority, string budgets/policy, bool/str versions,
+  string CLI ints, `==` token compares, duplicate secrets, silent
+  revoke, bare log lines, unlogged raises, unbounded ledger,
+  value-logging, missing `/health` — all closed per above.
 - Full suite + ruff + pyright green; no other behavior changed.
 
 ## Slice 9 contract (APPROVED)

@@ -49,6 +49,7 @@ class LinguisticAgent(AgentBase):
         input_schema: Mapping[str, Any] | None = None,
         output_schema: Mapping[str, Any] | None = None,
         control_verifier: ControlVerifier | None = None,
+        execution_timeout: float | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -57,6 +58,7 @@ class LinguisticAgent(AgentBase):
             input_schema=input_schema,
             output_schema=output_schema,
             control_verifier=control_verifier,
+            execution_timeout=execution_timeout,
         )
         self._lingo = lingo_client
         self._prompt = prompt_template

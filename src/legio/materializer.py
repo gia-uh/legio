@@ -107,6 +107,7 @@ def _materialize_atom(
             input_schema=spec.input.input_schema,
             output_schema=spec.output.output_schema,
             control_verifier=control_verifier,
+            execution_timeout=_step_timeout(spec),
         )
 
     if spec.kind is AgentKind.LINGUISTIC:
@@ -126,9 +127,28 @@ def _materialize_atom(
             input_schema=spec.input.input_schema,
             output_schema=spec.output.output_schema,
             control_verifier=control_verifier,
+            execution_timeout=_step_timeout(spec),
         )
 
     raise UnrecoverableError(f"atomic agent {spec.name!r} has unknown kind: {spec.kind}")
+
+
+def _step_timeout(spec: AgentSpec) -> float | None:
+    """The pattern's declared step bound (`None` = unbounded, declared)."""
+    if spec.policy is None:
+        return None
+    return spec.policy.timeout
+
+
+def _warn_unbounded_patterns(catalog: Catalog) -> None:
+    """Log every pattern without a step bound (today's behavior kept visible,
+    never silent — rule 9)."""
+    for name in sorted(catalog.specs):
+        if catalog.specs[name].policy is None:
+            logger.warning(
+                "materializer unbounded pattern=%s (no policy.timeout; step runs unbounded)",
+                name,
+            )
 
 
 def _materialize_composite(
@@ -158,6 +178,7 @@ def _materialize_composite(
         input_schema=spec.input.input_schema,
         output_schema=spec.output.output_schema,
         control_verifier=control_verifier,
+        execution_timeout=_step_timeout(spec),
     )
 
 
@@ -398,6 +419,7 @@ async def _boot_on_database(
         database, node_id=cfg.node.id, control_key=key, peer_steps=peer_steps
     )
     catalog = load_pattern_dirs(pattern_dirs, peer_steps=peer_steps)
+    _warn_unbounded_patterns(catalog)
 
     registry = available_tools_from_config(loaded)
     served = {name for name in catalog.specs if catalog.is_served(name)}

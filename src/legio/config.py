@@ -158,10 +158,10 @@ class LifecycleParams(BaseModel):
 
     @field_validator("drain_timeout", "drain_interval", mode="before")
     @classmethod
-    def _reject_bool_budget(cls, value: object) -> object:
-        if isinstance(value, bool):
+    def _reject_non_number_budget(cls, value: object) -> object:
+        if isinstance(value, (bool, str)):
             # Pydantic wraps only ValueError into ValidationError.
-            raise ValueError("lifecycle budgets must be numbers, never booleans")  # noqa: TRY004
+            raise ValueError("lifecycle budgets must be numbers, never booleans or strings")  # noqa: TRY004
         return value
 
     @model_validator(mode="after")
@@ -342,10 +342,10 @@ class ToolPolicy(BaseModel):
 
     @field_validator("timeout", "retries", mode="before")
     @classmethod
-    def _reject_bool_policy(cls, value: object) -> object:
-        if isinstance(value, bool):
+    def _reject_non_number_policy(cls, value: object) -> object:
+        if isinstance(value, (bool, str)):
             # Pydantic wraps only ValueError into ValidationError.
-            raise ValueError("policy values must be numbers, never booleans")  # noqa: TRY004
+            raise ValueError("policy values must be numbers, never booleans or strings")  # noqa: TRY004
         return value
 
     @model_validator(mode="after")

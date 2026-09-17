@@ -129,6 +129,7 @@ class StepResolver:
         simply skipped.
         """
         if agent in self._local_capacity:
+            logger.info("federation resolve local agent=%s", agent)
             return Local(agent=agent)
 
         for peer_id, roster in self._peer_catalogs.items():
@@ -416,6 +417,11 @@ class NodeDB(AsyncBeaverDB):
             if origin == self._node_id:
                 return None
             if origin not in self._peers:
+                logger.warning(
+                    "federation unknown result origin name=%s origin=%s",
+                    name,
+                    origin,
+                )
                 raise RecoverableError(
                     f"result queue {name!r} carries an unknown author origin "
                     f"{origin!r} (not this node, not a configured peer)"

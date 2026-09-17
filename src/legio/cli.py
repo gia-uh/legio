@@ -284,11 +284,14 @@ _STATE_LABEL = "absent"
 
 
 def _as_int(value: object, default: int) -> int:
-    """Coerce a CLI option value to int (typer hands validated ints; the async
-    seam passes them as ``object``). ``None`` → the default."""
+    """Take a CLI option value as int (typer hands validated ints; the async
+    seam passes them as ``object``). ``None`` → the default. Anything but a
+    genuine int is a loud caller error — no silent coercion (rule 9)."""
     if value is None:
         return default
-    return int(str(value))
+    if type(value) is not int:
+        raise ValueError(f"CLI option must be a genuine integer (got {value!r})")
+    return value
 
 
 async def agent_command(

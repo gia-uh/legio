@@ -106,6 +106,7 @@ class CompositeAgent(AgentBase):
         output_schema: Mapping[str, Any] | None = None,
         control_verifier: ControlVerifier | None = None,
         gather_budget: float = _DEFAULT_GATHER_BUDGET,
+        execution_timeout: float | None = None,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -114,6 +115,7 @@ class CompositeAgent(AgentBase):
             input_schema=input_schema,
             output_schema=output_schema,
             control_verifier=control_verifier,
+            execution_timeout=execution_timeout,
         )
         if (
             isinstance(gather_budget, bool)

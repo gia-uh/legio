@@ -235,7 +235,10 @@ def load_pattern_dirs(
             )
         for yaml_file in sorted(path.rglob("*.yaml")):
             _load_all_documents(
-                yaml_file.read_text(encoding="utf-8"), catalog, peer_steps=peer_steps
+                yaml_file.read_text(encoding="utf-8"),
+                catalog,
+                peer_steps=peer_steps,
+                source_label=str(yaml_file),
             )
         logger.info("patterns loaded kind=%s dir=%s count=%d", kind, path, len(catalog))
     return catalog
@@ -259,14 +262,16 @@ def load_patterns(source: str | Path | dict[str, Any] | list[dict[str, Any]]) ->
 
     # Handle YAML string (contains newlines or starts with YAML indicators)
     if isinstance(source, str) and ("\n" in source or source.strip().startswith(("{", "[", "-", "name:"))):
-        _load_all_documents(source, catalog)
+        _load_all_documents(source, catalog, source_label="inline")
     elif isinstance(source, (str, Path)):
         path = Path(source)
         if path.is_dir():
             for yaml_file in sorted(path.glob("*.yaml")):
-                _load_all_documents(yaml_file.read_text(encoding="utf-8"), catalog)
+                _load_all_documents(
+                    yaml_file.read_text(encoding="utf-8"), catalog, source_label=str(yaml_file)
+                )
         else:
-            _load_all_documents(path.read_text(encoding="utf-8"), catalog)
+            _load_all_documents(path.read_text(encoding="utf-8"), catalog, source_label=str(path))
     elif isinstance(source, (dict, list)):
         _load_specs_from_yaml(source, catalog)
     else:
@@ -277,10 +282,22 @@ def load_patterns(source: str | Path | dict[str, Any] | list[dict[str, Any]]) ->
 
 
 def _load_all_documents(
-    text: str, catalog: Catalog, peer_steps: Mapping[str, str] | None = None
+    text: str,
+    catalog: Catalog,
+    peer_steps: Mapping[str, str] | None = None,
+    source_label: str | None = None,
 ) -> None:
-    """Load every YAML document in a stream (multi-doc ``---`` supported)."""
-    for document in yaml.safe_load_all(text):
+    """Load every YAML document in a stream (multi-doc ``---`` supported).
+
+    A malformed stream fails as `UnrecoverableError` naming the source —
+    never a raw `YAMLError` (the loader's documented contract).
+    """
+    try:
+        documents = list(yaml.safe_load_all(text))
+    except yaml.YAMLError as exc:
+        where = f" in {source_label}" if source_label else ""
+        raise UnrecoverableError(f"cannot parse patterns{where}: {exc}") from exc
+    for document in documents:
         if document is not None:
             _load_specs_from_yaml(document, catalog, peer_steps=peer_steps)
 
