@@ -1,8 +1,10 @@
 """`legio.security` — the two-level token scheme (LEG-017).
 
 One shared federation token guards node-to-node endpoints; per-system client
-tokens guard client submit/status endpoints. Both are consumed by a single
-`AuthMiddleware` that enforces the endpoint → token map.
+tokens guard client submit/status endpoints. Enforcement is inline in the
+served surface (`api.py`); `AuthMiddleware` (`legio.security.middleware`) is
+the pure decision helper encoding the same endpoint → token map, kept as the
+pluggable hook a consumer app may wrap or replace.
 """
 
 from __future__ import annotations

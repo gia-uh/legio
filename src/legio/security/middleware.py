@@ -1,22 +1,29 @@
-"""`legio.security.middleware` — the single authorization middleware (LEG-017).
+"""`legio.security.middleware` — the authorization decision helper (LEG-017).
 
-Enforces the endpoint → token map: federation (node-to-node) endpoints accept
+Encodes the endpoint → token map: federation (node-to-node) endpoints accept
 only the shared federation token (and a known peer), while client endpoints
-accept only a registered client token. Pluggable: any subtype keeps the same
-``authorize(endpoint, token)`` signature.
+accept only a registered client token. Enforcement itself is inline in the
+served surface (`api.py`); this module is the pure, tested decision unit and
+the pluggable hook a consumer app may wrap or replace — any subtype keeps
+the same ``authorize(endpoint, token)`` signature.
 """
 
 from __future__ import annotations
 
 import logging
-import re
 from enum import Enum
 
 from legio.security import ClientTokenStore
 
 logger = logging.getLogger(__name__)
 
-_METHOD_PREFIX = re.compile(r"^(GET|POST|PUT|PATCH|DELETE)\s")
+#: Federation paths (ARCH §10): node-to-node endpoints only. A `METHOD /path`
+#: string is federation only for this explicit set — never for any method
+#: prefix (a client surface such as `POST /submit` must not read as
+#: federation). Templated routes (`/work-items/{agent}`, `/outbox/{id}/ack`)
+#: match by prefix; anything else falls through to the client branch.
+_FEDERATION_EXACT_PATHS = frozenset({"/catalog", "/deposits", "/health", "/outbox"})
+_FEDERATION_PATH_PREFIXES = ("/work-items/", "/outbox/")
 
 
 class AuthorizationResult(str, Enum):
@@ -41,7 +48,10 @@ class AuthMiddleware:
         self._clients = clients
 
     def _is_federation_endpoint(self, endpoint: str) -> bool:
-        return _METHOD_PREFIX.match(endpoint) is not None
+        _, _, path = endpoint.partition(" ")
+        if not path.startswith("/"):
+            return False
+        return path in _FEDERATION_EXACT_PATHS or path.startswith(_FEDERATION_PATH_PREFIXES)
 
     def _token_to_consumer_id(self, token: str) -> str | None:
         return self._clients.resolve_consumer_id(token)

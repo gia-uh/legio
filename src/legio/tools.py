@@ -75,7 +75,7 @@ class AvailableToolsRegistry:
                 f"cannot load tool {name!r} from {dotted_path!r}"
             ) from exc
         if not callable(tool):
-            raise TypeError(f"tool {name!r} resolved to non-callable: {tool!r}")
+            raise UnrecoverableError(f"tool {name!r} resolved to non-callable: {tool!r}")
         return tool
 
     def all_declarations(self) -> Mapping[str, dict[str, Any]]:

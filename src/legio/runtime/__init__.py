@@ -1121,8 +1121,8 @@ class Runtime:
         an explicit ``peer_steps`` here overrides the stored one. A step that is
         a known peer is not a local dependency and does not block born-enabled.
         """
-        if pool < 0:
-            raise ValueError(f"pool must be >= 0 (got {pool!r})")
+        if type(pool) is not int or pool < 0:
+            raise ValueError(f"pool must be a genuine integer >= 0 (got {pool!r})")
         name = spec.name
         if await self.registry.class_state(name) is not None:
             logger.warning("runtime create_class noop class=%s (already exists)", name)
@@ -1394,11 +1394,18 @@ class Runtime:
     async def _clear_queue(self, name: str) -> None:
         """Drain-and-discard the class queue (beaver has no queue deletion)."""
         queue = self._db.queue(queue_key(name))
+        cleared = 0
         while True:
             try:
                 await queue.get(block=False)
             except IndexError:
+                logger.info(
+                    "runtime destroy_class inbox cleared class=%s items=%d",
+                    name,
+                    cleared,
+                )
                 return
+            cleared += 1
 
     async def _clear_result_queue(self, name: str) -> None:
         """Drain-and-discard the class's shared result queue (LEG-095 Phase 2:
@@ -1422,8 +1429,8 @@ class Runtime:
     async def create_instance(self, name: str, *, count: int = 1) -> list[str]:
         """Create one or more instances of an existing class. Each instance is
         born disabled if the class is disabled, enabled otherwise (§5.1)."""
-        if count < 1:
-            raise ValueError(f"count must be >= 1 (got {count!r})")
+        if type(count) is not int or count < 1:
+            raise ValueError(f"count must be a genuine integer >= 1 (got {count!r})")
         if await self.registry.class_state(name) is None:
             raise KeyError(f"unknown class {name!r}")
         born_state = await self.registry.class_state(name) or ActivityState.DISABLED

@@ -9,7 +9,11 @@ loser cleanup, cancel-safe kick, prose/dependency/test gaps) APPROVED on
 2026-09-16 (session 108);
 Slice 10 (design/coupling audit hardening: version-aware delegation,
 guarded executor, strict verbs, taxonomy, intake hygiene) APPROVED on
-2026-09-16 (session 110: maintainer direction "resuelve esto").
+2026-09-16 (session 110: maintainer direction "resuelve esto");
+Slice 11 (fifth-audit hardening: middleware predicate, yaml/config parity,
+tool/taxonomy gaps, bool residuals, leg order uniformity, clear logging)
+APPROVED on 2026-09-16 (session 112: maintainer direction
+"arregla todos los minors").
 - **Rasante:** R-10 (hardening)
 - **GitHub issue:** #51 (created + closed with verification, session 106)
 - **Source:** `docs/PLAN.md` (LEG-103); audit evidence in `docs/JOURNALS/2026-09-15.md` (86i), `docs/JOURNALS/2026-09-16.md` (87-88)
@@ -35,6 +39,8 @@ transport/lifecycle-separated architecture.
 9. **Slice 9 — fresh-audit hardening (11 minors F1–F11).** APPROVED 2026-09-16.
 10. **Slice 10 — design/coupling audit hardening (2 majors F1–F2, 9 minors
     F3–F11).** APPROVED 2026-09-16.
+11. **Slice 11 — fifth-audit hardening (8 minors M1–M8).** APPROVED
+    2026-09-16.
 
 ## Slice 1 contract (APPROVED)
 
@@ -333,6 +339,65 @@ Decisions first (scope control), then fixes:
 - Duplicate cache names fail naming both files; mid-destroy crash keeps the
   gate closed (pinned); new exports importable; bool/str/float ports and
   float batch sizes refused.
+- Full suite + ruff + pyright green; no other behavior changed.
+
+## Slice 11 contract (APPROVED)
+
+Fifth-audit hardening from the Session 111 re-audit (0 blocking, 0 major).
+Decisions first (scope control), then fixes:
+
+- **M1 (unwired middleware, overbroad predicate):** `AuthMiddleware` stays
+  the pure, tested decision unit and consumer hook (LEG-017 tests pin it;
+  deleting it would destroy specified tested behavior) — it is NOT wired
+  into production (inline enforcement in `api.py` stays canonical; wiring
+  it is a bigger refactor, out of scope). The predicate is fixed to the
+  explicit ARCH §10 federation-path set (exact `/catalog`, `/deposits`,
+  `/health`, `/outbox` + prefixes `/work-items/`, `/outbox/`) so a
+  `METHOD /submit`-shaped string no longer reads as federation. The
+  package + ARCH wording is amended to the truth (decision helper, inline
+  enforcement). Existing LEG-017 endpoint lists keep passing unchanged.
+- **M2 (yaml/config parity):** `config._read_yaml` catches
+  `UnicodeDecodeError` too, wrapping it in `ConfigError` like the CLI
+  collector (Slice 9 F11 parity) — a bad-bytes config fails loud, never
+  as a builtin traceback.
+- **M3 (non-callable tool shape):** a resolved-but-non-callable tool raises
+  `UnrecoverableError` (fatal authoring shape), not bare `TypeError` —
+  inside the Slice 10 F6 taxonomy and the CLI builtin map.
+- **M4 (federation taxonomy):** `InterfaceMismatchError` and
+  `UnresolvableAgentError` derive from `UnrecoverableError` (fatal
+  authoring/config), not bare `LegioError`. Every `except LegioError`
+  site still catches (narrowing is behavior-safe); resolver tests keep
+  pinning the raise sites.
+- **M5 (bool pool/count residual):** `create_class(pool)` and
+  `create_instance(count)` require genuine ints at verb entry
+  (`type(x) is int`, Slice 9 F3 discipline) — `True` no longer passes as
+  a live instance, `False` no longer passes as disabled.
+- **M6 (retries bool residual):** `_tool_policy` rejects a boolean
+  `retries` loudly, naming the tool (parity with the timeout guard and
+  the file-path `_reject_bool_policy`).
+- **M7 (leg order uniformity):** version-before-served on BOTH legs —
+  work-items aligns to the deposits (Slice 10 F1) order. Interface
+  compatibility is envelope-level and author-actionable; a stale peer's
+  roster view may itself be stale, so 404 could mislead — 409 tells it
+  to upgrade first. A validation-order note is added to the work-items
+  endpoint (parity with deposits). Existing 404/409 tests (served-agent
+  stale, current-version unknown) stay green.
+- **M8 (clear logging):** `Runtime._clear_queue` logs the drained inbox
+  (`class=` + `items=`, INFO) like its result-queue sibling (rule 11).
+
+## Acceptance criteria (Slice 11)
+
+- `POST /submit`-shaped strings are not federation endpoints; all LEG-017
+  endpoint lists behave exactly as before.
+- Bad-bytes configs fail as `ConfigError`; non-callable tools surface as
+  `UnrecoverableError` (no `TypeError` in the payload); both federation
+  errors are `UnrecoverableError`s.
+- `pool=True/False` and `count=True` fail loudly at verb entry;
+  `retries=False` fails loudly naming the tool.
+- Stale-version + unknown-agent on work-items → 409
+  `interface_mismatch` (uniform with deposits); nothing deposited.
+- Destroying a class with queued items logs the inbox clear with the
+  class and count.
 - Full suite + ruff + pyright green; no other behavior changed.
 
 ## Slice 9 contract (APPROVED)

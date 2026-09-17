@@ -428,6 +428,14 @@ def create_app(
             body: WorkItemRequest,
             authorization: str | None = Header(default=None),
         ) -> WorkItemResponse | JSONResponse:
+            """Accept a federated work item for a served agent.
+
+            Validation order (visible, rule 9 — uniform with deposits):
+            L1 bearer → 401; no catalog → 503 (``no_capacity``); version
+            skew → 409 (``interface_mismatch`` — a stale peer upgrades
+            first, its roster view may itself be stale); unserved agent →
+            404; malformed id → 422; deposit → 200.
+            """
             token = _bearer_token(authorization)
             if token is None or not federation_store.is_valid(token):
                 logger.warning("api work_item unauthorized agent=%s", agent)
@@ -435,9 +443,6 @@ def create_app(
             if pattern_catalog is None:
                 logger.error("api work_item no capacity agent=%s", agent)
                 return JSONResponse(status_code=503, content={"code": "no_capacity"})
-            if not pattern_catalog.is_served(agent):
-                logger.warning("api work_item unknown agent=%s", agent)
-                return JSONResponse(status_code=404, content={"code": "unknown_agent"})
             if body.schema_version != SCHEMA_VERSION:
                 logger.warning(
                     "api work_item interface_mismatch agent=%s schema=%s",
@@ -445,6 +450,9 @@ def create_app(
                     body.schema_version,
                 )
                 return JSONResponse(status_code=409, content={"code": "interface_mismatch"})
+            if not pattern_catalog.is_served(agent):
+                logger.warning("api work_item unknown agent=%s", agent)
+                return JSONResponse(status_code=404, content={"code": "unknown_agent"})
             try:
                 validate_task_id(body.task_id)
             except InvalidNameError as exc:

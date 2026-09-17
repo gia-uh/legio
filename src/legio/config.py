@@ -426,7 +426,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     """Read and parse a YAML file into a dict (fail-fast on syntax errors)."""
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
+    except (OSError, yaml.YAMLError, UnicodeDecodeError) as exc:
         raise ConfigError(f"cannot read config file {path}: {exc}") from exc
     if raw is None:
         return {}

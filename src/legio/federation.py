@@ -39,7 +39,7 @@ from beaver import AsyncBeaverDB
 from beaver.dicts import AsyncBeaverDict
 from beaver.queues import AsyncBeaverQueue
 
-from legio.errors import LegioError, RecoverableError
+from legio.errors import RecoverableError, UnrecoverableError
 from legio.flow import SCHEMA_VERSION
 from legio.naming import QUEUE_NAMESPACE
 
@@ -69,7 +69,7 @@ _RESULT_PREFIX = "result:"
 _GATHER_PREFIX = "gather:"
 
 
-class InterfaceMismatchError(LegioError):
+class InterfaceMismatchError(UnrecoverableError):
     """A peer advertises the agent with an incompatible ``schema_version``.
 
     Never silently skipped (rule 9): an offered-but-incompatible agent is a
@@ -77,7 +77,7 @@ class InterfaceMismatchError(LegioError):
     """
 
 
-class UnresolvableAgentError(LegioError):
+class UnresolvableAgentError(UnrecoverableError):
     """The agent is served neither locally nor offered by any configured peer.
 
     Resolution happens before deposit (ARCH §9) — raising here is the pre-deposit
