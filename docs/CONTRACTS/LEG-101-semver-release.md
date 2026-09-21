@@ -3,6 +3,8 @@
 - **Status:** APPROVED by maintainer direction on 2026-09-21 (GitHub #45):
   cut the 0.1.0 release; the changelog, the tag and the release process doc
   ship with the implementation.
+- **Closed:** 2026-09-21, GitHub #45 closed as implemented (`7b6774c`; tag
+  `v0.1.0` at `73c6ff5`; reproducible from a clean clone).
 - **Rasante:** R-10
 - **GitHub issue:** #45
 - **Source:** `docs/PLAN.md` (LEG-101)

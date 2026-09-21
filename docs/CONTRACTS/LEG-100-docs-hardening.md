@@ -1,6 +1,7 @@
 # LEG-100 — Docs & examples hardening; glossary; consumer guide
 
 - **Status:** APPROVED (maintainer review 2026-09-21)
+- **Closed:** 2026-09-21, GitHub #48 closed as implemented (`f580a1a`).
 - **Rasante:** R-10
 - **GitHub issue:** #48
 - **Source:** `docs/PLAN.md` (LEG-100)

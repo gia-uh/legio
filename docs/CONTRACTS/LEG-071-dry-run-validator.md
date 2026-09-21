@@ -3,6 +3,8 @@
 - **Status:** APPROVED by maintainer direction on 2026-09-21 (GitHub #38):
   implement the validate command; the startup gate (refuse to serve an invalid
   catalog) already ships with the boot's loud loader refusal.
+- **Closed:** 2026-09-21, GitHub #38 closed as implemented (`7ca42b8`; red-first in
+  `tests/test_leg071_validate.py`; `make ci` green, 640 passed).
 - **Rasante:** R-7
 - **GitHub issue:** #38
 - **Source:** `docs/PLAN.md` (LEG-071)

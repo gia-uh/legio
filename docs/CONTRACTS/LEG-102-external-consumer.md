@@ -7,6 +7,9 @@
   **in-repo executable proof** — `make validate-release` installs the built
   wheel into a throwaway venv and runs a headless, domain-free smoke against
   the installed artifact, recording the pinned version.
+- **Closed:** 2026-09-21, GitHub #47 closed as implemented (`7b6774c` +
+  `scripts/validate_release.sh` record in `docs/VALIDATIONS/`); the external
+  consumer repo stays the maintainer's follow-up.
 - **Rasante:** R-10
 - **GitHub issue:** #47
 - **Source:** `docs/PLAN.md` (LEG-102)

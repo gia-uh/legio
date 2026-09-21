@@ -1,6 +1,11 @@
 # LEG-080 — Pools (pool_size agents per class)
 
-- **Status:** DRAFT (awaiting maintainer approval)
+- **Status:** APPROVED by maintainer direction on 2026-09-21 (GitHub #40):
+  the implemented scope is the strict concurrency proof
+  (`tests/test_pool_consumers_one_queue.py`); lifecycle verbs on `pool_size > 1`
+  remain documented control debt.
+- **Closed:** 2026-09-21, GitHub #40 closed as implemented (`7a21922`; `make ci`
+  green, 640 passed).
 - **Rasante:** R-8
 - **GitHub issue:** #40
 - **Source:** `docs/PLAN.md` (LEG-080)
