@@ -1,0 +1,26 @@
+name: transform
+type: atomic
+kind: tool
+main: true
+input:
+  input_as: transform
+  input_type: json
+  input_schema:
+    type: object
+    properties:
+      text:
+        type: string
+      factor:
+        type: integer
+output:
+  output_as: transform
+  output_type: json
+  output_schema:
+    type: object
+    properties:
+      transformed:
+        type: string
+tool: transform
+parameters:
+  text: '{transform.text}'
+  factor: '{transform.factor}'

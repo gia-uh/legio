@@ -1,0 +1,20 @@
+# The distribute-summary example node: two independent linguistic branches
+# under one composite (multi-branch). Point services.llm at your LLM endpoint.
+node:
+  id: "distribute-summary@example"
+database:
+  db_path: "./db/distribute-summary.db"
+patterns:
+  tool: "./patterns/tool"
+  linguistic: "./patterns/linguistic"
+  composite: "./patterns/composite"
+tools:
+  config: "./tools.yaml"
+services:
+  llm:
+    base_url: "http://localhost:11434/v1"
+    model: "qwen2.5:7b"
+lifecycle:
+  default:
+    drain_timeout: 10.0
+    drain_interval: 0.02

@@ -1,0 +1,20 @@
+# The summarize example node: a linguistic step feeding a tool step
+# (single-branch composite). Point services.llm at your own LLM endpoint.
+node:
+  id: "summarize@example"
+database:
+  db_path: "./db/summarize.db"
+patterns:
+  tool: "./patterns/tool"
+  linguistic: "./patterns/linguistic"
+  composite: "./patterns/composite"
+tools:
+  config: "./tools.yaml"
+services:
+  llm:
+    base_url: "http://localhost:11434/v1"
+    model: "qwen2.5:7b"
+lifecycle:
+  default:
+    drain_timeout: 10.0
+    drain_interval: 0.02

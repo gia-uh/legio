@@ -1,0 +1,6 @@
+available_tools:
+  transform:
+    implementation: "examples.tools.transform"
+    policy:
+      timeout: 30
+      retries: 0

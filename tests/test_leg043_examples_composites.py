@@ -30,156 +30,15 @@ from legio.agents.tool_agent import ToolAgent
 from legio.api import create_app
 from legio.flow import build_payload
 from legio.naming import outbox_key
-from legio.patterns import load_patterns, resolve_composite_branches
+from legio.patterns import resolve_composite_branches
 from legio.runtime import Runtime
 from legio.security import ClientTokenStore
 from legio.tools import AvailableToolsRegistry
+from tests.conftest import load_example_node
 
-FULL_EXTRACT_YAML = """
-name: extract
-type: atomic
-kind: linguistic
-input:
-  input_as: payload
-  input_type: json
-  input_schema:
-    type: object
-    properties:
-      text: {type: string}
-      lang: {type: string}
-output:
-  output_as: extract
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      title: {type: string}
-      summary: {type: string}
-      word_count: {type: integer}
-prompt: "Extract the key points of {text} in {lang}."
----
-name: assess
-type: atomic
-kind: tool
-input:
-  input_as: extract
-  input_type: json
-  input_schema:
-    type: object
-    properties:
-      title: {type: string}
-      summary: {type: string}
-output:
-  output_as: result
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      result: {type: string}
-tool: assess
-parameters:
-  title: "{extract.title}"
-  summary: "{extract.summary}"
-"""
-
-EXTRACT_AND_SUMMARIZE_YAML = (
-    FULL_EXTRACT_YAML
-    + """
----
-name: extract_and_summarize
-type: composite
-main: true
-input:
-  input_as: payload
-  input_type: json
-  input_schema:
-    type: object
-    properties:
-      text: {type: string}
-      lang: {type: string}
-output:
-  output_as: result
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      result:
-        type: object
-        properties:
-          result: {type: string}
-branches:
-  - - extract
-    - assess
-"""
-)
-
-DISTRIBUTE_SUMMARY_YAML = """
-name: summ
-type: atomic
-kind: linguistic
-input:
-  input_as: text
-  input_type: json
-  input_schema:
-    type: object
-    properties:
-      text: {type: string}
-output:
-  output_as: summ
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      summ: {type: string}
-prompt: "Summarize: {text}"
----
-name: cata
-type: atomic
-kind: linguistic
-input:
-  input_as: text
-  input_type: json
-  input_schema:
-    type: object
-    properties:
-      text: {type: string}
-output:
-  output_as: cata
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      cata: {type: string}
-prompt: "Categorize: {text}"
----
-name: distribute_summary
-type: composite
-main: true
-input:
-  input_as: payload
-  input_type: json
-  input_schema:
-    type: object
-    properties:
-      text: {type: string}
-output:
-  output_as: result
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      summ:
-        type: object
-        properties:
-          summ: {type: string}
-      cata:
-        type: object
-        properties:
-          cata: {type: string}
-branches:
-  - - summ
-  - - cata
-"""
+# The patterns come from the shared example-node single source (LEG-100):
+# ``examples/extract-and-summarize`` and ``examples/distribute-summary`` — the
+# same files the consumer guide documents. Drift there breaks the suite.
 
 
 class ExtractOutput(BaseModel):
@@ -240,7 +99,7 @@ def build_single_branch_agents(
     )
     registry = build_tool_registry()
 
-    catalog = load_patterns(EXTRACT_AND_SUMMARIZE_YAML)
+    catalog = load_example_node("extract-and-summarize")
     extract_spec = catalog.specs["extract"]
     assess_spec = catalog.specs["assess"]
     composite_spec = catalog.specs["extract_and_summarize"]
@@ -285,7 +144,7 @@ def build_multi_branch_agents(
     db: AsyncBeaverDB,
 ) -> tuple[CompositeAgent, LinguisticAgent, LinguisticAgent]:
     """Boot the unified composite (two branches) + its standing atomic agents."""
-    catalog = load_patterns(DISTRIBUTE_SUMMARY_YAML)
+    catalog = load_example_node("distribute-summary")
     summ_spec = catalog.specs["summ"]
     cata_spec = catalog.specs["cata"]
     composite_spec = catalog.specs["distribute_summary"]
@@ -331,7 +190,7 @@ async def test_extract_and_summarize_single_branch_over_rest(
 ) -> None:
     caplog.set_level(logging.INFO)
     comp, extract, assess = build_single_branch_agents(beaver_db)
-    pattern_catalog = load_patterns(EXTRACT_AND_SUMMARIZE_YAML)
+    pattern_catalog = load_example_node("extract-and-summarize")
 
     store = ClientTokenStore()
     store.register("client-a", token="tok-a")
@@ -380,7 +239,7 @@ async def test_distribute_summary_multi_branch_root_over_rest(
 ) -> None:
     caplog.set_level(logging.INFO)
     comp, summ, cata = build_multi_branch_agents(beaver_db)
-    pattern_catalog = load_patterns(DISTRIBUTE_SUMMARY_YAML)
+    pattern_catalog = load_example_node("distribute-summary")
 
     store = ClientTokenStore()
     store.register("client-a", token="tok-a")

@@ -1,0 +1,25 @@
+name: assess
+type: atomic
+kind: tool
+input:
+  input_as: summ
+  input_type: json
+  input_schema:
+    type: object
+    properties:
+      title:
+        type: string
+      summary:
+        type: string
+output:
+  output_as: result
+  output_type: json
+  output_schema:
+    type: object
+    properties:
+      result:
+        type: string
+tool: assess
+parameters:
+  title: '{summ.title}'
+  summary: '{summ.summary}'

@@ -1,0 +1,26 @@
+name: extract
+type: atomic
+kind: linguistic
+input:
+  input_as: payload
+  input_type: json
+  input_schema:
+    type: object
+    properties:
+      text:
+        type: string
+      lang:
+        type: string
+output:
+  output_as: extract
+  output_type: json
+  output_schema:
+    type: object
+    properties:
+      title:
+        type: string
+      summary:
+        type: string
+      word_count:
+        type: integer
+prompt: Extract the key points of {text} in {lang}.

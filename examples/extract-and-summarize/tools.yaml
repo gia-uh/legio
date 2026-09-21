@@ -1,0 +1,6 @@
+available_tools:
+  assess:
+    implementation: "examples.tools.assess"
+    policy:
+      timeout: 30
+      retries: 0

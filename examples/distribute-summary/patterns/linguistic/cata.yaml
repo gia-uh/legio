@@ -1,0 +1,20 @@
+name: cata
+type: atomic
+kind: linguistic
+input:
+  input_as: text
+  input_type: json
+  input_schema:
+    type: object
+    properties:
+      text:
+        type: string
+output:
+  output_as: cata
+  output_type: json
+  output_schema:
+    type: object
+    properties:
+      cata:
+        type: string
+prompt: 'Categorize: {text}'

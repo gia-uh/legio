@@ -27,82 +27,15 @@ from legio.agents.tool_agent import ToolAgent
 from legio.api import create_app
 from legio.flow import build_payload
 from legio.naming import outbox_key
-from legio.patterns import load_patterns, resolve_composite_branches
+from legio.patterns import resolve_composite_branches
 from legio.runtime import Runtime
 from legio.security import ClientTokenStore
 from legio.tools import AvailableToolsRegistry
 
-SUMMARIZE_YAML = """
-name: summ
-type: atomic
-kind: linguistic
-input:
-  input_as: payload
-  input_type: json
-  input_schema:
-    type: object
-    properties:
-      text: {type: string}
-      lang: {type: string}
-output:
-  output_as: summ
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      title: {type: string}
-      summary: {type: string}
-      word_count: {type: integer}
-prompt: "Summarize {text} and {lang}."
----
-name: assess
-type: atomic
-kind: tool
-input:
-  input_as: summ
-  input_type: json
-  input_schema:
-    type: object
-    properties:
-      title: {type: string}
-      summary: {type: string}
-output:
-  output_as: result
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      result: {type: string}
-tool: assess
-parameters:
-  title: "{summ.title}"
-  summary: "{summ.summary}"
----
-name: summarize
-type: composite
-main: true
-input:
-  input_as: payload
-  input_type: json
-  input_schema:
-    type: object
-    properties:
-      text: {type: string}
-      lang: {type: string}
-output:
-  output_as: result
-  output_type: json
-  output_schema:
-    type: object
-    properties:
-      result:
-        type: object
-        properties:
-          result: {type: string}
-branches:
-  - - summ
-    - assess
-"""
+# The patterns come from the shared example-node single source (LEG-100):
+# ``examples/summarize/patterns/{linguistic,tool,composite}`` — the same files
+# the consumer guide documents. Any drift there breaks this test (no bitrot).
+from tests.conftest import load_example_node
 
 
 class SummarizeOutput(BaseModel):
@@ -155,7 +88,7 @@ def build_standing_agents(
         policy={"timeout": 30, "retries": 0},
     )
 
-    catalog = load_patterns(SUMMARIZE_YAML)
+    catalog = load_example_node("summarize")
     summ_spec = catalog.specs["summ"]
     assess_spec = catalog.specs["assess"]
     composite_spec = catalog.specs["summarize"]
@@ -205,8 +138,8 @@ async def test_summarize_flows_linguistic_to_tool_over_rest_and_auth(
     # Boot the standing agents
     composite, summ, assess = build_standing_agents(beaver_db)
 
-    # Load the pattern catalog
-    pattern_catalog = load_patterns(SUMMARIZE_YAML)
+    # Load the pattern catalog (the example-node single source)
+    pattern_catalog = load_example_node("summarize")
 
     # Create the authenticated app with pattern catalog
     store = ClientTokenStore()

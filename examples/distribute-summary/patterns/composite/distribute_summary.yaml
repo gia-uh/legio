@@ -1,0 +1,30 @@
+name: distribute_summary
+type: composite
+main: true
+input:
+  input_as: payload
+  input_type: json
+  input_schema:
+    type: object
+    properties:
+      text:
+        type: string
+output:
+  output_as: result
+  output_type: json
+  output_schema:
+    type: object
+    properties:
+      summ:
+        type: object
+        properties:
+          summ:
+            type: string
+      cata:
+        type: object
+        properties:
+          cata:
+            type: string
+branches:
+- - summ
+- - cata

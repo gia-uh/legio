@@ -1,0 +1,15 @@
+# The transform example node: one atomic tool agent, no sibling services.
+node:
+  id: "transform@example"
+database:
+  db_path: "./db/transform.db"
+patterns:
+  tool: "./patterns/tool"
+  linguistic: "./patterns/linguistic"
+  composite: "./patterns/composite"
+tools:
+  config: "./tools.yaml"
+lifecycle:
+  default:
+    drain_timeout: 10.0
+    drain_interval: 0.02
