@@ -259,9 +259,10 @@ async def test_submit_into_disabled_class_returns_typed_error(
 
 
 @pytest.mark.asyncio
-async def test_status_of_failed_task_returns_typed_error(
+async def test_status_of_failed_task_returns_failed_state(
     client: httpx.AsyncClient, runtime: Runtime, beaver_db: AsyncBeaverDB
 ) -> None:
+    """FAILED seed is readable via status with state=FAILED (no exception raised)."""
     task_id = await runtime.submit("client-a", (("failing", "failing"),), {"raw": 1})
 
     tasks = beaver_db.dict("tasks")
@@ -271,5 +272,9 @@ async def test_status_of_failed_task_returns_typed_error(
     await tasks.set(task_id, record)
 
     st = await client.get(f"/status/{task_id}", params={"client_id": "client-a"})
-    assert st.status_code == 409
-    assert st.json()["code"] == "task_failed"
+    # New behavior: returns 200 with state=FAILED and error in output
+    assert st.status_code == 200
+    data = st.json()
+    assert data["state"] == "failed"
+    assert "error" in data["output"]
+    assert "boom" in data["output"]["error"]

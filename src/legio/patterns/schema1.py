@@ -91,6 +91,10 @@ class AgentPolicy(BaseModel):
         default=None,
         description="Seconds bounding one step handling (None = unbounded, declared)",
     )
+    fail_fast: bool = Field(
+        default=False,
+        description="Composite only: on first branch error, cancel remaining branches before fan-out",
+    )
 
     @field_validator("timeout", mode="before")
     @classmethod

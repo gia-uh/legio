@@ -107,6 +107,7 @@ class CompositeAgent(AgentBase):
         control_verifier: ControlVerifier | None = None,
         gather_budget: float = _DEFAULT_GATHER_BUDGET,
         execution_timeout: float | None = None,
+        fail_fast: bool = False,
     ) -> None:
         super().__init__(
             agent_id=agent_id,
@@ -128,10 +129,12 @@ class CompositeAgent(AgentBase):
                 "would busy-spin and a non-finite one never wakes"
             )
         self._gather_budget = gather_budget
+        self._fail_fast = bool(fail_fast)
         logger.debug(
-            "composite created agent=%s gather_budget=%s",
+            "composite created agent=%s gather_budget=%s fail_fast=%s",
             agent_id,
             gather_budget,
+            self._fail_fast,
         )
         # Each branch is a route of (class, input_as) — the branch's own
         # loader-resolved steps (re-keying info, §12.1).
@@ -335,6 +338,15 @@ class CompositeAgent(AgentBase):
                         },
                     },
                 )
+                if self._fail_fast:
+                    logger.info(
+                        "composite fail_fast triggered agent=%s task=%s branch=%s",
+                        self._agent_id,
+                        request.task_id,
+                        index,
+                    )
+                    # Stop fan-out for remaining branches
+                    break
                 continue
             child = ExecutionRequestMessage(
                 level_route=branch_route,

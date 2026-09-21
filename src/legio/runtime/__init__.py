@@ -165,6 +165,7 @@ class TaskState(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class TaskEntry(BaseModel):
@@ -1151,29 +1152,49 @@ class Runtime:
                 client_id,
             )
             raise PermissionError("task is scoped to its owning client")
-        if record.status == TaskStatus.FAILED:
-            raise RecoverableError(f"task {task_id!r} failed: {record.error or 'unknown error'}")
         try:
             token = FlowToken.model_validate(record.kwargs["token"])
         except ValidationError as exc:
             logger.warning("runtime status corrupt token task=%s error=%s", task_id, exc)
             raise KeyError(f"unknown task {task_id!r}") from exc
-        state = TaskState.PENDING if record.status == TaskStatus.PENDING else TaskState.RUNNING
         output: dict[str, Any] | None = None
         result_key: str | None = None
-        data = await self._outbox.fetch(task_id)
-        result = None
-        if data is None:
-            await self._kick_result_drain(token.launcher_class)
+        if record.status == TaskStatus.FAILED:
+            state = TaskState.FAILED
+            # FAILED seed: output may be in outbox or the record error
+            data = await self._outbox.fetch(task_id)
+            if data is not None:
+                try:
+                    result = ExecutionResultMessage.model_validate(data)
+                    output = dict(result.payload)
+                except ValidationError:
+                    output = {"error": record.error or "unknown error"}
+            else:
+                output = {"error": record.error or "unknown error"}
         else:
-            try:
-                result = ExecutionResultMessage.model_validate(data)
-            except ValidationError as exc:
-                logger.warning("runtime status corrupt record task=%s error=%s", task_id, exc)
-        if result is not None:
-            output = dict(result.payload)
-            state = TaskState.COMPLETED
-            result_key = outbox_key(task_id)
+            # PENDING/RUNNING: check outbox for completed result
+            data = await self._outbox.fetch(task_id)
+            result = None
+            if data is None:
+                await self._kick_result_drain(token.launcher_class)
+                state = (
+                    TaskState.PENDING if record.status == TaskStatus.PENDING else TaskState.RUNNING
+                )
+            else:
+                try:
+                    result = ExecutionResultMessage.model_validate(data)
+                except ValidationError as exc:
+                    logger.warning("runtime status corrupt record task=%s error=%s", task_id, exc)
+                if result is not None:
+                    output = dict(result.payload)
+                    state = TaskState.COMPLETED
+                    result_key = outbox_key(task_id)
+                else:
+                    state = (
+                        TaskState.PENDING
+                        if record.status == TaskStatus.PENDING
+                        else TaskState.RUNNING
+                    )
         logger.info("runtime status task=%s state=%s", task_id, state.value)
         return TaskEntry(
             task_id=task_id,

@@ -174,6 +174,7 @@ def _materialize_composite(
             "the composite's build_output_as is the pattern's model"
         )
     branches = resolve_composite_branches(spec, catalog, peer_steps=peer_steps)
+    fail_fast = bool(spec.policy and spec.policy.fail_fast)
     return composite_type(
         agent_id=spec.name,
         db=db,
@@ -184,6 +185,7 @@ def _materialize_composite(
         output_schema=spec.output.output_schema,
         control_verifier=control_verifier,
         execution_timeout=_step_timeout(spec),
+        fail_fast=fail_fast,
     )
 
 
