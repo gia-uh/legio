@@ -1,6 +1,12 @@
 # LEG-102 — External consumer pins the released legio
 
-- **Status:** DRAFT (awaiting maintainer approval)
+- **Status:** APPROVED by maintainer direction on 2026-09-21 (GitHub #47),
+  with an in-repo amendment: the *external consumer repo* (an own repository
+  pinning the release) stays the maintainer's follow-up (no `gh` repository
+  exists yet and the package is not published); the implemented scope is the
+  **in-repo executable proof** — `make validate-release` installs the built
+  wheel into a throwaway venv and runs a headless, domain-free smoke against
+  the installed artifact, recording the pinned version.
 - **Rasante:** R-10
 - **GitHub issue:** #47
 - **Source:** `docs/PLAN.md` (LEG-102)
@@ -30,10 +36,18 @@ From `docs/PLAN.md` (LEG-102), verbatim:
   against it.
 
 ## Tests
-- Consumer's suite in green on the pinned release.
+- In-repo harness (red first): `scripts/validate_release.sh` + the documented
+  `make validate-release` — throws a venv away, installs `dist/*.whl`, runs a
+  headless smoke (import `legio`, `legio.__version__ == 0.1.0`, boot a
+  domain-free node and submit → status round-trip over a headless consumer
+  using the `examples/` single source), records the pinned version in
+  `docs/VALIDATIONS/`.
+- Maintainer follow-up (out of repo): a consumer repository pinning the
+  published release with its own validation suite.
 
 ## Validation case
-- The external consumer integration run.
+- `make validate-release` against the freshly built wheel (the executable
+  proof appended to the journal: pinned version + smoke result).
 
 ## Definition of done
 - All acceptance criteria met by running checks.

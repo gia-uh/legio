@@ -3,9 +3,8 @@
 # The canonical gate is `make ci`, which mirrors `.github/workflows/ci.yml`
 # exactly: lint (ruff check) + format check (ruff format --check) + typecheck
 # (pyright) + full pytest. Everything is English and domain-free (AGENTS.md
-# rules 1 and 7). Formatting debt: the tree is not yet `ruff format`-clean;
-# that triage is tracked in docs/JOURNALS (Session 108) and stays separate
-# from per-issue work.
+# rules 1 and 7). The release track is `make build` → `make validate-release`
+# (LEG-101/LEG-102) → `make tag`.
 
 VERSION := 0.1.0
 
@@ -45,6 +44,10 @@ ci: lint format-check typecheck test ## CI gate (exact parity with .github/workf
 .PHONY: build
 build: ## Build the wheel/archive (LEG-101): uv build
 	uv build
+
+.PHONY: validate-release
+validate-release: ## Validate the release artifact (LEG-102): build, install into a throwaway venv, headless consumer smoke
+	chmod +x scripts/validate_release.sh && scripts/validate_release.sh ${VERSION}
 
 .PHONY: clean
 clean: ## Remove build/test artifacts (never the venv or user data)
