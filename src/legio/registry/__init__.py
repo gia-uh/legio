@@ -270,9 +270,21 @@ class Registry:
             return
         await self._catalog.delete(name)
         instance_ids = await self._instances_by_class.fetch(name)
-        for instance_id in instance_ids or []:
+        doomed = [_instance_key(name, instance_id) for instance_id in instance_ids or []]
+        if not doomed:
+            # Crash-divergence backstop (Slice 15 F3): an empty index is
+            # ambiguous — verify by scan once, loudly, and delete what is
+            # stored so no orphan row survives.
+            doomed = await self._scan_instance_keys(name)
+            if doomed:
+                logger.warning(
+                    "registry index miss class=%s keys=%d (verified by scan)",
+                    name,
+                    len(doomed),
+                )
+        for key in doomed:
             try:
-                await self._instances.delete(_instance_key(name, instance_id))
+                await self._instances.delete(key)
             except KeyError:
                 pass
         try:
@@ -355,12 +367,33 @@ class Registry:
         """The class's recorded instances and their state (empty if none)."""
         result: list[InstanceRecord] = []
         instance_ids = await self._instances_by_class.fetch(class_name)
-        if instance_ids is not None:
+        if instance_ids:
             for instance_id in instance_ids:
                 data = await self._instances.fetch(_instance_key(class_name, instance_id))
                 if data is not None:
                     result.append(InstanceRecord.model_validate(dict(data)))
+            return result
+        # Crash-divergence backstop (Slice 15 F3): an empty index is
+        # ambiguous (diverged vs truly empty) — verify by scan once,
+        # loudly, and serve what is stored.
+        scanned = await self._scan_instance_keys(class_name)
+        if scanned:
+            logger.warning(
+                "registry index miss class=%s keys=%d (verified by scan)",
+                class_name,
+                len(scanned),
+            )
+        for key in scanned:
+            data = await self._instances.fetch(key)
+            if data is not None:
+                result.append(InstanceRecord.model_validate(dict(data)))
         return result
+
+    async def _scan_instance_keys(self, class_name: str) -> list[str]:
+        """One prefix-scan of the `instances` scope (empty-index fallback
+        only — the populated-index fast path above never scans)."""
+        prefix = f"{class_name}:"
+        return [key async for key in self._instances if key.startswith(prefix)]
 
     async def get_instance(self, class_name: str, instance_id: str) -> InstanceRecord | None:
         """One instance record, or ``None`` if it does not exist."""

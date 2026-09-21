@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import yaml
+from pydantic import ValidationError
 
 from legio.errors import UnrecoverableError
 from legio.patterns.schema1 import AgentSpec, Catalog
@@ -202,7 +203,17 @@ def _load_specs_from_yaml(
     for doc in docs:
         if not isinstance(doc, dict):
             _reject("each pattern must be a mapping")
-        spec = AgentSpec(**doc)
+        try:
+            spec = AgentSpec(**doc)
+        except ValidationError as exc:
+            # Schema-shape failures are load failures too: observe them
+            # through the same choke point (Slice 15 F1) instead of
+            # leaking the raw pydantic shape.
+            name = doc.get("name", "?")
+            logger.warning("patterns reject shape pattern=%s error=%s", name, exc)
+            raise UnrecoverableError(
+                f"invalid pattern shape for {name!r}: {exc}"
+            ) from exc
         specs.append(spec)
         if spec.name in catalog.specs:
             _reject(f"duplicate pattern name: {spec.name}")

@@ -85,7 +85,7 @@ def test_pattern_policy_timeout_rejects_non_numbers(timeout: object) -> None:
     loudly — never silently dropped."""
     atom = _atom_dict("polbad")
     atom["policy"] = {"timeout": timeout}
-    with pytest.raises(ValidationError):
+    with pytest.raises(UnrecoverableError):
         load_patterns([atom])
 
 
@@ -94,7 +94,7 @@ def test_pattern_policy_forbids_tool_policy_fields() -> None:
     a `retries` copy-paste fails the load fast."""
     atom = _atom_dict("polmix")
     atom["policy"] = {"timeout": 5, "retries": 0}
-    with pytest.raises(ValidationError):
+    with pytest.raises(UnrecoverableError):
         load_patterns([atom])
 
 

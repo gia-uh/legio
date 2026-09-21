@@ -290,6 +290,7 @@ def _as_int(value: object, default: int) -> int:
     if value is None:
         return default
     if type(value) is not int:
+        logger.warning("cli option deny value=%r (want genuine int)", value)
         raise ValueError(f"CLI option must be a genuine integer (got {value!r})")
     return value
 

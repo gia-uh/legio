@@ -930,6 +930,7 @@ class Runtime:
         its collection via the ``RESULT_DRAIN`` intake.
         """
         if not route:
+            logger.warning("runtime submit deny (empty route)")
             raise ValueError("route must contain at least one agent")
         first_class, first_input_as = route[0]
         gate = await self._gates.fetch(first_class)
@@ -992,6 +993,7 @@ class Runtime:
         no-op, never a second execution (LEG-093).
         """
         if not route:
+            logger.warning("runtime work_item deny (empty route)")
             raise ValueError("route must contain at least one agent")
         first_class, first_input_as = route[0]
         gate = await self._gates.fetch(first_class)
@@ -1222,6 +1224,7 @@ class Runtime:
         a known peer is not a local dependency and does not block born-enabled.
         """
         if type(pool) is not int or pool < 0:
+            logger.warning("runtime create_class deny pool=%r (want genuine int >= 0)", pool)
             raise ValueError(f"pool must be a genuine integer >= 0 (got {pool!r})")
         name = spec.name
         if await self.registry.class_state(name) is not None:
@@ -1445,6 +1448,7 @@ class Runtime:
         drain timeout restores the gate (untouched class, §12.5.3).
         """
         if mode not in ("drain", "now"):
+            logger.warning("runtime destroy_class deny mode=%r (want 'drain' or 'now')", mode)
             raise ValueError(f"unknown destroy mode {mode!r}")
         if await self.registry.class_state(name) is None:
             logger.warning("runtime destroy_class noop class=%s (unknown)", name)
@@ -1535,6 +1539,7 @@ class Runtime:
         """Create one or more instances of an existing class. Each instance is
         born disabled if the class is disabled, enabled otherwise (§5.1)."""
         if type(count) is not int or count < 1:
+            logger.warning("runtime create_instance deny count=%r (want genuine int >= 1)", count)
             raise ValueError(f"count must be a genuine integer >= 1 (got {count!r})")
         if await self.registry.class_state(name) is None:
             raise KeyError(f"unknown class {name!r}")

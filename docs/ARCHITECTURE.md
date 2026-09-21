@@ -244,7 +244,9 @@ composite:
   no retry policy and no re-queue — a raised step is surfaced, not re-run.
 - **Polling only** (rule 8): nothing sleeps and nothing is leased; resilience is
   idempotency (an item deposited again produces the same outcome) and visibility,
-  not at-least-once execution guards.
+  not at-least-once execution guards. The single sanctioned exception is the
+  bounded clock-wait of AGENT_LIFECYCLE §5.8/§10.2 (a monotonic deadline over a
+  lifecycle budget, never a timer driving logic).
 - **Tolerant fan-in**: the composite waits for all branches (`branch_id`s); a
   child failure conserves its `branch_id` and yields a final
   result with error / partial content according to the pattern's policy.

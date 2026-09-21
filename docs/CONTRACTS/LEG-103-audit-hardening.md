@@ -54,6 +54,8 @@ transport/lifecycle-separated architecture.
     m1–m11).** APPROVED 2026-09-16.
 14. **Slice 14 — eighth-audit hardening (4 majors M1–M4, 13 minors
     m1–m13).** APPROVED 2026-09-16.
+15. **Slice 15 — ninth-audit hardening (5 minors F1–F5).**
+    APPROVED 2026-09-16 (maintainer direction "fix the minors").
 
 ## Slice 1 contract (APPROVED)
 
@@ -723,9 +725,9 @@ Decisions first (scope control), then fixes:
   (wall-clock < 1 ms cold); no scan loop in profiler.
 - Composite with 500 pending branches: `_has_pending` is O(1) (no
   `count()` round-trip in profiler).
-- `NodeDB` proxy has no `close`/`ensure_client`/`lock`/`dict`
-  attributes; attempting access raises `AttributeError`; `queue` works
-  identically.
+- `NodeDB` proxy has no `close`/`ensure_client` methods (access raises
+  `AttributeError`); the explicit `queue`/`dict`/`lock` surface (Slice 14
+  M3/m6) is the intended proxy shape — `queue` works identically.
 - `resolve_consumer_id` is O(1) (dict lookup) on 10k tokens.
 - Evicted pending control has its seq removed; late report takes orphan
   path correctly.
@@ -764,9 +766,11 @@ Decisions first (scope control), then fixes:
 - **M3 (corrupt-shape guards):** post-envelope `model_validate`s in
   `read_outbox`/`status` are wrapped in `try/except ValidationError`
   (intra-module): corrupt token → `None`/`unknown task` with a warning;
-  corrupt outbox bytes → `None` (read) / output-`None` + drain kick
-  (status) with a warning. API layer unchanged — stable codes flow
-  through the existing mapping (200-empty / 404).
+  corrupt outbox bytes → `None` (read) / output-`None` (status) with a
+  warning and no drain kick (the item was already consumed at record
+  time, so a kick would drain an empty queue — Slice 15 N6 wording
+  alignment). API layer unchanged — stable codes flow through the
+  existing mapping (200-empty / 404).
 - **M4 (index hardening):** `remove_class` drives from the
   `instances_by_class` index (fetch list → delete each instance key →
   delete index key, `KeyError`-tolerant) instead of O(N)-scanning
@@ -827,4 +831,49 @@ Decisions first (scope control), then fixes:
   loud `ValueError`; tool failures emit `step_error`; middleware
   parity green; duplicate boot secrets name the holder; `None` lingo
   refused naming the agent.
+- Full suite + ruff + pyright green; no other behavior changed.
+
+## Slice 15 contract (APPROVED)
+
+Ninth-audit hardening from the Session 125 re-audit (0 blocking,
+0 major). Observability + docs residue only; no behavior change except
+where a warning is added:
+
+- **F1 (loader shape rejections log):** `_load_specs_from_yaml` wraps
+  the `AgentSpec(**doc)` construction in `try/except ValidationError`
+  → `WARNING key=value` naming the pattern when known, then raises
+  `UnrecoverableError` (same failure shape the CLI already maps, now
+  observed). The `_reject` helper stays the single choke point.
+- **F2 (verb-entry denials log):** one `WARNING key=value` before each
+  loud verb-entry `ValueError` — `submit`/`submit_work_item` empty
+  route, `create_class` bad pool, `destroy_class` bad mode,
+  `create_instance` bad count, and CLI `_as_int` non-int. Slice 12 m7
+  precedent; messages name the verb and the offending value.
+- **F3 (index-divergence fallback everywhere):** `list_instances` and
+  `remove_class` gain the Slice 14 M4 empty-index fallback — when the
+  index fetch is empty, one prefix-scan of the `instances` scope
+  verifies, warns (`index miss`), and heals (list returns the found
+  rows; remove deletes the found keys). Fast path stays O(1); the
+  scan runs only on empty index. `destroy_class` therefore cannot leak
+  standing loops on the phantom-miss direction.
+- **F4 (Slice 13 wording):** acceptance amended — the proxy has no
+  `close`/`ensure_client`; explicit `queue`/`dict`/`lock` is the
+  intended surface (docs-only, no test pin).
+- **F5 (ARCH §8 wording):** one sentence naming the AGENT_LIFECYCLE
+  §5.8 bounded-wait exception next to the "nothing sleeps" line
+  (docs-only, no test pin).
+- **N6 (Slice 14 M3 wording):** corrupt-outbox `status` path
+  documented as output-`None` with no drain kick (docs-only).
+
+## Acceptance criteria (Slice 15)
+
+- Bad-shape patterns raise `UnrecoverableError` (never raw
+  `ValidationError`) with a warning naming the pattern when known.
+- All six verb-entry rejections log a warning naming the verb/value
+  before raising.
+- Crafted index divergence heals in `list_instances` (rows returned +
+  warning) and `remove_class` (keys deleted + warning, no `instances`
+  iteration on the populated-index fast path, spy-pinned).
+- ARCH §8 names the bounded-wait exception; Slice 13/M3 wordings
+  amended.
 - Full suite + ruff + pyright green; no other behavior changed.
