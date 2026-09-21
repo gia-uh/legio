@@ -28,7 +28,13 @@ from legio.materializer import boot_node
 from legio.patterns import load_pattern_dirs, resolve_composite_branches
 
 EXAMPLES = pathlib.Path(__file__).resolve().parents[1] / "examples"
-NODE_FLOWS = ("transform", "summarize", "extract-and-summarize", "distribute-summary")
+NODE_FLOWS = (
+    "transform",
+    "summarize",
+    "extract-and-summarize",
+    "distribute-summary",
+    "document_processing",
+)
 
 
 def _example_node(flow: str) -> pathlib.Path:

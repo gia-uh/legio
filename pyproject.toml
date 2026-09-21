@@ -25,6 +25,7 @@ dev = [
     "pytest-asyncio",
     "respx",
     "pyright",
+    "pypdf>=6.19.0",
 ]
 
 [build-system]

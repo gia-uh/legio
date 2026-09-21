@@ -1,0 +1,33 @@
+name: summarize_text
+type: atomic
+kind: linguistic
+main: false
+description: "Summarize extracted text using LLM"
+input:
+  input_as: text_input
+  input_type: json
+  input_schema:
+    type: object
+    properties:
+      text:
+        type: string
+        description: "Text to summarize"
+    required: [text]
+    additionalProperties: false
+output:
+  output_as: summary_output
+  output_type: json
+  output_schema:
+    type: object
+    properties:
+      summary:
+        type: string
+        description: "Brief summary of the input text"
+    required: [summary]
+    additionalProperties: false
+prompt: |
+  Summarize the following text in 2-3 sentences:
+
+  {text}
+policy:
+  timeout: 30.0

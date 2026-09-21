@@ -1,0 +1,6 @@
+available_tools:
+  pdf_extract_text:
+    implementation: examples.document_processing.tools.pdf_extract_text
+    policy:
+      timeout: 30.0
+      retries: 0

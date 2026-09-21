@@ -1,0 +1,44 @@
+name: doc_pipeline
+type: composite
+main: true
+description: "Document processing pipeline: extract text from PDF, then summarize"
+input:
+  input_as: pipeline_input
+  input_type: json
+  input_schema:
+    type: object
+    properties:
+      file_path:
+        type: string
+        description: "Path to the PDF file to process"
+    required: [file_path]
+    additionalProperties: false
+output:
+  output_as: pipeline_output
+  output_type: json
+  output_schema:
+    type: object
+    properties:
+      extracted:
+        type: object
+        properties:
+          text:
+            type: string
+          pages:
+            type: integer
+          metadata:
+            type: object
+        required: [text, pages, metadata]
+      summary:
+        type: object
+        properties:
+          summary:
+            type: string
+        required: [summary]
+    required: [extracted, summary]
+    additionalProperties: false
+branches:
+  - [pdf_extract_text, summarize_text]
+policy:
+  timeout: 60.0
+  fail_fast: false
