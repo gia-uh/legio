@@ -27,7 +27,7 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
-from legio.agents.base import AgentBase
+from legio.agents.base import _EVENT_STEP_ERROR, AgentBase
 from legio.flow import ControlVerifier, ExecutionRequestMessage, build_payload
 from legio.tools import AvailableToolsRegistry, resolve_parameters, validate_callable_signature
 
@@ -104,6 +104,7 @@ class ToolAgent(AgentBase):
                 f"{type(exc).__name__}: {exc}",
             )
             error = f"{type(exc).__name__}: {exc}"
+            await self._emit(_EVENT_STEP_ERROR, request)
 
         if error is not None:
             return {"error": error}
@@ -132,6 +133,11 @@ class ToolAgent(AgentBase):
             raise ValueError(  # noqa: TRY004 - value rejection, naming the tool
                 f"tool {self._tool_name!r} declares retries={retries!r}: "
                 "policy.retries must be a genuine integer or None, never a boolean"
+            )
+        if retries is not None and type(retries) is not int:
+            raise ValueError(
+                f"tool {self._tool_name!r} declares retries={retries!r}: "
+                "policy.retries must be a genuine integer or None"
             )
         try:
             timeout_value = float(timeout) if timeout is not None else None

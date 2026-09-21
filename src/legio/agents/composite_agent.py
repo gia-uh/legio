@@ -246,6 +246,22 @@ class CompositeAgent(AgentBase):
         """
         return self._pending_count > 0
 
+    async def rehydrate(self) -> None:
+        """Rebuild the pending counter from our own persisted `_state` scope.
+
+        Boot constructs fresh agents while continuations survive in beaver;
+        without this, the gate would read closed and branch returns would
+        strand with no error. Assignment (not +=), so re-calling is
+        idempotent. Called once at boot before pumps start — the only
+        quiescent point, so no fan-out/join race is possible.
+        """
+        count = await self._state.count()
+        self._pending_count = count
+        if count:
+            logger.info(
+                "composite rehydrated agent=%s pending=%d", self._agent_id, count
+            )
+
     async def _process_join_item(self, item: dict[str, Any]) -> None:
         """Consume one item from the gathering queue (a fan-in result) and join.
 

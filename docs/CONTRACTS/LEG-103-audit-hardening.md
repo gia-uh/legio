@@ -52,6 +52,8 @@ transport/lifecycle-separated architecture.
     m1–m10; M2 withdrawn, M4(a)/(b) withdrawn).** APPROVED 2026-09-16.
 13. **Slice 13 — seventh-audit hardening (3 majors M1–M3, 11 minors
     m1–m11).** APPROVED 2026-09-16.
+14. **Slice 14 — eighth-audit hardening (4 majors M1–M4, 13 minors
+    m1–m13).** APPROVED 2026-09-16.
 
 ## Slice 1 contract (APPROVED)
 
@@ -737,4 +739,92 @@ Decisions first (scope control), then fixes:
 - `read_outbox` validates `token`/`client_id` keys post-envelope;
   missing → `None`.
 - `status` uses `in` for `client_id` check; missing key → unknown task.
+- Full suite + ruff + pyright green; no other behavior changed.
+
+## Slice 14 contract (APPROVED)
+
+Eighth-audit hardening from the Session 123 re-audit (0 blocking).
+Decisions first (scope control), then fixes:
+
+- **M1 (destroy-mode envelope):** `NodeOp` gains `mode:
+  Literal["drain", "now"] = "drain"`; `_validate_node_op` takes
+  `mode="drain"` and refuses anything else loudly with a clear message
+  (the Literal is the backstop for foreign intents at drain-parse);
+  `deposit_node_op` takes keyword-only `mode` and threads it;
+  `_apply_node_op` passes `mode=op.mode` to `destroy_class`; the CLI
+  relay passes the `--mode` option for `destroy-class` (default
+  `"drain"` for other verbs, ignored). No `click.Choice` restriction —
+  the deposit choke point covers every entry uniformly, CLI included.
+- **M2 (pending rehydrate):** `CompositeAgent.rehydrate()` rebuilds
+  `_pending_count` from its own `_state` scope (own-state read, no new
+  edges); `boot_node` calls it once per composite right after
+  `materialize_agents` returns (async context, pumps not yet running —
+  the only quiescent point, so no fan-out/join race). Assignment, not
+  `+=`, so re-calling is idempotent.
+- **M3 (corrupt-shape guards):** post-envelope `model_validate`s in
+  `read_outbox`/`status` are wrapped in `try/except ValidationError`
+  (intra-module): corrupt token → `None`/`unknown task` with a warning;
+  corrupt outbox bytes → `None` (read) / output-`None` + drain kick
+  (status) with a warning. API layer unchanged — stable codes flow
+  through the existing mapping (200-empty / 404).
+- **M4 (index hardening):** `remove_class` drives from the
+  `instances_by_class` index (fetch list → delete each instance key →
+  delete index key, `KeyError`-tolerant) instead of O(N)-scanning
+  `instances`; the effective-state path gains an empty-index fallback
+  (stored-ENABLED + empty index → prefix-scan to confirm + `WARNING`
+  divergence alarm). Phantom-direction residue (power-loss window)
+  documented: wrong-ENABLED fails loudly downstream, never silently
+  corrupts.
+- **m1:** per-file `read_text` in the loader wraps
+  `OSError`/`UnicodeDecodeError → UnrecoverableError` naming the file
+  (loader's contract, parity with the CLI collector and `_read_yaml`).
+- **m2:** `_state_report_fact` mirrors the result-drain shape on corrupt
+  input (warning + consume + replenish); the poison item never strands
+  its successors.
+- **m3:** `_purge_pending` also pops `_control_sequence` entries
+  (keys derived from the purged ledger values); `_bring_up` drops its
+  `_instance_tasks` entry when confirm raises (then re-raises).
+- **m4:** `_tool_policy` requires genuine int/`None` for `retries`
+  (bool/str rejected naming the tool — file-path parity).
+- **m5:** `WARNING key=value` on loader rejections (representative
+  pinning: unknown branch step, duplicate name, bad kind).
+- **m6:** `logger.error agent=` on the linguistic
+  no-output-schema and unknown-kind refuses (tool-branch parity).
+- **m7:** `WARNING key=value` before the three bounded-wait terminal
+  raises (confirm, report, drain).
+- **m8:** `destroy_class` validates `mode` BEFORE the unknown-noop
+  (Slice 9 F5 order; unknown + bogus ⇒ loud `ValueError`).
+- **m9:** `ToolAgent` emits `_EVENT_STEP_ERROR` on its caught error
+  path (existing seam; no double-emit — the runner only emits on
+  escaped exceptions).
+- **m10:** NodeDB docstring reworded to the post-Slice-13 truth
+  (explicit surface; docs-only, no test pin).
+- **m11:** middleware uses `_secrets_equal` (same-package import,
+  no new edge); behavior pinned by parity tests only (black-box
+  equivalent — red N/A by nature).
+- **m12:** `_build_client_store` wraps duplicate-secret `ValueError`
+  as `ConfigError` naming the holder (fatal operator authoring at the
+  boot boundary).
+- **m13:** linguistic materialization refuses a `None` lingo result
+  naming the agent (`UnrecoverableError` — fail-fast parity with the
+  missing-`services.llm` refusal).
+
+## Acceptance criteria (Slice 14)
+
+- `NodeOp` carries `mode` (default `"drain"`); bogus mode fails loudly
+  at deposit; `_apply_node_op` threads the mode (spy-pinned);
+  relay passes `--mode` (review-pinned; CLI e2e out of scope).
+- Rehydrate restores the counter from persisted continuations and is
+  idempotent; fresh agents start at 0.
+- Corrupt token/outbox bytes read empty/unknown with warnings; no raw
+  `ValidationError` reaches the API (seed lifecycle + kick-on-miss
+  unchanged, suite-pinned).
+- `remove_class` never iterates the `instances` scope (spy-pinned);
+  crafted index divergence heals via fallback with a warning.
+- Bad-file reads name the file; corrupt reports warn+consume+replenish;
+  ledger purges drop seq + task entries; `0.0`/`"3"` retries refused;
+  loader/materializer/wait terminals log; unknown+bogus destroy is a
+  loud `ValueError`; tool failures emit `step_error`; middleware
+  parity green; duplicate boot secrets name the holder; `None` lingo
+  refused naming the agent.
 - Full suite + ruff + pyright green; no other behavior changed.

@@ -11,12 +11,18 @@ import itertools
 import logging
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import yaml
 
 from legio.errors import UnrecoverableError
 from legio.patterns.schema1 import AgentSpec, Catalog
+
+
+def _reject(message: str) -> NoReturn:
+    """Fail a load loudly AND observably (rule 9 + rule 11)."""
+    logger.warning("patterns reject %s", message)
+    raise UnrecoverableError(message)
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +46,13 @@ def _validate_tool_parameters(spec: AgentSpec) -> None:
         path = value[1:-1]
         parts = path.split(".")
         if len(parts) != 2 or parts[0] != input_as:
-            raise UnrecoverableError(
+            _reject(
                 f"tool agent {spec.name!r}: parameter {arg!r} path {path!r} must be "
                 f"explicit '{{input_as}}.{{key}}' with input_as={input_as!r}"
             )
         key = parts[1]
         if key not in schema_keys:
-            raise UnrecoverableError(
+            _reject(
                 f"tool agent {spec.name!r}: parameter {arg!r} key {key!r} is not in "
                 f"its input_schema"
             )
@@ -85,11 +91,11 @@ def _validate_agent_spec(
         unused = vars_in_prompt - declared - {"current_date"}
         undeclared = declared - vars_in_prompt
         if unused:
-            raise UnrecoverableError(
+            _reject(
                 f"linguistic agent {spec.name!r}: prompt uses undeclared variables: {unused}"
             )
         if undeclared:
-            raise UnrecoverableError(
+            _reject(
                 f"linguistic agent {spec.name!r}: input_schema has unused declarations: {undeclared}"
             )
 
@@ -107,7 +113,7 @@ def _validate_agent_spec(
                     continue
                 if peer_steps is not None and step_name in peer_steps:
                     continue
-                raise UnrecoverableError(
+                _reject(
                     f"composite {spec.name!r} branch {branch_idx} "
                     f"references unknown pattern: {step_name!r}"
                 )
@@ -149,7 +155,7 @@ def resolve_branch(
     for step_name in branch:
         if step_name in catalog:
             if catalog.is_invalid(step_name):
-                raise UnrecoverableError(
+                _reject(
                     f"branch references invalid pattern: {step_name!r} (not served)"
                 )
             step = catalog.specs[step_name]
@@ -158,7 +164,7 @@ def resolve_branch(
         if peer_steps is not None and step_name in peer_steps:
             route.append((step_name, peer_steps[step_name]))
             continue
-        raise UnrecoverableError(
+        _reject(
             f"branch references unknown pattern: {step_name!r}"
         )
     return tuple(route)
@@ -177,7 +183,7 @@ def resolve_composite_branches(
     parity, rule 13; never widening scope, rule 9).
     """
     if spec.type.value != "composite" or not spec.branches:
-        raise UnrecoverableError(f"spec {spec.name!r} is not a composite with branches")
+        _reject(f"spec {spec.name!r} is not a composite with branches")
     return [resolve_branch(branch, catalog, peer_steps=peer_steps) for branch in spec.branches]
 
 
@@ -190,16 +196,16 @@ def _load_specs_from_yaml(
     elif isinstance(data, list):
         docs = data
     else:
-        raise UnrecoverableError("YAML must be a dict or list of dicts")
+        _reject("YAML must be a dict or list of dicts")
 
     specs = []
     for doc in docs:
         if not isinstance(doc, dict):
-            raise UnrecoverableError("each pattern must be a mapping")
+            _reject("each pattern must be a mapping")
         spec = AgentSpec(**doc)
         specs.append(spec)
         if spec.name in catalog.specs:
-            raise UnrecoverableError(f"duplicate pattern name: {spec.name}")
+            _reject(f"duplicate pattern name: {spec.name}")
         catalog.specs[spec.name] = spec
 
     # Second pass: validate with full catalog for reuse references
@@ -234,8 +240,14 @@ def load_pattern_dirs(
                 f"pattern directory missing: {path} (field {kind!r})"
             )
         for yaml_file in sorted(path.rglob("*.yaml")):
+            try:
+                text = yaml_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                raise UnrecoverableError(
+                    f"cannot read pattern file {yaml_file}: {exc}"
+                ) from exc
             _load_all_documents(
-                yaml_file.read_text(encoding="utf-8"),
+                text,
                 catalog,
                 peer_steps=peer_steps,
                 source_label=str(yaml_file),
@@ -267,15 +279,25 @@ def load_patterns(source: str | Path | dict[str, Any] | list[dict[str, Any]]) ->
         path = Path(source)
         if path.is_dir():
             for yaml_file in sorted(path.glob("*.yaml")):
-                _load_all_documents(
-                    yaml_file.read_text(encoding="utf-8"), catalog, source_label=str(yaml_file)
-                )
+                try:
+                    text = yaml_file.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as exc:
+                    raise UnrecoverableError(
+                        f"cannot read pattern file {yaml_file}: {exc}"
+                    ) from exc
+                _load_all_documents(text, catalog, source_label=str(yaml_file))
         else:
-            _load_all_documents(path.read_text(encoding="utf-8"), catalog, source_label=str(path))
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                raise UnrecoverableError(
+                    f"cannot read pattern file {path}: {exc}"
+                ) from exc
+            _load_all_documents(text, catalog, source_label=str(path))
     elif isinstance(source, (dict, list)):
         _load_specs_from_yaml(source, catalog)
     else:
-        raise UnrecoverableError(f"unsupported source type: {type(source)}")
+        _reject(f"unsupported source type: {type(source)}")
 
     logger.info("patterns loaded count=%d", len(catalog))
     return catalog
@@ -296,6 +318,7 @@ def _load_all_documents(
         documents = list(yaml.safe_load_all(text))
     except yaml.YAMLError as exc:
         where = f" in {source_label}" if source_label else ""
+        logger.warning("patterns reject cannot parse patterns%s", where)
         raise UnrecoverableError(f"cannot parse patterns{where}: {exc}") from exc
     for document in documents:
         if document is not None:

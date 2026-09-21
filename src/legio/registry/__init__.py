@@ -269,10 +269,12 @@ class Registry:
             logger.warning("registry remove_class noop class=%s (absent)", name)
             return
         await self._catalog.delete(name)
-        doomed = [key async for key in self._instances]
-        for key in doomed:
-            if key.startswith(f"{name}:"):
-                await self._instances.delete(key)
+        instance_ids = await self._instances_by_class.fetch(name)
+        for instance_id in instance_ids or []:
+            try:
+                await self._instances.delete(_instance_key(name, instance_id))
+            except KeyError:
+                pass
         try:
             await self._instances_by_class.delete(name)
         except KeyError:
@@ -387,7 +389,17 @@ class Registry:
             return ActivityState.DISABLED
         # O(1) lookup via secondary index instead of O(N) scan
         instances = await self._instances_by_class.fetch(name)
-        return ActivityState.ENABLED if instances else ActivityState.DISABLED
+        if instances:
+            return ActivityState.ENABLED
+        # Crash-divergence backstop: stored-enabled with an empty index is
+        # ambiguous (diverged vs truly empty) — verify by scan once, loudly.
+        # Wrong-DISABLED would silently close entry; wrong-ENABLED fails
+        # loudly downstream instead.
+        async for key in self._instances.keys():
+            if key.startswith(f"{name}:"):
+                logger.warning("registry index miss class=%s (verified by scan)", name)
+                return ActivityState.ENABLED
+        return ActivityState.DISABLED
 
 
 __all__ = [

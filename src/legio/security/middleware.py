@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from enum import Enum
 
-from legio.security import ClientTokenStore
+from legio.security import ClientTokenStore, _secrets_equal
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +85,7 @@ class AuthMiddleware:
             return AuthorizationResult.UNAUTHORIZED_401
 
         if self._is_federation_endpoint(endpoint):
-            if token != self._shared_token:
+            if token is None or not _secrets_equal(token, self._shared_token):
                 return AuthorizationResult.UNAUTHORIZED_401
             if peer_id is not None and peer_id not in self._peers:
                 return AuthorizationResult.FORBIDDEN_403
@@ -95,7 +95,7 @@ class AuthMiddleware:
                 else AuthorizationResult.ALLOWED
             )
 
-        if token == self._shared_token:
+        if _secrets_equal(token, self._shared_token):
             return AuthorizationResult.UNAUTHORIZED_401
         if self._token_to_consumer_id(token) is None:
             return AuthorizationResult.UNAUTHORIZED_401

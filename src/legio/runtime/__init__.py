@@ -156,6 +156,7 @@ class NodeOp(BaseModel):
     verb: _NODE_OP_VERB
     class_name: str
     instance_id: str | None = None
+    mode: Literal["drain", "now"] = "drain"
 
 
 class TaskState(str, Enum):
@@ -444,7 +445,7 @@ class Runtime:
     # --- node control intake (LEG-088) -------------------------------------------
 
     async def deposit_node_op(
-        self, verb: str, class_name: str, instance_id: str | None = None
+        self, verb: str, class_name: str, instance_id: str | None = None, *, mode: str = "drain"
     ) -> str:
         """Deposit an operator lifecycle intent on the ``node_ops`` intake.
 
@@ -457,7 +458,7 @@ class Runtime:
         Returns the drain task id, so the operator can read the intent's
         outcome. Rejections are visible (rule 9) and never mint anything.
         """
-        op = self._validate_node_op(verb, class_name, instance_id)
+        op = self._validate_node_op(verb, class_name, instance_id, mode)
         if await self.registry.class_state(op.class_name) is None:
             logger.warning(
                 "runtime node_op deny verb=%s class=%s (unknown class)",
@@ -557,7 +558,17 @@ class Runtime:
             item = await self._state_reports.get(block=False)
         except IndexError:
             return {"processed": 0, "replenished": False}
-        report = AgentStateReport.model_validate(item.data)
+        try:
+            report = AgentStateReport.model_validate(item.data)
+        except ValidationError as exc:
+            logger.warning(
+                "runtime state_report invalid reason=%s (consumed, not applied)",
+                exc,
+            )
+            replenished = await self._state_reports.count() > 0
+            if replenished:
+                await self.manager.submit_task(STATE_REPORT_TASK)
+            return {"processed": 1, "replenished": replenished}
         class_name = self._pending_controls.pop(
             (report.instance_id, report.action.value, report.seq), None
         )
@@ -687,7 +698,7 @@ class Runtime:
         elif op.verb == "disable_class":
             await self.disable_class(op.class_name)
         elif op.verb == "destroy_class":
-            await self.destroy_class(op.class_name)
+            await self.destroy_class(op.class_name, mode=op.mode)
         elif op.verb == "enable_instance":
             await self.enable_instance(op.class_name, self._require_op_instance(op))
         elif op.verb == "disable_instance":
@@ -714,12 +725,23 @@ class Runtime:
             )
         return op.instance_id
 
-    def _validate_node_op(self, verb: str, class_name: str, instance_id: str | None) -> NodeOp:
+    def _validate_node_op(
+        self, verb: str, class_name: str, instance_id: str | None, mode: str = "drain"
+    ) -> NodeOp:
         """Build and shape-check an intent (§A): an unknown verb is refused
         visibly at the intake; instance verbs require an instance and class
-        verbs forbid one."""
+        verbs forbid one; the destroy mode is drain|now (anything else is a
+        loud caller error, never a silent default)."""
+        if mode not in ("drain", "now"):
+            logger.warning("runtime node_op deny verb=%s mode=%s (unknown mode)", verb, mode)
+            raise RecoverableError(f"unknown node op mode {mode!r} (want 'drain' or 'now')")
         try:
-            op = NodeOp(verb=cast(_NODE_OP_VERB, verb), class_name=class_name, instance_id=instance_id)
+            op = NodeOp(
+                verb=cast(_NODE_OP_VERB, verb),
+                class_name=class_name,
+                instance_id=instance_id,
+                mode=cast(Literal["drain", "now"], mode),
+            )
         except ValidationError as exc:
             logger.warning("runtime node_op deny verb=%s (unknown verb)", verb)
             raise RecoverableError(f"unknown node op verb {verb!r}") from exc
@@ -772,6 +794,12 @@ class Runtime:
                     return record
                 if record.status == TaskStatus.FAILED:
                     error = record.error or "unknown error"
+                    logger.warning(
+                        "runtime confirm failed what=%s task=%s error=%s",
+                        what,
+                        task_id,
+                        error,
+                    )
                     raise RecoverableError(f"{what}: task {task_id!r} failed: {error}")
             await asyncio.sleep(interval)
         state = last.status.value if last is not None else "missing"
@@ -821,6 +849,13 @@ class Runtime:
                     and instance is not None
                 ):
                     error = record.error or "unknown error"
+                    logger.warning(
+                        "runtime report failed what=%s class=%s instance=%s error=%s",
+                        what,
+                        class_name,
+                        instance_id,
+                        error,
+                    )
                     raise RecoverableError(f"{what}: bring-up task failed: {error}")
             await asyncio.sleep(interval)
         raise RecoverableError(
@@ -856,12 +891,16 @@ class Runtime:
         queue = queue_key(class_name)
         task_id = await self.manager.submit_task(BRING_UP_TASK, class_name, instance_id, queue)
         self._instance_tasks[(class_name, instance_id)] = task_id
-        await self._await_observable_state(
-            task_id,
-            lambda record: record.status in (TaskStatus.RUNNING, TaskStatus.SUCCESS),
-            what=f"bring_up class={class_name} instance={instance_id}",
-            class_name=class_name,
-        )
+        try:
+            await self._await_observable_state(
+                task_id,
+                lambda record: record.status in (TaskStatus.RUNNING, TaskStatus.SUCCESS),
+                what=f"bring_up class={class_name} instance={instance_id}",
+                class_name=class_name,
+            )
+        except BaseException:
+            self._instance_tasks.pop((class_name, instance_id), None)
+            raise
         await self.registry.record_instance(class_name, instance_id, state=born_state)
         logger.info(
             "runtime bring_up class=%s instance=%s task=%s born=%s",
@@ -1080,12 +1119,20 @@ class Runtime:
         required_keys = ("token", "client_id")
         if not all(k in record.kwargs for k in required_keys):
             return None
-        token = FlowToken.model_validate(record.kwargs["token"])
+        try:
+            token = FlowToken.model_validate(record.kwargs["token"])
+        except ValidationError as exc:
+            logger.warning("runtime read_outbox corrupt token task=%s error=%s", task_id, exc)
+            return None
         data = await self._outbox.fetch(task_id)
         if data is None:
             await self._kick_result_drain(token.launcher_class)
             return None
-        result = ExecutionResultMessage.model_validate(data)
+        try:
+            result = ExecutionResultMessage.model_validate(data)
+        except ValidationError as exc:
+            logger.warning("runtime read_outbox corrupt record task=%s error=%s", task_id, exc)
+            return None
         logger.info("runtime read_outbox task=%s ready=true", task_id)
         return dict(result.payload)
 
@@ -1122,15 +1169,24 @@ class Runtime:
             raise PermissionError("task is scoped to its owning client")
         if record.status == TaskStatus.FAILED:
             raise RecoverableError(f"task {task_id!r} failed: {record.error or 'unknown error'}")
-        token = FlowToken.model_validate(record.kwargs["token"])
+        try:
+            token = FlowToken.model_validate(record.kwargs["token"])
+        except ValidationError as exc:
+            logger.warning("runtime status corrupt token task=%s error=%s", task_id, exc)
+            raise KeyError(f"unknown task {task_id!r}") from exc
         state = TaskState.PENDING if record.status == TaskStatus.PENDING else TaskState.RUNNING
         output: dict[str, Any] | None = None
         result_key: str | None = None
         data = await self._outbox.fetch(task_id)
+        result = None
         if data is None:
             await self._kick_result_drain(token.launcher_class)
         else:
-            result = ExecutionResultMessage.model_validate(data)
+            try:
+                result = ExecutionResultMessage.model_validate(data)
+            except ValidationError as exc:
+                logger.warning("runtime status corrupt record task=%s error=%s", task_id, exc)
+        if result is not None:
             output = dict(result.payload)
             state = TaskState.COMPLETED
             result_key = outbox_key(task_id)
@@ -1388,11 +1444,11 @@ class Runtime:
         closed — a half-destroyed class must never re-admit work. Only the
         drain timeout restores the gate (untouched class, §12.5.3).
         """
+        if mode not in ("drain", "now"):
+            raise ValueError(f"unknown destroy mode {mode!r}")
         if await self.registry.class_state(name) is None:
             logger.warning("runtime destroy_class noop class=%s (unknown)", name)
             return
-        if mode not in ("drain", "now"):
-            raise ValueError(f"unknown destroy mode {mode!r}")
         prior_gate = await self._gates.fetch(name)
         await self._gates.set(name, {"state": ActivityState.DISABLED.value})
         if mode == "drain":
@@ -1426,6 +1482,11 @@ class Runtime:
                     await self._gates.delete(name)
                 else:
                     await self._gates.set(name, prior_gate)
+                logger.warning(
+                    "runtime drain timed out class=%s waited=%.2fs (gate restored)",
+                    name,
+                    timeout,
+                )
                 raise RecoverableError(
                     f"drain of class {name!r} timed out after {timeout}s; "
                     "class left untouched (gate restored)"
@@ -1632,6 +1693,9 @@ class Runtime:
         stale = [key for key in self._pending_controls if key[0] == instance_id]
         for key in stale:
             del self._pending_controls[key]
+        seq_stale = [key for key in self._control_sequence if key[1] == instance_id]
+        for key in seq_stale:
+            del self._control_sequence[key]
         if stale:
             logger.info(
                 "runtime pending purged instance=%s entries=%s",

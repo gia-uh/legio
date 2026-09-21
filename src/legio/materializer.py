@@ -43,7 +43,7 @@ from fastapi import FastAPI
 from legio.agents import AgentBase, CompositeAgent, LinguisticAgent, ToolAgent
 from legio.api import create_app
 from legio.config import LlmConfig, LoadedConfig
-from legio.errors import UnrecoverableError
+from legio.errors import ConfigError, UnrecoverableError
 from legio.federation import NodeDB, build_routes, fetch_peer_catalogs, roster_steps
 from legio.flow import ControlVerifier, derive_control_key
 from legio.patterns import (
@@ -112,8 +112,14 @@ def _materialize_atom(
 
     if spec.kind is AgentKind.LINGUISTIC:
         if spec.output.output_schema is None:
+            logger.error("linguistic agent missing output_schema agent=%s", spec.name)
             raise UnrecoverableError(
                 f"linguistic agent {spec.name!r} has no output_schema to compile"
+            )
+        if lingo_client is None:
+            logger.error("linguistic agent missing lingo agent=%s", spec.name)
+            raise UnrecoverableError(
+                f"linguistic agent {spec.name!r} has no lingo client (None factory result)"
             )
         output_model = compile_schema(spec.output.output_schema)
         return LinguisticAgent(
@@ -130,6 +136,7 @@ def _materialize_atom(
             execution_timeout=_step_timeout(spec),
         )
 
+    logger.error("atomic agent unknown kind agent=%s kind=%s", spec.name, spec.kind)
     raise UnrecoverableError(f"atomic agent {spec.name!r} has unknown kind: {spec.kind}")
 
 
@@ -286,7 +293,10 @@ def _build_client_store(
                 consumer_id,
             )
             continue
-        store.register(consumer_id, token=token, agents=client_cfg.agents)
+        try:
+            store.register(consumer_id, token=token, agents=client_cfg.agents)
+        except ValueError as exc:
+            raise ConfigError(f"invalid client token consumer={consumer_id}: {exc}") from exc
     return store
 
 
@@ -447,6 +457,9 @@ async def _boot_on_database(
         peer_steps=peer_steps,
     )
     engine.mount_agents(agents)
+    for agent in agents.values():
+        if isinstance(agent, CompositeAgent):
+            await agent.rehydrate()
 
     client_store = _build_client_store(loaded)
     booted = BootedNode(

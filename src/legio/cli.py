@@ -40,7 +40,7 @@ import threading
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from time import monotonic
-from typing import Annotated, Any, NoReturn
+from typing import Annotated, Any, NoReturn, cast
 
 import typer
 import uvicorn
@@ -367,7 +367,8 @@ async def _dispatch_command(
         if verb.endswith("_instance") and not instance_id:
             raise LegioError(f"{command} requires an instance id")
         timeout, interval = await _operator_budget(booted, name)
-        task_id = await runtime.deposit_node_op(verb, name, instance_id)
+        mode = cast(str, options.get("mode") or "drain") if command == "destroy-class" else "drain"
+        task_id = await runtime.deposit_node_op(verb, name, instance_id, mode=mode)
         await _await_operator(
             runtime,
             task_id,
