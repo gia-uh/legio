@@ -78,6 +78,14 @@ await maintainer review; `LEG-101` (semver, packaging, changelog, tags) and
 
 ## Development
 
-`uv run pytest -q`, `uv run ruff check .`, `uv run pyright`. Everything in this
-repo is English (AGENTS.md rule 1); work is per-issue, contract-first, and every
-turn ends with a journal commit.
+`make ci` mirrors the CI gate exactly: lint (`ruff check`) + format check
+(`ruff format --check`) + typecheck (`pyright`) + full `pytest`. Convenience
+targets: `make sync`, `make lint`, `make format`, `make format-check`,
+`make typecheck`, `make test`, `make build` (LEG-101 wheel/archive), `make
+clean`, `make tag`/`make release` (maintainer only). Two known gates currently
+show the documented baseline debt — `ruff format --check` (56 files, triage
+from Session 108) and the 2 pyright false positives in
+`tests/test_leg103_slice13_hardening.py`; both are tracked in `docs/JOURNALS/`
+and kept separate from per-issue work. Everything in this repo is English
+(AGENTS.md rule 1); work is per-issue, contract-first, and every turn ends
+with a journal commit.
