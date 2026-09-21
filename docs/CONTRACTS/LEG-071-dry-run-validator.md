@@ -1,6 +1,8 @@
 # LEG-071 — Dry-run validator + strict fail-fast startup
 
-- **Status:** DRAFT (awaiting maintainer approval)
+- **Status:** APPROVED by maintainer direction on 2026-09-21 (GitHub #38):
+  implement the validate command; the startup gate (refuse to serve an invalid
+  catalog) already ships with the boot's loud loader refusal.
 - **Rasante:** R-7
 - **GitHub issue:** #38
 - **Source:** `docs/PLAN.md` (LEG-071)
@@ -32,9 +34,14 @@ From `docs/PLAN.md` (LEG-071), verbatim:
 
 ## Tests
 - CLI contract tests (red first): invalid fixture → non-zero, startup refusal.
+  Ship: `tests/test_leg071_validate.py` (loader-level `validate_pattern_dirs`
+  equivalence with `load_pattern_dirs` on both clean and broken trees; CLI-level
+  `legio validate --dry-run` exit codes and per-pattern stderr lines).
 
 ## Validation case
-- Injecting a broken pattern fixture.
+- Injecting a broken pattern fixture (end-to-end: `python -m legio validate
+  --dry-run --dir` on a broken node tree → `validate error` lines + exit 1;
+  on `examples/transform` → `validate ok` + exit 0).
 
 ## Definition of done
 - All acceptance criteria met by running checks.

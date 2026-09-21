@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 import yaml
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from legio.errors import UnrecoverableError
 from legio.patterns.schema1 import AgentSpec, Catalog
@@ -355,11 +355,118 @@ def split_yaml_documents(text: str) -> list[str]:
     return segments
 
 
+class ValidationIssue(BaseModel):
+    """One invalid-pattern finding of the dry-run validator (LEG-071).
+
+    The dry-run reports **every** invalid pattern (the atomic loader stops at
+    the first failure); each finding names the pattern it can attribute (``?``
+    when the document could not even be parsed), its source file and the
+    loader's own choke-point message — never a second opinion.
+    """
+
+    pattern: str
+    file: str | None = None
+    detail: str
+
+    def render(self) -> str:
+        """One CLI line: ``pattern=<name> file=<path> detail=<loader message>``."""
+        where = f" file={self.file}" if self.file else ""
+        return f"pattern={self.pattern!r}{where} detail={self.detail}"
+
+
+def _declared_name(segment: str) -> str:
+    """The ``name`` a parsed YAML document declares (``?`` when unparseable)."""
+    try:
+        value = yaml.safe_load(segment)
+    except yaml.YAMLError:
+        return "?"
+    if isinstance(value, dict):
+        name = value.get("name")
+        return str(name) if isinstance(name, str) else "?"
+    return "?"
+
+
+def validate_pattern_dirs(
+    pattern_dirs: Mapping[str, Path], *, peer_steps: Mapping[str, str] | None = None
+) -> list[ValidationIssue]:
+    """Dry-run correctness pass over a patterns tree (LEG-071, GitHub #38).
+
+    Reports every invalid pattern as a ``ValidationIssue`` (a missing directory,
+    an unreadable or unparseable file, a shape rejection, a duplicate name, an
+    unresolvable or cyclic composite reference) and returns the list; the CLI
+    maps it to per-pattern error lines and a non-zero exit.
+
+    The verdict is **exactly equivalent** to the boot load: the pass replays the
+    loader's own choke point (``_load_specs_from_yaml``) over the same
+    documents in the same order ``load_pattern_dirs`` scans them (kind order,
+    file sort, document order), so a tree with no findings is a tree the boot
+    gate accepts, and a tree the boot refuses produces findings here. Unlike the
+    atomic loader, the pass continues past a failure to surface every invalid
+    pattern (rule 9: nothing goes unreported).
+    """
+    issues: list[ValidationIssue] = []
+    catalog = Catalog()
+    ordered: list[tuple[Path, str]] = []
+
+    for kind, directory in pattern_dirs.items():
+        path = Path(directory)
+        if not path.is_dir():
+            issues.append(
+                ValidationIssue(
+                    pattern="?",
+                    file=str(path),
+                    detail=f"pattern directory missing: {path} (field {kind!r})",
+                )
+            )
+            continue
+        for yaml_file in sorted(path.rglob("*.yaml")):
+            try:
+                text = yaml_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                issues.append(
+                    ValidationIssue(
+                        pattern="?",
+                        file=str(yaml_file),
+                        detail=f"cannot read pattern file {yaml_file}: {exc}",
+                    )
+                )
+                continue
+            try:
+                segments = split_yaml_documents(text)
+            except yaml.YAMLError as exc:
+                issues.append(
+                    ValidationIssue(
+                        pattern="?",
+                        file=str(yaml_file),
+                        detail=f"cannot parse patterns in {yaml_file}: {exc}",
+                    )
+                )
+                continue
+            for segment in segments:
+                ordered.append((yaml_file, segment))
+
+    for yaml_file, segment in ordered:
+        try:
+            data = yaml.safe_load(segment)
+            _load_specs_from_yaml(data, catalog, peer_steps=peer_steps)
+        except (UnrecoverableError, yaml.YAMLError) as exc:
+            issues.append(
+                ValidationIssue(
+                    pattern=_declared_name(segment),
+                    file=str(yaml_file),
+                    detail=str(exc),
+                )
+            )
+    return issues
+
+
 __all__ = [
     "Catalog",
+    "ValidationIssue",
     "load_pattern_dirs",
     "load_patterns",
     "resolve_branch",
     "resolve_composite_branches",
     "split_yaml_documents",
+    "validate_pattern_dirs",
 ]

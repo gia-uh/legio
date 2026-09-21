@@ -51,7 +51,11 @@ from legio.config import CliOverrides, LoadedConfig, load
 from legio.errors import ConfigError, LegioError
 from legio.manager import TaskStatus
 from legio.materializer import BootedNode, boot_node
-from legio.patterns.loader import load_patterns, split_yaml_documents
+from legio.patterns.loader import (
+    load_patterns,
+    split_yaml_documents,
+    validate_pattern_dirs,
+)
 from legio.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -409,6 +413,50 @@ async def _dispatch_command(
     raise LegioError(f"unknown agent command {command!r}")
 
 
+# --- validate --dry-run (LEG-071, GitHub #38) ----------------------------------
+
+
+def _resolve_validate_dirs(loaded: LoadedConfig | None, directory: Path | None) -> dict[str, Path]:
+    """Resolve the patterns tree under validation: an explicit ``--dir`` wins, a
+    ``--config`` supplies the config's pattern dirs; neither is a loud caller
+    error (rule 9) — the dry-run is never silent about what it is not looking at."""
+    if directory is not None:
+        root = Path(directory)
+        return {
+            "tool": root / "patterns" / "tool",
+            "linguistic": root / "patterns" / "linguistic",
+            "composite": root / "patterns" / "composite",
+        }
+    if loaded is not None:
+        return {
+            "tool": loaded.config.patterns.tool,
+            "linguistic": loaded.config.patterns.linguistic,
+            "composite": loaded.config.patterns.composite,
+        }
+    raise LegioError("validate requires --dir DIR (the node patterns tree) or --config path")
+
+
+async def validate_node(
+    loaded: LoadedConfig | None = None, *, directory: Path | None = None
+) -> int:
+    """Dry-run validate (LEG-071): load the patterns tree and report every
+    invalid pattern. Pure check — never boots, never serves, never writes.
+
+    Returns 0 when valid, non-zero when any pattern is invalid; issue lines go
+    to stderr so a script can both read them and test the exit code (rule 9).
+    """
+    pattern_dirs = _resolve_validate_dirs(loaded, directory)
+    issues = validate_pattern_dirs(pattern_dirs)
+    for issue in issues:
+        typer.echo(f"validate error {issue.render()}", err=True)
+    if issues:
+        logger.warning("cli validate failed issues=%d", len(issues))
+        return 1
+    typer.echo("validate ok: all patterns valid")
+    logger.info("cli validate ok")
+    return 0
+
+
 # --- typer command layer -------------------------------------------------------
 
 
@@ -483,6 +531,33 @@ def server_command(
     )
     _configure_logging(loaded)
     _run_cli(serve_node(loaded, host=host, port=port, federation=federation))
+
+
+@app.command("validate")
+def validate_command(
+    config: Annotated[
+        Path | None, typer.Option("--config", help="Node config file (LEG-017).")
+    ] = None,
+    directory: Annotated[
+        Path | None,
+        typer.Option(
+            "--dir",
+            help="Node directory whose patterns/{tool,linguistic,composite} tree is validated.",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Interface marker (LEG-071): this command is always a dry run —"
+            " it loads and reports, never boots, serves or writes.",
+        ),
+    ] = False,
+) -> None:
+    """Validate the patterns tree offline (LEG-071): report every invalid
+    pattern and exit non-zero on any (a tree the boot gate would refuse)."""
+    loaded = load(config) if config is not None else None
+    _run_cli(validate_node(loaded, directory=directory))
 
 
 @agent_cmd.callback()
@@ -769,4 +844,5 @@ __all__ = [
     "executor_pump_count",
     "main",
     "serve_node",
+    "validate_node",
 ]
