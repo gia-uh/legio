@@ -288,7 +288,9 @@ class TestLifecycle:
         assert params.drain_interval == 0.02
 
     def test_resolution_overlays_partial_levels(self, tmp_path):
-        path = write_config(tmp_path, {"lifecycle": {"per_kind": {"tool": {"drain_interval": 0.5}}}})
+        path = write_config(
+            tmp_path, {"lifecycle": {"per_kind": {"tool": {"drain_interval": 0.5}}}}
+        )
         cfg = load(config_path=path, env={}).config
         params = cfg.lifecycle.resolve("some-tool", per_kind=AgentKind.TOOL)
         assert params.drain_timeout == 300.0

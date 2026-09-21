@@ -25,6 +25,7 @@ def _reject(message: str) -> NoReturn:
     logger.warning("patterns reject %s", message)
     raise UnrecoverableError(message)
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,9 +93,7 @@ def _validate_agent_spec(
         unused = vars_in_prompt - declared - {"current_date"}
         undeclared = declared - vars_in_prompt
         if unused:
-            _reject(
-                f"linguistic agent {spec.name!r}: prompt uses undeclared variables: {unused}"
-            )
+            _reject(f"linguistic agent {spec.name!r}: prompt uses undeclared variables: {unused}")
         if undeclared:
             _reject(
                 f"linguistic agent {spec.name!r}: input_schema has unused declarations: {undeclared}"
@@ -156,18 +155,14 @@ def resolve_branch(
     for step_name in branch:
         if step_name in catalog:
             if catalog.is_invalid(step_name):
-                _reject(
-                    f"branch references invalid pattern: {step_name!r} (not served)"
-                )
+                _reject(f"branch references invalid pattern: {step_name!r} (not served)")
             step = catalog.specs[step_name]
             route.append((step.name, step.input.input_as))
             continue
         if peer_steps is not None and step_name in peer_steps:
             route.append((step_name, peer_steps[step_name]))
             continue
-        _reject(
-            f"branch references unknown pattern: {step_name!r}"
-        )
+        _reject(f"branch references unknown pattern: {step_name!r}")
     return tuple(route)
 
 
@@ -211,9 +206,7 @@ def _load_specs_from_yaml(
             # leaking the raw pydantic shape.
             name = doc.get("name", "?")
             logger.warning("patterns reject shape pattern=%s error=%s", name, exc)
-            raise UnrecoverableError(
-                f"invalid pattern shape for {name!r}: {exc}"
-            ) from exc
+            raise UnrecoverableError(f"invalid pattern shape for {name!r}: {exc}") from exc
         specs.append(spec)
         if spec.name in catalog.specs:
             _reject(f"duplicate pattern name: {spec.name}")
@@ -221,9 +214,7 @@ def _load_specs_from_yaml(
 
     # Second pass: validate with full catalog for reuse references
     for spec in specs:
-        _validate_agent_spec(
-            spec, catalog=catalog.specs, peer_steps=peer_steps
-        )
+        _validate_agent_spec(spec, catalog=catalog.specs, peer_steps=peer_steps)
 
     return specs
 
@@ -247,16 +238,12 @@ def load_pattern_dirs(
     for kind, directory in pattern_dirs.items():
         path = Path(directory)
         if not path.is_dir():
-            raise UnrecoverableError(
-                f"pattern directory missing: {path} (field {kind!r})"
-            )
+            raise UnrecoverableError(f"pattern directory missing: {path} (field {kind!r})")
         for yaml_file in sorted(path.rglob("*.yaml")):
             try:
                 text = yaml_file.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as exc:
-                raise UnrecoverableError(
-                    f"cannot read pattern file {yaml_file}: {exc}"
-                ) from exc
+                raise UnrecoverableError(f"cannot read pattern file {yaml_file}: {exc}") from exc
             _load_all_documents(
                 text,
                 catalog,
@@ -284,7 +271,9 @@ def load_patterns(source: str | Path | dict[str, Any] | list[dict[str, Any]]) ->
     catalog = Catalog()
 
     # Handle YAML string (contains newlines or starts with YAML indicators)
-    if isinstance(source, str) and ("\n" in source or source.strip().startswith(("{", "[", "-", "name:"))):
+    if isinstance(source, str) and (
+        "\n" in source or source.strip().startswith(("{", "[", "-", "name:"))
+    ):
         _load_all_documents(source, catalog, source_label="inline")
     elif isinstance(source, (str, Path)):
         path = Path(source)
@@ -301,9 +290,7 @@ def load_patterns(source: str | Path | dict[str, Any] | list[dict[str, Any]]) ->
             try:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as exc:
-                raise UnrecoverableError(
-                    f"cannot read pattern file {path}: {exc}"
-                ) from exc
+                raise UnrecoverableError(f"cannot read pattern file {path}: {exc}") from exc
             _load_all_documents(text, catalog, source_label=str(path))
     elif isinstance(source, (dict, list)):
         _load_specs_from_yaml(source, catalog)

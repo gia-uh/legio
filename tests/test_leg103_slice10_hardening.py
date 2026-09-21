@@ -52,9 +52,7 @@ assert SCHEMA_VERSION == FLOW_SCHEMA_VERSION
 
 def _deposit_app(beaver_db: AsyncBeaverDB, agent: str):
     runtime = Runtime(beaver_db, node_id=NODE_B)
-    return create_app(
-        runtime=runtime, pattern_catalog=tool_catalog(agent), federation_token=TOKEN
-    )
+    return create_app(runtime=runtime, pattern_catalog=tool_catalog(agent), federation_token=TOKEN)
 
 
 async def _client(app) -> httpx.AsyncClient:
@@ -120,9 +118,7 @@ async def test_remote_queue_stamps_schema_version(
     from legio.federation import NodeDB
 
     route = respx.post(f"{PEER_B_URL}/deposits").mock(
-        return_value=httpx.Response(
-            200, json={"queue": queue_key("cutter"), "deposited": True}
-        )
+        return_value=httpx.Response(200, json={"queue": queue_key("cutter"), "deposited": True})
     )
     async with httpx.AsyncClient() as client:
         db = NodeDB(
@@ -309,6 +305,7 @@ async def test_mid_destroy_crash_keeps_gate_closed(
 ) -> None:
     """Slice 10 (F9): keep-closed is the documented safe posture — a crash
     mid-destroy never re-admits work into a half-destroyed class."""
+
     async def failing_clear(name: str) -> None:
         raise RuntimeError("clear exploded")
 
@@ -354,7 +351,9 @@ def test_embedding_batch_requires_genuine_int(batch) -> None:
 
 def test_embedding_batch_genuine_int_and_absent_pass() -> None:
     """Guard: real and absent batch sizes are untouched."""
-    assert EmbeddingConfig(base_url="http://x", max_tokens_per_batch=100).max_tokens_per_batch == 100
+    assert (
+        EmbeddingConfig(base_url="http://x", max_tokens_per_batch=100).max_tokens_per_batch == 100
+    )
     assert EmbeddingConfig(base_url="http://x").max_tokens_per_batch is None
 
 

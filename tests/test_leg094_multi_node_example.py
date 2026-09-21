@@ -255,23 +255,15 @@ def _node_dirs(tmp_path: Path, name: str, *, peers: list[tuple[str, str]]) -> di
     _write_empty_dir(ling_dir)
     _write_empty_dir(comp_dir)
     if name == "a":
-        (tool_dir / "utter.yaml").write_text(
-            UTTER_YAML.format(utter_as=UTTER_AS), encoding="utf-8"
-        )
-        (comp_dir / "audit.yaml").write_text(
-            AUDIT_YAML.format(audit_as=AUDIT_AS), encoding="utf-8"
-        )
+        (tool_dir / "utter.yaml").write_text(UTTER_YAML.format(utter_as=UTTER_AS), encoding="utf-8")
+        (comp_dir / "audit.yaml").write_text(AUDIT_YAML.format(audit_as=AUDIT_AS), encoding="utf-8")
     elif name == "b":
         (ling_dir / "refine.yaml").write_text(
             REFINE_YAML.format(refine_as=REFINE_AS), encoding="utf-8"
         )
-        (comp_dir / "brief.yaml").write_text(
-            BRIEF_YAML.format(brief_as=BRIEF_AS), encoding="utf-8"
-        )
+        (comp_dir / "brief.yaml").write_text(BRIEF_YAML.format(brief_as=BRIEF_AS), encoding="utf-8")
     else:
-        (ling_dir / "spot.yaml").write_text(
-            SPOT_YAML.format(spot_as=SPOT_AS), encoding="utf-8"
-        )
+        (ling_dir / "spot.yaml").write_text(SPOT_YAML.format(spot_as=SPOT_AS), encoding="utf-8")
     tools_path = base / "tools.yaml"
     if name == "a":
         tools_path.write_text(
@@ -358,9 +350,6 @@ async def _wait_completed(runtime, task_id: str, client_id: str) -> dict:
     raise AssertionError(f"task {task_id} did not complete in time")
 
 
-
-
-
 # --- the 3-node example -------------------------------------------------------
 
 
@@ -383,15 +372,9 @@ async def test_a_delegates_to_b_and_c_and_receives_the_final_result(
         dirs_a = _node_dirs(tmp_path, "a", peers=[(NODE_B, HOST_B), (NODE_C, HOST_C)])
         dirs_b = _node_dirs(tmp_path, "b", peers=[(NODE_C, HOST_C), (NODE_A, HOST_A)])
         dirs_c = _node_dirs(tmp_path, "c", peers=[(NODE_A, HOST_A), (NODE_B, HOST_B)])
-        loaded_a = load(
-            dirs_a["config"], env={"LEGIO_FEDERATION_TOKEN": TOKEN}
-        )
-        loaded_b = load(
-            dirs_b["config"], env={"LEGIO_FEDERATION_TOKEN": TOKEN}
-        )
-        loaded_c = load(
-            dirs_c["config"], env={"LEGIO_FEDERATION_TOKEN": TOKEN}
-        )
+        loaded_a = load(dirs_a["config"], env={"LEGIO_FEDERATION_TOKEN": TOKEN})
+        loaded_b = load(dirs_b["config"], env={"LEGIO_FEDERATION_TOKEN": TOKEN})
+        loaded_c = load(dirs_c["config"], env={"LEGIO_FEDERATION_TOKEN": TOKEN})
 
         booted_a = await boot_node(
             loaded_a,

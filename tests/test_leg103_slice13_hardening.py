@@ -147,7 +147,9 @@ def test_nodedb_proxy_has_no_close() -> None:
     from beaver import AsyncBeaverDB
 
     db = AsyncBeaverDB(":memory:")
-    proxy = NodeDB(db, node_id="test", routes={}, peers={}, federation_token="x", client=httpx.AsyncClient())
+    proxy = NodeDB(
+        db, node_id="test", routes={}, peers={}, federation_token="x", client=httpx.AsyncClient()
+    )
     # queue, dict, lock should exist
     assert hasattr(proxy, "queue")
     assert hasattr(proxy, "dict")
@@ -167,7 +169,9 @@ def test_nodedb_proxy_queue_works() -> None:
     from beaver import AsyncBeaverDB
 
     db = AsyncBeaverDB(":memory:")
-    proxy = NodeDB(db, node_id="test", routes={}, peers={}, federation_token="x", client=httpx.AsyncClient())
+    proxy = NodeDB(
+        db, node_id="test", routes={}, peers={}, federation_token="x", client=httpx.AsyncClient()
+    )
     q = proxy.queue("test-queue")
     assert q is not None
 
@@ -180,10 +184,12 @@ def test_nodedb_aclose_closes_owned_client_sync() -> None:
     proxy = NodeDB(db, node_id="test", routes={}, peers={}, federation_token="x", client=None)
     client = proxy._ensure_client()
     assert client is not None
+
     # aclose should close the client
     async def _test():
         await proxy.aclose()
         assert client.is_closed
+
     import asyncio
 
     asyncio.run(_test())
@@ -241,11 +247,10 @@ async def test_pending_controls_eviction_removes_seq(
 ) -> None:
     """Slice 13 (m2): eviction removes both ledger entry and seq."""
     runtime = Runtime(beaver_db, node_id="slice13@host")
-    dummy_class: str = "c"
     for index in range(1024):
-        runtime._pending_controls[(f"i-{index}", "enable", index)] = dummy_class  # pyright: ignore
-    runtime._control_sequence[("i-0", "enable")] = dummy_class
-    runtime._control_sequence[("c", "i-0")] = dummy_class
+        runtime._pending_controls[(f"i-{index}", "enable", index)] = "c"  # pyright: ignore[reportIndexingError]
+    runtime._control_sequence[("i-0", "enable")] = 0
+    runtime._control_sequence[("c", "i-0")] = 0
     with caplog.at_level(logging.WARNING, logger="legio.runtime"):
         await runtime._instance_control_fact("anyclass", "mint-0", "enable")
     assert len(runtime._pending_controls) == 1024
@@ -260,6 +265,7 @@ async def test_pending_controls_eviction_removes_seq(
 # --------------------------------------------------------------------------
 # m3 — NodeDB.aclose() closes client
 # --------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_nodedb_aclose_closes_owned_client(beaver_db: AsyncBeaverDB) -> None:
@@ -340,7 +346,9 @@ def test_nodedb_proxy_surface_minimal() -> None:
     from beaver import AsyncBeaverDB
 
     db = AsyncBeaverDB(":memory:")
-    proxy = NodeDB(db, node_id="a", routes={}, peers={}, federation_token="x", client=httpx.AsyncClient())
+    proxy = NodeDB(
+        db, node_id="a", routes={}, peers={}, federation_token="x", client=httpx.AsyncClient()
+    )
     # queue, dict, lock work
     _ = proxy.queue("test")
     _ = proxy.dict("test")
@@ -363,6 +371,7 @@ async def test_kick_flag_inside_try(
     """Slice 13 (m7): kick flag added inside try, so cancel between add
     and try is impossible."""
     runtime = Runtime(beaver_db, node_id="slice13@host")
+
     # Monkeypatch submit_task to raise immediately
     async def fail_submit(*args, **kwargs):
         raise RuntimeError("submit failed")
@@ -384,14 +393,14 @@ async def test_destroy_ttl_cancel_on_success(
     beaver_db: AsyncBeaverDB,
 ) -> None:
     """Slice 13 (m8): destroy clears queue, then cancels TTL on success.
-    
+
     The destroy is done inline (not via a fact); TTL is cancelled at the end
     via `_gates.delete` only if all steps succeed.
     """
     runtime = Runtime(beaver_db, node_id="slice13@host")
     name, spec = _load_atomic_spec("order")
     await runtime.create_class(spec, spec_yaml=_atomic_yaml("order"), pool=0)
-    
+
     # Success case: TTL should be cancelled (gate deleted)
     await runtime.destroy_class(name, mode="now")
     gate = await runtime._gates.fetch(name)
@@ -453,7 +462,9 @@ async def test_status_client_id_in_check(
         status=TaskStatus.SUCCESS,
         enqueued_at=datetime.now(UTC).isoformat(),
         finished_at=datetime.now(UTC).isoformat(),
-        kwargs={"token": '{"level_route":[],"current_index":0,"end_of_level_queue":"x","level":1,"launcher_class":"x","branch_id":"x","task_id":"x","message_type":"execution_request","payload":{}}'},
+        kwargs={
+            "token": '{"level_route":[],"current_index":0,"end_of_level_queue":"x","level":1,"launcher_class":"x","branch_id":"x","task_id":"x","message_type":"execution_request","payload":{}}'
+        },
         # NO "client_id" key — missing, not None
     )
     await runtime.manager._tasks.set(task_id, record.model_dump(mode="json"))
@@ -480,6 +491,7 @@ def test_flow_token_is_final_docstring() -> None:
 # m7 — Kick flag inside try (cancel during add impossible)
 # --------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_kick_cancel_during_add_impossible(
     beaver_db: AsyncBeaverDB,
@@ -494,6 +506,7 @@ async def test_kick_cancel_during_add_impossible(
 # --------------------------------------------------------------------------
 # m9 — is_final docstring (guard)
 # --------------------------------------------------------------------------
+
 
 def test_is_final_docstring_mentions_level1() -> None:
     """Slice 13 (m9): is_final documents that production finality requires

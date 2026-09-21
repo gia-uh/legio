@@ -64,9 +64,7 @@ def _instance_key(class_name: str, instance_id: str) -> str:
     return f"{class_name}:{instance_id}"
 
 
-async def _add_to_class_index(
-    instances_by_class: Any, class_name: str, instance_id: str
-) -> None:
+async def _add_to_class_index(instances_by_class: Any, class_name: str, instance_id: str) -> None:
     """Add instance_id to the class's instance set (stored as list for beaver)."""
     existing = await instances_by_class.fetch(class_name)
     if existing is None:

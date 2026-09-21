@@ -118,9 +118,7 @@ def test_federation_errors_are_unrecoverable() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("pool", [True, False])
-async def test_create_class_bool_pool_is_loud(
-    beaver_db: AsyncBeaverDB, pool: bool
-) -> None:
+async def test_create_class_bool_pool_is_loud(beaver_db: AsyncBeaverDB, pool: bool) -> None:
     """Slice 11 (M5): a bool pool is a loud verb error — `True` never passes
     as a live instance, `False` never as disabled. The pump runs so the
     red path (silent acceptance + bring-up) fails fast instead of waiting

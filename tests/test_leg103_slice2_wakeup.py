@@ -28,7 +28,10 @@ from tests.test_leg041_multi_branch_composite import (
 
 
 def build_wakeup_composite(
-    *, db: AsyncBeaverDB, gather_budget: float, branches=((("b1", "b1"),),),
+    *,
+    db: AsyncBeaverDB,
+    gather_budget: float,
+    branches=((("b1", "b1"),),),
     agent_id: str = "comp",
 ) -> CompositeAgent:
     routes: list[list[tuple[str, str]]] = [[step for step in branch] for branch in branches]

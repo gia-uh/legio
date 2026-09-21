@@ -33,9 +33,7 @@ async def pop_one(db: AsyncBeaverDB, agent_id: str) -> dict | None:
     return item.data
 
 
-def crafted_request(
-    *, task_id: str, payload: dict
-) -> ExecutionRequestMessage:
+def crafted_request(*, task_id: str, payload: dict) -> ExecutionRequestMessage:
     return ExecutionRequestMessage(
         level_route=(("main_a", "main_a"), ("summ", "summ")),
         current_index=1,

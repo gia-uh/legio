@@ -117,9 +117,7 @@ def _configure_logging(loaded: LoadedConfig) -> None:
     file = loaded.config.logging.file
     if file is not None:
         handler = logging.FileHandler(file, encoding="utf-8")
-        handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)-8s %(name)s %(message)s")
-        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(name)s %(message)s"))
         handler.setLevel(level)
         logging.getLogger("legio").addHandler(handler)
 
@@ -263,9 +261,7 @@ async def _await_operator(
         if monotonic() >= deadline:
             last = await runtime.manager.status(task_id)
             state = last.status.value if last is not None else "unknown"
-            raise LegioError(
-                f"{what} did not reach terminal within {timeout}s (state={state})"
-            )
+            raise LegioError(f"{what} did not reach terminal within {timeout}s (state={state})")
         await asyncio.sleep(interval)
 
 
@@ -295,9 +291,7 @@ def _as_int(value: object, default: int) -> int:
     return value
 
 
-async def agent_command(
-    loaded: LoadedConfig, command: str, **options: object
-) -> list[str]:
+async def agent_command(loaded: LoadedConfig, command: str, **options: object) -> list[str]:
     """Run one lifecycle verb against the node booted in-process.
 
     The invocation boots the node (a per-boot control key + matching
@@ -308,10 +302,7 @@ async def agent_command(
     booted = await boot_node(loaded)
     count = executor_pump_count(booted)
     stop = asyncio.Event()
-    pumps = [
-        asyncio.create_task(executor_loop(booted.runtime, stop.is_set))
-        for _ in range(count)
-    ]
+    pumps = [asyncio.create_task(executor_loop(booted.runtime, stop.is_set)) for _ in range(count)]
     try:
         return await _dispatch_command(booted, command, options)
     finally:
@@ -456,12 +447,8 @@ def server_command(
     db_path: Annotated[
         Path | None, typer.Option("--db-path", help="Override the database path.")
     ] = None,
-    host: Annotated[
-        str | None, typer.Option("--host", help="Override the HTTP bind host.")
-    ] = None,
-    port: Annotated[
-        int | None, typer.Option("--port", help="Override the HTTP bind port.")
-    ] = None,
+    host: Annotated[str | None, typer.Option("--host", help="Override the HTTP bind host.")] = None,
+    port: Annotated[int | None, typer.Option("--port", help="Override the HTTP bind port.")] = None,
     log_level: Annotated[
         str | None, typer.Option("--log-level", help="Override the log level.")
     ] = None,

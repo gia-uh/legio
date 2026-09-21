@@ -46,6 +46,7 @@ def test_declare_and_load_tool() -> None:
     assert callable(tool)
     # The tool is the function from test_tools.py
     from tests.test_tools import fake_transform as fake_transform_fn
+
     # tool is loaded as a callable; assert same code object
     assert tool.__code__ is fake_transform_fn.__code__  # type: ignore[attr-defined]
 

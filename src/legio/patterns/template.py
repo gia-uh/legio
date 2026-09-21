@@ -38,13 +38,9 @@ def resolve_template(
             if isinstance(value, Mapping):
                 value = value.get(part)
             else:
-                raise TemplateResolutionError(
-                    f"template path {path!r} is undefined on the payload"
-                )
+                raise TemplateResolutionError(f"template path {path!r} is undefined on the payload")
         if value is None:
-            raise TemplateResolutionError(
-                f"template path {path!r} resolved to None on the payload"
-            )
+            raise TemplateResolutionError(f"template path {path!r} resolved to None on the payload")
         return str(value)
 
     return _PLACEHOLDER.sub(lambda m: _lookup(m.group(1)), template)

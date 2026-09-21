@@ -35,9 +35,7 @@ def starting_route(spec: AgentSpec) -> tuple[tuple[str, str], ...]:
     if spec.type is AgentType.COMPOSITE:
         return ((spec.name, spec.input.input_as),)
 
-    raise UnrecoverableError(
-        f"pattern {spec.name!r} has unknown type: {spec.type}"
-    )
+    raise UnrecoverableError(f"pattern {spec.name!r} has unknown type: {spec.type}")
 
 
 __all__ = ["starting_route"]

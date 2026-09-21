@@ -209,7 +209,9 @@ class LifecycleConfig(BaseModel):
 def _overlay_lifecycle(base: LifecycleParams, layer: LifecycleParams) -> LifecycleParams:
     """Overlay the non-``None`` fields of ``layer`` onto ``base``."""
     return LifecycleParams(
-        drain_timeout=layer.drain_timeout if layer.drain_timeout is not None else base.drain_timeout,
+        drain_timeout=layer.drain_timeout
+        if layer.drain_timeout is not None
+        else base.drain_timeout,
         drain_interval=(
             layer.drain_interval if layer.drain_interval is not None else base.drain_interval
         ),

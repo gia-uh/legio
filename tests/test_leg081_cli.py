@@ -234,18 +234,14 @@ def test_cli_agent_pool_zero_born_disabled_then_enable_converges(
         "class created name=transform pool=0"
     ]
     assert _agent(node_dirs, "class-state", name="transform") == ["disabled"]
-    assert _agent(node_dirs, "enable-class", name="transform") == [
-        "enable class transform ok"
-    ]
+    assert _agent(node_dirs, "enable-class", name="transform") == ["enable class transform ok"]
     assert _agent(node_dirs, "class-state", name="transform") == ["enabled"]
     assert len(_agent(node_dirs, "list-instances", name="transform")) == 1
 
 
 def test_cli_agent_disable_class_is_instant_record(node_dirs: dict[str, str]) -> None:
     _agent(node_dirs, "create-class", spec=Path(node_dirs["spec"]), pool=1)
-    assert _agent(node_dirs, "disable-class", name="transform") == [
-        "disable class transform ok"
-    ]
+    assert _agent(node_dirs, "disable-class", name="transform") == ["disable class transform ok"]
     assert _agent(node_dirs, "class-state", name="transform") == ["disabled"]
 
 

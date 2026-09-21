@@ -86,7 +86,9 @@ def _composite_spec(name: str, *deps: str) -> AgentSpec:
         kind=None,
         name=name,
         input=InputContract(input_as=name, input_type=IOType.JSON, input_schema=contract_schema),
-        output=OutputContract(output_as=name, output_type=IOType.JSON, output_schema=contract_schema),
+        output=OutputContract(
+            output_as=name, output_type=IOType.JSON, output_schema=contract_schema
+        ),
         branches=[list(deps)],
     )
 
@@ -151,9 +153,7 @@ async def test_boot_orders_leaves_first_so_dependents_born_enabled(
     )
     names = ["top-class", "one-class", "two-class"]
     try:
-        await runtime.create_from_catalog(
-            catalog, pools=PoolsConfig(), spec_yamls=_spec_yamls()
-        )
+        await runtime.create_from_catalog(catalog, pools=PoolsConfig(), spec_yamls=_spec_yamls())
 
         for cls in names:
             assert await runtime.class_state(cls) == ActivityState.ENABLED, cls
@@ -246,9 +246,7 @@ async def test_boot_pool_zero_born_disabled(beaver_db) -> None:
     pump = _start_executor(runtime)
     catalog = Catalog(specs={"two-class": _atomic_spec("two-class")})
     try:
-        await runtime.create_from_catalog(
-            catalog, pools=PoolsConfig(per_pattern={"two-class": 0})
-        )
+        await runtime.create_from_catalog(catalog, pools=PoolsConfig(per_pattern={"two-class": 0}))
         assert await runtime.class_state("two-class") == ActivityState.DISABLED
         assert await runtime.list_instances("two-class") == []
     finally:
@@ -261,9 +259,7 @@ async def test_boot_caches_each_spec_yaml(beaver_db) -> None:
     pump = _start_executor(runtime)
     catalog = Catalog(specs={"two-class": _atomic_spec("two-class")})
     try:
-        await runtime.create_from_catalog(
-            catalog, pools=PoolsConfig(), spec_yamls=_spec_yamls()
-        )
+        await runtime.create_from_catalog(catalog, pools=PoolsConfig(), spec_yamls=_spec_yamls())
         assert await runtime.get_cached_spec("two-class") == _atomic_yaml("two-class")
     finally:
         await _teardown(beaver_db, runtime, ["two-class"], pump=pump)
@@ -284,9 +280,7 @@ async def test_boot_rejects_dependency_cycle_before_anything_recorded(
         }
     )
     with pytest.raises(RecoverableError, match="cycle"):
-        await runtime.create_from_catalog(
-            catalog, pools=PoolsConfig(), spec_yamls={}
-        )
+        await runtime.create_from_catalog(catalog, pools=PoolsConfig(), spec_yamls={})
     assert await runtime.list_classes() == []
 
 
@@ -298,9 +292,7 @@ async def test_boot_skips_unsatisfied_dependency_but_records_disabled(
     pump = _start_executor(runtime)
     catalog = Catalog(specs={"one-class": _composite_spec("one-class", "two-class")})
     try:
-        await runtime.create_from_catalog(
-            catalog, pools=PoolsConfig(), spec_yamls=_spec_yamls()
-        )
+        await runtime.create_from_catalog(catalog, pools=PoolsConfig(), spec_yamls=_spec_yamls())
         assert await runtime.class_state("one-class") == ActivityState.DISABLED
     finally:
         await _teardown(beaver_db, runtime, ["one-class"], pump=pump)

@@ -35,15 +35,7 @@ from legio.security import ClientTokenStore
 
 
 def test_yaml_split_ignores_separator_inside_literal_block() -> None:
-    text = (
-        "name: alpha\n"
-        "text: |\n"
-        "  hello\n"
-        "  ---\n"
-        "  world\n"
-        "---\n"
-        "name: beta\n"
-    )
+    text = "name: alpha\ntext: |\n  hello\n  ---\n  world\n---\nname: beta\n"
     segments = split_yaml_documents(text)
     assert len(segments) == 2
     first = yaml.safe_load(segments[0])

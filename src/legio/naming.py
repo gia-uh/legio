@@ -37,6 +37,7 @@ class ActivityState(str, Enum):
     ENABLED = "enabled"
     DISABLED = "disabled"
 
+
 QUEUE_NAMESPACE = "legio:queue:"
 
 #: Beaver dict scope holding one outbox record per completed task (LEG-095

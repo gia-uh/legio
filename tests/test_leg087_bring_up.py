@@ -236,9 +236,7 @@ async def test_disable_enable_leave_the_loop_alive_and_lock_the_sequence(
 
 
 @pytest.mark.asyncio
-async def test_second_live_loop_on_shared_agent_is_a_visible_warning(
-    beaver_db, caplog
-) -> None:
+async def test_second_live_loop_on_shared_agent_is_a_visible_warning(beaver_db, caplog) -> None:
     """Debt guard (rule 9): a second standing loop spawning on the shared agent
     object of a class — the documented ``pool > 1`` control-state caveat — is a
     visible WARNING, never silent. The loop's death discards the tracked set."""
@@ -286,9 +284,7 @@ async def test_boot_wires_key_verifiers_and_mount(beaver_db, node_dirs) -> None:
     assert inspect.isasyncgenfunction(booted.runtime.manager._registry[BRING_UP_TASK])
     agent = booted.runtime._agents["pinger"]
     assert agent._control_verifier is not None
-    demo = sign_control(
-        KEY, target_instance="pinger-1", action=ControlAction.DISABLE, seq=7
-    )
+    demo = sign_control(KEY, target_instance="pinger-1", action=ControlAction.DISABLE, seq=7)
     assert agent._control_verifier.verify(demo)
 
     pumps = _start_executor(booted.runtime)
@@ -367,8 +363,8 @@ database:
   db_path: "{db_path}"
 patterns:
   tool: "{tool_dir}"
-  linguistic: "{tmp_path / 'patterns' / 'linguistic'}"
-  composite: "{tmp_path / 'patterns' / 'composite'}"
+  linguistic: "{tmp_path / "patterns" / "linguistic"}"
+  composite: "{tmp_path / "patterns" / "composite"}"
 tools:
   config: "{tools_file}"
 api:

@@ -180,6 +180,7 @@ PARALLEL_FULL_YAML = f"""
 def test_tool_agent_spec_schema1_loads() -> None:
     """A Schema 1 tool agent spec loads with mandatory symmetric contracts."""
     from legio.patterns.schema1 import InputContract, OutputContract
+
     spec = AgentSpec(
         name="extract",
         type=AgentType.ATOMIC,
@@ -209,6 +210,7 @@ def test_tool_agent_spec_schema1_loads() -> None:
 def test_linguistic_agent_spec_schema1_loads() -> None:
     """A Schema 1 linguistic agent spec loads with mandatory symmetric contracts."""
     from legio.patterns.schema1 import InputContract, OutputContract
+
     spec = AgentSpec(
         name="summarize",
         type=AgentType.ATOMIC,
@@ -267,7 +269,9 @@ def test_mandatory_contracts_enforced() -> None:
             type=AgentType.ATOMIC,
             kind=AgentKind.TOOL,
             input=InputContract(input_as="x", input_type=IOType.JSON),
-            output=OutputContract(output_as="y", output_type=IOType.JSON, output_schema={"type": "object"}),
+            output=OutputContract(
+                output_as="y", output_type=IOType.JSON, output_schema={"type": "object"}
+            ),
             tool="t",
             parameters={},
         )
@@ -307,7 +311,9 @@ def test_text_type_has_no_schema() -> None:
             name="bad",
             type=AgentType.ATOMIC,
             kind=AgentKind.TOOL,
-            input=InputContract(input_as="x", input_type=IOType.TEXT, input_schema={"type": "object"}),
+            input=InputContract(
+                input_as="x", input_type=IOType.TEXT, input_schema={"type": "object"}
+            ),
             output=OutputContract(output_as="y", output_type=IOType.TEXT, output_schema={}),
             tool="t",
             parameters={},
@@ -475,7 +481,9 @@ def test_compile_output_schema_with_union_array_nested_recursive() -> None:
         },
     }
     model = compile_output_schema(schema)
-    instance = model(tags=["a", "b"], score="high", notes={}, outline=[{"key": "k", "children": []}])
+    instance = model(
+        tags=["a", "b"], score="high", notes={}, outline=[{"key": "k", "children": []}]
+    )
     assert instance.tags == ["a", "b"]  # type: ignore[attr-defined]
     assert instance.score == "high"  # type: ignore[attr-defined]
 
@@ -491,5 +499,6 @@ def test_dotted_template_paths_resolve() -> None:
 def test_undefined_template_path_raises() -> None:
     """Undefined template path raises TemplateResolutionError."""
     from legio.errors import TemplateResolutionError
+
     with pytest.raises(TemplateResolutionError):
         resolve_template("Hello {missing}", {}, {})

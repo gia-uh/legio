@@ -337,9 +337,7 @@ async def test_unreachable_owner_raises_visibly(beaver_db: AsyncBeaverDB) -> Non
 
 def deposit_app(beaver_db: AsyncBeaverDB, agent: str, *, token: str | None = TOKEN):
     runtime = Runtime(beaver_db, node_id=NODE_B)
-    return create_app(
-        runtime=runtime, pattern_catalog=tool_catalog(agent), federation_token=token
-    )
+    return create_app(runtime=runtime, pattern_catalog=tool_catalog(agent), federation_token=token)
 
 
 async def _client(app) -> httpx.AsyncClient:
@@ -352,9 +350,7 @@ async def test_deposits_rejects_unauthorized(beaver_db: AsyncBeaverDB) -> None:
     async with await _client(app) as ac:
         body = {"queue": queue_key("cutter"), "item": {"a": 1}, "priority": 0.0}
         assert (await ac.post("/deposits", json=body)).status_code == 401
-        assert (
-            await ac.post("/deposits", json=body, headers=bearer("wrong"))
-        ).status_code == 401
+        assert (await ac.post("/deposits", json=body, headers=bearer("wrong"))).status_code == 401
 
 
 @pytest.mark.asyncio
@@ -518,9 +514,7 @@ async def test_forward_deposit_travels_through_agent_advance(
             branch_id="branch-drill",
             payload={"tango": {"text": "hi"}},
         )
-        await adb.queue(queue_key("tango")).put(
-            request.model_dump(mode="json"), priority=0.0
-        )
+        await adb.queue(queue_key("tango")).put(request.model_dump(mode="json"), priority=0.0)
         assert await agent.run() == 1
         item = await owner_db.queue(queue_key("xray")).get(block=False)
         assert item.data["task_id"] == tid
@@ -560,9 +554,7 @@ async def test_return_deposit_travels_through_agent_advance(
             branch_id="branch-drill-back",
             payload={"zulu": {"text": "hi"}},
         )
-        await bdb.queue(queue_key("zulu")).put(
-            request.model_dump(mode="json"), priority=0.0
-        )
+        await bdb.queue(queue_key("zulu")).put(request.model_dump(mode="json"), priority=0.0)
         assert await agent.run() == 1
         item = await home_db.queue(queue_key("yankee")).get(block=False)
         assert item.data["task_id"] == tid
@@ -670,9 +662,7 @@ def _peer_roster(agent: str) -> CatalogResponse:
         agents=[
             CatalogAgentEntry(
                 agent=agent,
-                interface=CatalogAgentInterface(
-                    capability=agent, schema_version=1000
-                ),
+                interface=CatalogAgentInterface(capability=agent, schema_version=1000),
                 kind="tool",
                 input_as=f"{agent}_in",
             )
@@ -689,9 +679,7 @@ async def test_boot_wraps_agents_in_proxy_with_routes(
 
     dirs = _boot_dirs(tmp_path, peers=True)
     loaded = load(dirs["config"], env={"LEGIO_FEDERATION_TOKEN": TOKEN})
-    booted = await boot_node(
-        loaded, db=beaver_db, peer_catalogs={NODE_B: _peer_roster("xray")}
-    )
+    booted = await boot_node(loaded, db=beaver_db, peer_catalogs={NODE_B: _peer_roster("xray")})
     agent_db = booted.agents["cutter"]._db
     assert isinstance(agent_db, NodeDB)
     assert agent_db.routes == {"xray": NODE_B}

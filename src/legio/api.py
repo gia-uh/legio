@@ -208,9 +208,7 @@ class DepositRequest(BaseModel):
             or not isinstance(value, (int, float))
             or not math.isfinite(value)
         ):
-            raise ValueError(
-                f"deposit priority must be a finite number (got {value!r})"
-            )
+            raise ValueError(f"deposit priority must be a finite number (got {value!r})")
         return value
 
     @field_validator("schema_version", mode="before")
@@ -312,9 +310,9 @@ def _deposit_agent(queue_name: str) -> str | None:
     transport — the drain reads them by served root agent, and a result-bearing
     deposit must never be refused on a served check (LEG-095 Phase 3 §B).
     """
-    relative = queue_name[len(QUEUE_NAMESPACE):]
+    relative = queue_name[len(QUEUE_NAMESPACE) :]
     if relative.startswith("gather:"):
-        return relative[len("gather:"):]
+        return relative[len("gather:") :]
     if relative.startswith("result:"):
         return None
     return relative
@@ -338,18 +336,14 @@ def _resolve_route(agent_name: str, catalog: Catalog | None) -> tuple[tuple[str,
     if catalog is not None:
         spec = catalog.specs.get(agent_name)
         if spec is None:
-            raise UnknownAgentError(
-                f"unknown starting agent for catalog: {agent_name!r}"
-            )
+            raise UnknownAgentError(f"unknown starting agent for catalog: {agent_name!r}")
         if not catalog.is_served(agent_name):
             raise UnrecoverableError(
                 f"agent not served by catalog: {agent_name!r} (invalid/disabled)"
             )
         if spec.main:
             return starting_route(spec)
-        raise UnknownAgentError(
-            f"agent cannot start (not main): {agent_name!r}"
-        )
+        raise UnknownAgentError(f"agent cannot start (not main): {agent_name!r}")
     return ((agent_name, agent_name),)
 
 
@@ -410,7 +404,13 @@ def create_app(
         except UnrecoverableError as exc:
             logger.warning("api submit rejected agent=%s reason=%s", body.agent, exc)
             return JSONResponse(status_code=422, content={"code": "invalid_request"})
-        logger.info("api submit task=%s client=%s agent=%s route=%s", task_id, client_id, body.agent, ",".join(c for c, _ in route))
+        logger.info(
+            "api submit task=%s client=%s agent=%s route=%s",
+            task_id,
+            client_id,
+            body.agent,
+            ",".join(c for c, _ in route),
+        )
         return SubmitResponse(task_id=task_id)
 
     @app.get("/status/{task_id}", response_model=StatusResponse)

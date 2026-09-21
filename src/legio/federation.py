@@ -59,6 +59,7 @@ class AgentInterface:
     capability: str
     schema_version: int
 
+
 #: A well-formed task id — ``<origin>:<uuid>`` (LEG-016). ``NodeDB`` parses the
 #: author origin out of ``result:<task_id>`` queue names; anything that does not
 #: match is a malformed/legacy shape and routes local (back-compat).
@@ -118,7 +119,9 @@ class StepResolver:
         peer_catalogs: Mapping[str, Mapping[str, AgentInterface]] | None = None,
     ) -> None:
         self._local_capacity = frozenset(local_capacity)
-        self._peer_catalogs = {peer_id: dict(roster) for peer_id, roster in (peer_catalogs or {}).items()}
+        self._peer_catalogs = {
+            peer_id: dict(roster) for peer_id, roster in (peer_catalogs or {}).items()
+        }
 
     def resolve(self, agent: str) -> Local | Remote:
         """Resolve ``agent`` to a local step or a peer delegation, or raise.
@@ -276,8 +279,7 @@ async def fetch_peer_catalogs(
             except httpx.HTTPError as exc:
                 logger.warning("federation catalog fetch failed peer=%s url=%s", peer_id, url)
                 raise RecoverableError(
-                    f"federation catalog fetch failed peer={peer_id} url={base_url} "
-                    f"reason={exc}"
+                    f"federation catalog fetch failed peer={peer_id} url={base_url} reason={exc}"
                 ) from exc
             if response.status_code != 200:
                 logger.warning(
@@ -293,9 +295,7 @@ async def fetch_peer_catalogs(
             body = response.json()
             entries[peer_id] = PeerRoster(
                 agents=[
-                    PeerCatalogEntry(
-                        agent=item["agent"], input_as=item.get("input_as")
-                    )
+                    PeerCatalogEntry(agent=item["agent"], input_as=item.get("input_as"))
                     for item in body.get("agents", ())
                 ]
             )
@@ -383,23 +383,17 @@ class NodeDB(AsyncBeaverDB):
         """Node-local dict scopes: delegate straight to the raw db."""
         return self._db.dict(name, model=model, secret=secret)
 
-    def lock(
-        self, name: str, timeout=None, lock_ttl=60.0, poll_interval=0.1
-    ) -> AsyncBeaverLock:
+    def lock(self, name: str, timeout=None, lock_ttl=60.0, poll_interval=0.1) -> AsyncBeaverLock:
         """Node-local lock: delegate straight to the raw db."""
         return self._db.lock(name, timeout, lock_ttl, poll_interval)
 
     # The proxy is a queue router, not a substrate lifecycle handle.
     # These inherited methods are explicitly disabled on the proxy surface.
     def close(self):
-        raise AttributeError(
-            "NodeDB proxy has no 'close' method; use 'aclose()' for async cleanup"
-        )
+        raise AttributeError("NodeDB proxy has no 'close' method; use 'aclose()' for async cleanup")
 
     def ensure_client(self) -> None:
-        raise AttributeError(
-            "NodeDB proxy has no 'ensure_client' method; internal use only"
-        )
+        raise AttributeError("NodeDB proxy has no 'ensure_client' method; internal use only")
 
     async def aclose(self) -> None:
         """Close the lazily created deposit client, if the proxy owns one.
@@ -424,9 +418,9 @@ class NodeDB(AsyncBeaverDB):
         """The owning peer of a full beaver queue name, or ``None`` for local."""
         if not name.startswith(QUEUE_NAMESPACE):
             return None
-        relative = name[len(QUEUE_NAMESPACE):]
+        relative = name[len(QUEUE_NAMESPACE) :]
         if relative.startswith(_RESULT_PREFIX):
-            inner = relative[len(_RESULT_PREFIX):]
+            inner = relative[len(_RESULT_PREFIX) :]
             match = _TASK_ORIGIN_RE.match(inner)
             if match is None:
                 return None  # malformed/legacy → local (back-compat)
@@ -445,7 +439,7 @@ class NodeDB(AsyncBeaverDB):
                 )
             return origin
         if relative.startswith(_GATHER_PREFIX):
-            return self.routes.get(relative[len(_GATHER_PREFIX):])
+            return self.routes.get(relative[len(_GATHER_PREFIX) :])
         return self.routes.get(relative)
 
 
@@ -472,8 +466,7 @@ class RemoteQueue:
         base = self._proxy._peers.get(self._owner)
         if base is None:
             raise RecoverableError(
-                f"remote deposit queue={self._queue} peer={self._owner} "
-                "(no endpoint for this peer)"
+                f"remote deposit queue={self._queue} peer={self._owner} (no endpoint for this peer)"
             )
         return f"{base.rstrip('/')}/deposits"
 
@@ -512,7 +505,9 @@ class RemoteQueue:
                 headers=headers,
             )
         except httpx.HTTPError as exc:
-            logger.warning("federation deposit remote failed peer=%s queue=%s", self._owner, self._queue)
+            logger.warning(
+                "federation deposit remote failed peer=%s queue=%s", self._owner, self._queue
+            )
             raise RecoverableError(
                 f"remote deposit failed peer={self._owner} queue={self._queue} reason={exc}"
             ) from exc

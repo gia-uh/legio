@@ -99,9 +99,7 @@ def test_negative_retries_rejected_at_load_but_nonzero_passes(tmp_path) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("timeout", [-5, 0, "soon"])
-async def test_direct_registry_bad_timeout_fails_loudly(
-    beaver_db: AsyncBeaverDB, timeout
-) -> None:
+async def test_direct_registry_bad_timeout_fails_loudly(beaver_db: AsyncBeaverDB, timeout) -> None:
     """Slice 8 (m7): the direct-registry path bypasses file validation, so a
     meaningless timeout fails at execution naming the policy (never a bare
     immediate TimeoutError or a raw float() crash)."""
@@ -153,9 +151,7 @@ def test_yaml_cache_collection_names_broken_file(tmp_path) -> None:
     comp_dir.mkdir()
     loaded = LoadedConfig(
         config=LegioConfig(
-            patterns=PatternsConfig(
-                tool=tool_dir, linguistic=ling_dir, composite=comp_dir
-            )
+            patterns=PatternsConfig(tool=tool_dir, linguistic=ling_dir, composite=comp_dir)
         ),
         secrets=EnvSecrets(),
         config_path=None,

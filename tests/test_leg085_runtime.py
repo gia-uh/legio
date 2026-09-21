@@ -108,7 +108,9 @@ def _composite_spec(name: str, *deps: str) -> tuple[str, AgentSpec]:
         kind=None,
         name=name,
         input=InputContract(input_as=name, input_type=IOType.JSON, input_schema=contract_schema),
-        output=OutputContract(output_as=name, output_type=IOType.JSON, output_schema=contract_schema),
+        output=OutputContract(
+            output_as=name, output_type=IOType.JSON, output_schema=contract_schema
+        ),
         branches=[list(deps)],
     )
     return name, spec
@@ -121,9 +123,7 @@ def _runtime(
     lifecycle: LifecycleConfig | None = None,
     control_key: bytes | None = None,
 ) -> Runtime:
-    return Runtime(
-        db, node_id=node_id, lifecycle=lifecycle, control_key=control_key
-    )
+    return Runtime(db, node_id=node_id, lifecycle=lifecycle, control_key=control_key)
 
 
 def _start_executor(runtime: Runtime) -> asyncio.Task:
@@ -549,7 +549,9 @@ async def test_cascade_is_not_auto_undone_by_enabling_the_dependency(beaver_db) 
 @pytest.mark.asyncio
 async def test_enable_class_brings_up_one_instance_when_none_exists(beaver_db) -> None:
     runtime = _runtime(beaver_db, control_key=bytes(range(32)))
-    runtime.mount_agents({"stalled-class": _mounted_tool_agent(beaver_db, "stalled-class", bytes(range(32)))})
+    runtime.mount_agents(
+        {"stalled-class": _mounted_tool_agent(beaver_db, "stalled-class", bytes(range(32)))}
+    )
     pumps = await _pool_executor(runtime)
     name, spec = _load_atomic_spec("stalled-class")
     try:
@@ -672,9 +674,7 @@ async def test_destroy_instance_confirms_only_the_agents_exit(beaver_db) -> None
         # a real-but-dying bring-up: SUCCESS after the message is confirmed
         await runtime.create_class(spec_a, spec_yaml=_atomic_yaml(a), pool=1)
         await runtime.destroy_instance(a, "one-class-1")
-        message = await _expect_control_message(
-            beaver_db, a, "one-class-1", key=bytes(range(32))
-        )
+        message = await _expect_control_message(beaver_db, a, "one-class-1", key=bytes(range(32)))
         assert message.action is ControlAction.TERMINATE_WITH_DRAIN
         assert await runtime.get_instance(a, "one-class-1") is None
 
@@ -755,9 +755,7 @@ async def test_destroy_class_drain_times_out_visibly_and_leaves_class(
 ) -> None:
     runtime = _runtime(
         beaver_db,
-        lifecycle=LifecycleConfig(
-            default=LifecycleParams(drain_timeout=0.2, drain_interval=0.05)
-        ),
+        lifecycle=LifecycleConfig(default=LifecycleParams(drain_timeout=0.2, drain_interval=0.05)),
     )
     pump = _start_executor(runtime)
     name, spec = _load_atomic_spec("stuck-class")
@@ -771,9 +769,7 @@ async def test_destroy_class_drain_times_out_visibly_and_leaves_class(
 
         assert await runtime.class_state(name) == ActivityState.ENABLED
         assert await beaver_db.queue(queue_key(name)).count() == 1
-        assert await beaver_db.dict("gates").fetch(name) == {
-            "state": ActivityState.ENABLED.value
-        }
+        assert await beaver_db.dict("gates").fetch(name) == {"state": ActivityState.ENABLED.value}
     finally:
         await _teardown(beaver_db, runtime, [name], pump=pump)
 
@@ -1004,7 +1000,9 @@ async def test_runtime_status_flow_completed_and_owner_scoped(beaver_db) -> None
 @pytest.mark.asyncio
 async def test_gate_row_is_written_only_by_runtime_lifecycle(beaver_db) -> None:
     runtime = _runtime(beaver_db, control_key=bytes(range(32)))
-    runtime.mount_agents({"gate-probe": _mounted_tool_agent(beaver_db, "gate-probe", bytes(range(32)))})
+    runtime.mount_agents(
+        {"gate-probe": _mounted_tool_agent(beaver_db, "gate-probe", bytes(range(32)))}
+    )
     pumps = await _pool_executor(runtime)
     cls = "gate-probe"
     _, spec = _load_atomic_spec(cls)

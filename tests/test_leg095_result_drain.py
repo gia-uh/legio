@@ -168,9 +168,7 @@ async def test_two_tasks_on_one_agent_have_isolated_records(
 
 
 @pytest.mark.asyncio
-async def test_drain_rekicks_while_items_remain(
-    beaver_db: AsyncBeaverDB, runtime: Runtime
-) -> None:
+async def test_drain_rekicks_while_items_remain(beaver_db: AsyncBeaverDB, runtime: Runtime) -> None:
     task_id = await runtime.submit("client-a", ((AGENT, AGENT),), {"raw": "one"})
     await _pump(runtime)
     queue = beaver_db.queue(queue_key(result_queue_key(AGENT)))
@@ -254,10 +252,7 @@ async def test_ack_without_poll_returns_false_without_losing_result(
 async def test_read_outbox_unknown_task_returns_none(
     beaver_db: AsyncBeaverDB, runtime: Runtime
 ) -> None:
-    assert (
-        await runtime.read_outbox("ghost@test:00000000-0000-0000-0000-000000000000")
-        is None
-    )
+    assert await runtime.read_outbox("ghost@test:00000000-0000-0000-0000-000000000000") is None
 
 
 # --------------------------------------------------------------------------
@@ -325,9 +320,7 @@ async def test_phase2_footprint_is_outbox_plus_agent_queues(
 
 
 @pytest.mark.asyncio
-async def test_result_drain_fact_is_registered(
-    beaver_db: AsyncBeaverDB, runtime: Runtime
-) -> None:
+async def test_result_drain_fact_is_registered(beaver_db: AsyncBeaverDB, runtime: Runtime) -> None:
     assert RESULT_DRAIN_TASK == "result_drain"
     task_id = await runtime.manager.submit_task(RESULT_DRAIN_TASK, AGENT)
     assert await runtime.manager.run() == 1

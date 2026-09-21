@@ -247,7 +247,11 @@ def test_bad_yaml_file_names_file(tmp_path) -> None:
     (tool_dir / "broken.yaml").write_text("{{{\n: bad: [\n", encoding="utf-8")
     with pytest.raises(UnrecoverableError) as excinfo:
         load_pattern_dirs(
-            {"tool": tool_dir, "linguistic": tmp_path / "linguistic", "composite": tmp_path / "composite"}
+            {
+                "tool": tool_dir,
+                "linguistic": tmp_path / "linguistic",
+                "composite": tmp_path / "composite",
+            }
         )
     assert "broken.yaml" in str(excinfo.value)
 
@@ -403,9 +407,7 @@ async def test_catalog_denials_log_key_value(
 def test_resolve_local_hit_logs(caplog: pytest.LogCaptureFixture) -> None:
     """Slice 12 (m7): a local resolve decision is observable like
     remote/miss."""
-    resolver = StepResolver(
-        local_capacity=_resolver_catalog().served(), peer_catalogs={}
-    )
+    resolver = StepResolver(local_capacity=_resolver_catalog().served(), peer_catalogs={})
     with caplog.at_level(logging.INFO, logger="legio.federation"):
         resolved = resolver.resolve("cutter")
     assert isinstance(resolved, Local)
@@ -418,11 +420,10 @@ def test_non_callable_raise_logs(caplog: pytest.LogCaptureFixture) -> None:
     from legio.tools import AvailableToolsRegistry
 
     registry = AvailableToolsRegistry()
-    registry.declare(
-        "shapeless2", implementation="tests.test_leg103_slice12_hardening.NOT_A_TOOL"
-    )
-    with caplog.at_level(logging.ERROR, logger="legio.tools"), pytest.raises(
-        Exception, match="non-callable"
+    registry.declare("shapeless2", implementation="tests.test_leg103_slice12_hardening.NOT_A_TOOL")
+    with (
+        caplog.at_level(logging.ERROR, logger="legio.tools"),
+        pytest.raises(Exception, match="non-callable"),
     ):
         registry.load_tool("shapeless2")
     assert "shapeless2" in caplog.text
@@ -456,12 +457,11 @@ async def test_unknown_origin_logs(
             federation_token=TOKEN,
             client=client,
         )
-        with caplog.at_level(logging.WARNING, logger="legio.federation"), pytest.raises(
-            Exception, match="unknown author origin"
+        with (
+            caplog.at_level(logging.WARNING, logger="legio.federation"),
+            pytest.raises(Exception, match="unknown author origin"),
         ):
-            db._queue_owner(
-                queue_key("result:ghost:11111111-1111-1111-1111-111111111111")
-            )
+            db._queue_owner(queue_key("result:ghost:11111111-1111-1111-1111-111111111111"))
     assert "ghost" in caplog.text
 
 

@@ -434,9 +434,7 @@ async def test_orphan_report_is_visible_warning_never_applied(
 
         # The one-shot mint (no mounted agent honors, no report ever arrives)
         # registers a pending ledger entry for (instance, disable, seq=1).
-        await runtime.manager.submit_task(
-            DISABLE_INSTANCE, name, instance_id, action="disable"
-        )
+        await runtime.manager.submit_task(DISABLE_INSTANCE, name, instance_id, action="disable")
         await asyncio.sleep(0.2)  # let the mint land and register the ledger entry
         assert runtime._pending_controls != {}
 
@@ -469,9 +467,7 @@ async def test_missing_report_surfaces_visible_error_no_optimistic_write(
     """§C/rule 9: an enabled instance whose agent never reports (controls are
     dropped, so no report can arrive) raises a visible ``RecoverableError``
     within the budget — and the Registry is never written optimistically."""
-    lifecycle = LifecycleConfig(
-        default=LifecycleParams(drain_timeout=0.3, drain_interval=0.05)
-    )
+    lifecycle = LifecycleConfig(default=LifecycleParams(drain_timeout=0.3, drain_interval=0.05))
     runtime = _runtime(beaver_db, lifecycle=lifecycle)
     runtime.mount_agents({"pinger": _tool_agent(beaver_db)})
     pumps = _start_executor(runtime)

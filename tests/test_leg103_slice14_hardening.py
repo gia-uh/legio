@@ -307,7 +307,11 @@ def test_unreadable_pattern_file_names_file(tmp_path) -> None:
     (tool_dir / "locked.yaml").mkdir()
     with pytest.raises(UnrecoverableError) as excinfo:
         load_pattern_dirs(
-            {"tool": tool_dir, "linguistic": tmp_path / "linguistic", "composite": tmp_path / "composite"}
+            {
+                "tool": tool_dir,
+                "linguistic": tmp_path / "linguistic",
+                "composite": tmp_path / "composite",
+            }
         )
     assert "locked.yaml" in str(excinfo.value)
 
@@ -323,7 +327,11 @@ def test_bad_bytes_pattern_file_is_unrecoverable(tmp_path) -> None:
     (tool_dir / "binary.yaml").write_bytes(b"\xff\xfe\x00bad")
     with pytest.raises(UnrecoverableError):
         load_pattern_dirs(
-            {"tool": tool_dir, "linguistic": tmp_path / "linguistic", "composite": tmp_path / "composite"}
+            {
+                "tool": tool_dir,
+                "linguistic": tmp_path / "linguistic",
+                "composite": tmp_path / "composite",
+            }
         )
 
 
@@ -480,9 +488,7 @@ def test_linguistic_without_output_schema_logs(
     assert "linglog" in caplog.text
 
 
-def test_unknown_kind_logs(
-    beaver_db: AsyncBeaverDB, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_unknown_kind_logs(beaver_db: AsyncBeaverDB, caplog: pytest.LogCaptureFixture) -> None:
     """Slice 14 (m6): the unknown-kind refusal logs the agent."""
     spec = load_patterns([_atom_dict("kindlog")]).specs["kindlog"]
     spec.kind = "bogus"  # type: ignore[assignment]
@@ -655,9 +661,18 @@ def test_middleware_secret_compare_parity() -> None:
         AuthorizationResult.ALLOWED,
         AuthorizationResult.ALLOWED_FEDERATION,
     )
-    assert middleware.authorize("GET /catalog", token="fëd-sëcret") == AuthorizationResult.UNAUTHORIZED_401
-    assert middleware.authorize("GET /catalog", token="x" * 500) == AuthorizationResult.UNAUTHORIZED_401
-    assert middleware.authorize("submit(starting_agent)", token="sëcret-✓") == AuthorizationResult.ALLOWED
+    assert (
+        middleware.authorize("GET /catalog", token="fëd-sëcret")
+        == AuthorizationResult.UNAUTHORIZED_401
+    )
+    assert (
+        middleware.authorize("GET /catalog", token="x" * 500)
+        == AuthorizationResult.UNAUTHORIZED_401
+    )
+    assert (
+        middleware.authorize("submit(starting_agent)", token="sëcret-✓")
+        == AuthorizationResult.ALLOWED
+    )
 
 
 # --------------------------------------------------------------------------

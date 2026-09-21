@@ -182,9 +182,11 @@ async def test_submit_to_served_main_agent_accepts_catalog_route(
         json={"client_id": "client-a", "agent": "gatekeeper", "payload": {"raw": 1}},
     )
     assert resp.status_code == 200, resp.text
-    entry = (await client_with_catalog.get(
-        f"/status/{resp.json()['task_id']}", params={"client_id": "client-a"}
-    )).json()
+    entry = (
+        await client_with_catalog.get(
+            f"/status/{resp.json()['task_id']}", params={"client_id": "client-a"}
+        )
+    ).json()
     assert entry["token"]["level_route"] == [["gatekeeper", "payload"]]
 
 
@@ -222,9 +224,7 @@ async def test_agent_loop_deposits_message_to_completion(
     beaver_db: AsyncBeaverDB,
     runtime: Runtime,
 ) -> None:
-    task_id = await runtime.submit(
-        "client-a", (("flip", "flip"),), {"text": "abc"}
-    )
+    task_id = await runtime.submit("client-a", (("flip", "flip"),), {"text": "abc"})
     # The seed task deposits the root message on the node pump (§7.1).
     await runtime.manager.run()
 

@@ -201,9 +201,6 @@ async def test_broken_step_marks_task_failed_without_crash(beaver_db: AsyncBeave
     assert "error" in result.payload
 
 
-
-
-
 @pytest.mark.asyncio
 async def test_monitor_hook_fires_on_step_events(beaver_db: AsyncBeaverDB) -> None:
     recorder = HookRecorder()
@@ -255,9 +252,7 @@ async def test_root_task_deposits_result_to_end_of_level_queue(
     ``client:`` queue (there is no ``client:`` family).
     """
     await beaver_db.queue(queue_key("main")).put(
-        make_request(
-            task_id="T-root", end_of_level_queue="result:T-root"
-        ).model_dump(mode="json"),
+        make_request(task_id="T-root", end_of_level_queue="result:T-root").model_dump(mode="json"),
         priority=0.0,
     )
     agent = build(FinalAgent, agent_id="main", db=beaver_db)

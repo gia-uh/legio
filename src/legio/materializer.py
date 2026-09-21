@@ -73,9 +73,7 @@ def default_lingo_factory(llm: LlmConfig | None, api_key: str | None) -> Any:
     """
     if llm is None:
         logger.error("no services.llm for the lingo factory")
-        raise UnrecoverableError(
-            "no services.llm configured and no lingo_factory injected"
-        )
+        raise UnrecoverableError("no services.llm configured and no lingo_factory injected")
     from lingo.llm import LLM
 
     return LLM(model=llm.model, base_url=llm.base_url, api_key=api_key)
@@ -241,9 +239,7 @@ def materialize_agents(
                     control_verifier=verifiers.get(spec.name),
                 )
             except UnrecoverableError as exc:
-                raise UnrecoverableError(
-                    f"linguistic agent {spec.name!r}: {exc.message}"
-                ) from exc
+                raise UnrecoverableError(f"linguistic agent {spec.name!r}: {exc.message}") from exc
         else:
             agent = _materialize_atom(
                 spec,
@@ -310,11 +306,7 @@ def _build_tool_registry(tools: LoadedConfig) -> AvailableToolsRegistry:
         registry.declare(
             name,
             implementation=declaration.implementation,
-            policy=(
-                declaration.policy.model_dump()
-                if declaration.policy is not None
-                else None
-            ),
+            policy=(declaration.policy.model_dump() if declaration.policy is not None else None),
         )
     return registry
 
@@ -425,9 +417,7 @@ async def _boot_on_database(
     # local steps only. The test drives ``create_class`` after boot, so the
     # stored map is the only way the Runtime knows which branch steps are
     # peers.
-    engine = Runtime(
-        database, node_id=cfg.node.id, control_key=key, peer_steps=peer_steps
-    )
+    engine = Runtime(database, node_id=cfg.node.id, control_key=key, peer_steps=peer_steps)
     catalog = load_pattern_dirs(pattern_dirs, peer_steps=peer_steps)
     _warn_unbounded_patterns(catalog)
 

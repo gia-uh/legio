@@ -144,9 +144,7 @@ async def _teardown(
         await asyncio.gather(*pumps, return_exceptions=True)
 
 
-async def _wait_until(
-    predicate: Callable[[], Any], *, timeout: float = 3.0
-) -> bool:
+async def _wait_until(predicate: Callable[[], Any], *, timeout: float = 3.0) -> bool:
     """Poll a test predicate (sync or async) until it holds or the budget is
     exhausted. Test-side clock wait only — the engine itself never sleeps
     (rule 8)."""
@@ -356,12 +354,8 @@ async def test_mounted_disable_enable_destroy_intents_honored_between_dispatches
         assert runtime._control_sequence[(name, instance_id)] >= 2
 
         await runtime.deposit_node_op("destroy_instance", name, instance_id)
-        assert await _wait_until(
-            lambda: _status_is(runtime, task_id, TaskStatus.SUCCESS)
-        )
-        assert await _wait_until(
-            lambda: _state_is_none(runtime, name, instance_id)
-        )
+        assert await _wait_until(lambda: _status_is(runtime, task_id, TaskStatus.SUCCESS))
+        assert await _wait_until(lambda: _state_is_none(runtime, name, instance_id))
         assert (name, instance_id) not in runtime._instance_tasks
     finally:
         await _teardown(beaver_db, runtime, [name], pumps=pumps)

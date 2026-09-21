@@ -207,7 +207,10 @@ async def test_work_item_with_mismatched_schema_version_is_409(
         assert resp.json()["code"] == "interface_mismatch"
         # nothing deposited
         runtime = Runtime(beaver_db, node_id=NODE_ID)
-        assert await runtime.manager.status(f"{AUTHOR_NODE}:11111111-1111-1111-1111-111111111111") is None
+        assert (
+            await runtime.manager.status(f"{AUTHOR_NODE}:11111111-1111-1111-1111-111111111111")
+            is None
+        )
 
 
 # --------------------------------------------------------------------------

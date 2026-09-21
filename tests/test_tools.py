@@ -1,5 +1,6 @@
 """Test tools for LEG-022 ToolAgent tests."""
 
+
 def fake_transform(text: str, factor: int = 2) -> dict:
     """Domain-free fake tool: plain callable, signature is its contract."""
     return {"transformed": str(text).upper() * factor}
@@ -53,8 +54,10 @@ async_double = _AsyncDouble()
 
 def fake_returning_coroutine(text: str):  # type: ignore[no-untyped-def]
     """Domain-free sync shape handing back a coroutine: must be awaited."""
+
     async def _inner() -> dict:
         return {"transformed": str(text).upper()}
+
     return _inner()
 
 
@@ -65,8 +68,10 @@ def fake_sync_generator(text: str):  # type: ignore[no-untyped-def]
 
 def fake_returning_asyncgen(text: str):  # type: ignore[no-untyped-def]
     """Domain-free sync shape handing back an async generator: must fail."""
+
     async def _gen():  # type: ignore[no-untyped-def]
         yield {"transformed": str(text).upper()}
+
     return _gen()
 
 

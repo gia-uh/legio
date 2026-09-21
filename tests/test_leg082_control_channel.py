@@ -203,16 +203,12 @@ async def test_disable_parks_and_enable_resumes(beaver_db: AsyncBeaverDB) -> Non
     )
     key = derive_control_key(KEY_MATERIAL)
     async with RunningLoop(agent, "main-1"):
-        await deposit_control(
-            beaver_db, put_control(key, action=ControlAction.DISABLE, seq=1)
-        )
+        await deposit_control(beaver_db, put_control(key, action=ControlAction.DISABLE, seq=1))
         await consume_until(lambda: agent._control_paused)
         await deposit_work(beaver_db, "t1")
         await consume_until(lambda: len(agent._paused_hold) == 1)
         assert agent.processed == []
-        await deposit_control(
-            beaver_db, put_control(key, action=ControlAction.ENABLE, seq=2)
-        )
+        await deposit_control(beaver_db, put_control(key, action=ControlAction.ENABLE, seq=2))
         await consume_until(lambda: len(agent.processed) == 1)
         assert agent._paused_hold == []
         assert not agent._control_paused
@@ -231,9 +227,7 @@ async def test_terminate_with_drain_ends_loop_and_releases_hold(
     loop = RunningLoop(agent, "main-1")
     await loop.__aenter__()
     try:
-        await deposit_control(
-            beaver_db, put_control(key, action=ControlAction.DISABLE, seq=1)
-        )
+        await deposit_control(beaver_db, put_control(key, action=ControlAction.DISABLE, seq=1))
         await consume_until(lambda: agent._control_paused)
         await deposit_work(beaver_db, "t1")
         await consume_until(lambda: len(agent._paused_hold) == 1)
@@ -292,9 +286,7 @@ async def test_bad_signature_dropped_visibly_loop_alive(
             await asyncio.sleep(0.2)
         assert not agent._control_paused
         assert "bad_signature" in caplog.text
-        await deposit_control(
-            beaver_db, put_control(key, action=ControlAction.DISABLE, seq=2)
-        )
+        await deposit_control(beaver_db, put_control(key, action=ControlAction.DISABLE, seq=2))
         await consume_until(lambda: agent._control_paused)
 
 
@@ -328,9 +320,7 @@ async def test_replay_is_rejected(beaver_db: AsyncBeaverDB) -> None:
     )
     key = derive_control_key(KEY_MATERIAL)
     async with RunningLoop(agent, "main-1"):
-        await deposit_control(
-            beaver_db, put_control(key, action=ControlAction.DISABLE, seq=1)
-        )
+        await deposit_control(beaver_db, put_control(key, action=ControlAction.DISABLE, seq=1))
         await consume_until(lambda: agent._control_paused)
         # the very same message replayed must be dropped (anti-replay)...
         replayed = put_control(key, action=ControlAction.DISABLE, seq=1)
@@ -340,9 +330,7 @@ async def test_replay_is_rejected(beaver_db: AsyncBeaverDB) -> None:
         await consume_until(lambda: len(agent._paused_hold) == 1)
         assert agent.processed == []
         # ...and a fresh sequence still honored afterwards
-        await deposit_control(
-            beaver_db, put_control(key, action=ControlAction.ENABLE, seq=2)
-        )
+        await deposit_control(beaver_db, put_control(key, action=ControlAction.ENABLE, seq=2))
         await consume_until(lambda: len(agent.processed) == 1)
 
 
@@ -356,9 +344,7 @@ async def test_control_priority_jumps_work(beaver_db: AsyncBeaverDB) -> None:
     key = derive_control_key(KEY_MATERIAL)
     async with RunningLoop(agent, "main-1"):
         await deposit_work(beaver_db, "t1")
-        await deposit_control(
-            beaver_db, put_control(key, action=ControlAction.DISABLE, seq=1)
-        )
+        await deposit_control(beaver_db, put_control(key, action=ControlAction.DISABLE, seq=1))
         await consume_until(lambda: agent._control_paused)
         assert agent.processed == []
         await consume_until(lambda: len(agent._paused_hold) == 1)

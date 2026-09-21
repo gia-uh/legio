@@ -72,7 +72,8 @@ def test_guide_every_example_config_template_parses_and_tools_match() -> None:
 
         tools = load_tools_file(node / "tools.yaml")
         tool_patterns = {
-            path.stem for path in (node / "patterns" / "tool").glob("*.yaml")
+            path.stem
+            for path in (node / "patterns" / "tool").glob("*.yaml")
             if not path.name.startswith(".")
         }
         assert set(tools.available_tools) == tool_patterns, (
@@ -100,12 +101,12 @@ async def test_guide_transform_node_boots_and_serves_submit_status(
     config.write_text(
         (
             f'node:\n  id: "cli@test"\n'
-            f"database:\n  db_path: \"{db_path}\"\n"
+            f'database:\n  db_path: "{db_path}"\n'
             f'patterns:\n  tool: "{tool_dir}"\n'
             f'  linguistic: "{tmp_path / "linguistic"}"\n'
             f'  composite: "{tmp_path / "composite"}"\n'
             f'tools:\n  config: "{tools_config}"\n'
-            'lifecycle:\n  default:\n    drain_timeout: 10.0\n'
+            "lifecycle:\n  default:\n    drain_timeout: 10.0\n"
             f"    drain_interval: 0.02\n"
         ),
         encoding="utf-8",
@@ -138,9 +139,7 @@ async def test_guide_transform_node_boots_and_serves_submit_status(
             deadline = time.monotonic() + 10
             entry: dict = {}
             while time.monotonic() < deadline:
-                status_resp = await ac.get(
-                    f"/status/{task_id}", params={"client_id": "demo"}
-                )
+                status_resp = await ac.get(f"/status/{task_id}", params={"client_id": "demo"})
                 assert status_resp.status_code == 200, status_resp.text
                 entry = status_resp.json()
                 if entry["state"] == "completed":

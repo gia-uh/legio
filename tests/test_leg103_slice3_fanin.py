@@ -93,12 +93,18 @@ async def test_concurrent_branch_returns_join_exactly_once(
     second_id = await pop_branch_id(beaver_db, "b2")
 
     first = await deposit_result(
-        beaver_db, branch_id=first_id, route=(("b1", "b1"),),
-        task_id="T-c", payload={"b1": 1},
+        beaver_db,
+        branch_id=first_id,
+        route=(("b1", "b1"),),
+        task_id="T-c",
+        payload={"b1": 1},
     )
     second = await deposit_result(
-        beaver_db, branch_id=second_id, route=(("b2", "b2"),),
-        task_id="T-c", payload={"b2": 2},
+        beaver_db,
+        branch_id=second_id,
+        route=(("b2", "b2"),),
+        task_id="T-c",
+        payload={"b2": 2},
     )
     await asyncio.gather(
         comp._process_join_item(dict(first)),
@@ -107,9 +113,7 @@ async def test_concurrent_branch_returns_join_exactly_once(
 
     advanced = await pop_one(beaver_db, "after")
     assert advanced is not None
-    assert ExecutionRequestMessage.model_validate(advanced).payload == {
-        "after": {"b1": 1, "b2": 2}
-    }
+    assert ExecutionRequestMessage.model_validate(advanced).payload == {"after": {"b1": 1, "b2": 2}}
     assert await pop_one(beaver_db, "after") is None
     assert await comp._state.fetch("T-c") is None
     assert await comp._slots.fetch(f"T-c:{first_id}") is None
@@ -123,8 +127,11 @@ async def test_unknown_branch_still_loud(beaver_db: AsyncBeaverDB) -> None:
     comp = build_join_composite(db=beaver_db)
     await fan_out_task(beaver_db, comp, "T-unknown")
     message = await deposit_result(
-        beaver_db, branch_id="nope", route=(("b1", "b1"),),
-        task_id="T-unknown", payload={"b1": 1},
+        beaver_db,
+        branch_id="nope",
+        route=(("b1", "b1"),),
+        task_id="T-unknown",
+        payload={"b1": 1},
     )
     with pytest.raises(ValueError, match="unknown branch"):
         await comp._process_join_item(dict(message))
@@ -135,8 +142,11 @@ async def test_result_without_fanout_still_loud(beaver_db: AsyncBeaverDB) -> Non
     """A gather result with no pending fan-out stays a visible anomaly."""
     comp = build_join_composite(db=beaver_db)
     message = await deposit_result(
-        beaver_db, branch_id="ghost", route=(("b1", "b1"),),
-        task_id="T-ghost", payload={"b1": 1},
+        beaver_db,
+        branch_id="ghost",
+        route=(("b1", "b1"),),
+        task_id="T-ghost",
+        payload={"b1": 1},
     )
     with pytest.raises(ValueError, match="no fan-out"):
         await comp._process_join_item(dict(message))

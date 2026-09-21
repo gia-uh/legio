@@ -230,9 +230,7 @@ class Runtime:
         as a local dependency.
         """
         if db is None:
-            raise TypeError(
-                "Runtime requires a connected AsyncBeaverDB (beaver system substrate)"
-            )
+            raise TypeError("Runtime requires a connected AsyncBeaverDB (beaver system substrate)")
         validate_node_id(node_id)
         self._node_id = node_id
         self._db = db
@@ -268,8 +266,8 @@ class Runtime:
         self._instance_sequence: dict[str, int] = {}
         # The authenticated control channel (LEG-082): the Runtime is the only
         # minting authority (origin=operator); the key is in-process, per-boot.
-        self._control_key = control_key if control_key is not None else derive_control_key(
-            os.urandom(32)
+        self._control_key = (
+            control_key if control_key is not None else derive_control_key(os.urandom(32))
         )
         self._control_sequence: dict[tuple[str, str], int] = {}
         # The standing agent map, mounted by the boot (LEG-087): the real
@@ -388,8 +386,7 @@ class Runtime:
                 oldest[2],
             )
         logger.info(
-            "runtime control minted class=%s instance=%s action=%s seq=%s "
-            "pending_report=True",
+            "runtime control minted class=%s instance=%s action=%s seq=%s pending_report=True",
             class_name,
             instance_id,
             action,
@@ -416,9 +413,7 @@ class Runtime:
         """
         flow_token = FlowToken.model_validate(token)
         if not flow_token.root:
-            logger.error(
-                "runtime seed deny task=%s root=%s", flow_token.task_id, flow_token.root
-            )
+            logger.error("runtime seed deny task=%s root=%s", flow_token.task_id, flow_token.root)
             raise RecoverableError(f"seed token is not a root token (task {flow_token.task_id!r})")
         request = ExecutionRequestMessage(
             level_route=flow_token.level_route,
@@ -525,9 +520,7 @@ class Runtime:
         try:
             op = NodeOp.model_validate(item.data)
         except ValidationError as exc:
-            raise RecoverableError(
-                f"invalid node op on intake {item.data!r}: {exc}"
-            ) from exc
+            raise RecoverableError(f"invalid node op on intake {item.data!r}: {exc}") from exc
         await self._apply_node_op(op)
         replenished = await self._node_ops.count() > 0
         if replenished:
@@ -601,12 +594,9 @@ class Runtime:
             ReportedState.PARKED: ActivityState.DISABLED,
         }.get(report.state)
         if target is not None:
-            await self.registry.set_instance_state(
-                class_name, report.instance_id, target
-            )
+            await self.registry.set_instance_state(class_name, report.instance_id, target)
             logger.info(
-                "runtime state_report applied instance=%s class=%s action=%s "
-                "state=%s seq=%s",
+                "runtime state_report applied instance=%s class=%s action=%s state=%s seq=%s",
                 report.instance_id,
                 class_name,
                 report.action.value,
@@ -615,8 +605,7 @@ class Runtime:
             )
         else:
             logger.info(
-                "runtime state_report terminating (informational) instance=%s "
-                "class=%s seq=%s",
+                "runtime state_report terminating (informational) instance=%s class=%s seq=%s",
                 report.instance_id,
                 class_name,
                 report.seq,
@@ -665,8 +654,7 @@ class Runtime:
             result = ExecutionResultMessage.model_validate(item.data)
         except ValidationError as exc:
             logger.warning(
-                "runtime result_drain invalid agent=%s reason=%s "
-                "(consumed, not applied)",
+                "runtime result_drain invalid agent=%s reason=%s (consumed, not applied)",
                 agent,
                 exc,
             )
@@ -751,9 +739,7 @@ class Runtime:
                 op.verb,
                 op.class_name,
             )
-            raise RecoverableError(
-                f"node op verb {op.verb!r} requires an instance"
-            )
+            raise RecoverableError(f"node op verb {op.verb!r} requires an instance")
         if op.verb in CLASS_OP_VERBS and op.instance_id is not None:
             logger.warning(
                 "runtime node_op deny verb=%s class=%s instance=%s (class verbs take no instance)",
@@ -858,9 +844,7 @@ class Runtime:
                     )
                     raise RecoverableError(f"{what}: bring-up task failed: {error}")
             await asyncio.sleep(interval)
-        raise RecoverableError(
-            f"{what}: no state report within {timeout}s (last state: {last!r})"
-        )
+        raise RecoverableError(f"{what}: no state report within {timeout}s (last state: {last!r})")
 
     # --- bring-up vehicle -----------------------------------------------------
 
@@ -1059,7 +1043,7 @@ class Runtime:
             raise RecoverableError(
                 f"foreign deposit refuses queue {queue_name!r} outside the flow namespace"
             )
-        relative = queue_name[len(QUEUE_NAMESPACE):]
+        relative = queue_name[len(QUEUE_NAMESPACE) :]
         if not relative.startswith(("result:", "gather:")):
             gate = await self._gates.fetch(relative)
             if gate is not None and gate.get("state") == ActivityState.DISABLED.value:
@@ -1069,16 +1053,14 @@ class Runtime:
                 )
                 raise RecoverableError(f"class {relative!r} is disabled (entry gate closed)")
         if relative.startswith("gather:"):
-            composite = relative[len("gather:"):]
+            composite = relative[len("gather:") :]
             gate = await self._gates.fetch(composite)
             if gate is not None and gate.get("state") == ActivityState.DISABLED.value:
                 logger.warning(
                     "runtime deposit_remote denied queue=%s (gate closed)",
                     queue_name,
                 )
-                raise RecoverableError(
-                    f"composite {composite!r} is disabled (entry gate closed)"
-                )
+                raise RecoverableError(f"composite {composite!r} is disabled (entry gate closed)")
         await self._db.queue(queue_name).put(item, priority=priority)
         logger.info("runtime deposit_remote queue=%s", queue_name)
 
@@ -1282,9 +1264,7 @@ class Runtime:
         of a standalone re-parse).
         """
         if await self.registry.class_state(name) is not None:
-            logger.warning(
-                "runtime recreate_class deny class=%s (already exists)", name
-            )
+            logger.warning("runtime recreate_class deny class=%s (already exists)", name)
             raise RecoverableError(f"class {name!r} exists; create did already (no-op)")
         spec_yaml = await self.registry.get_cached_spec(name)
         if spec_yaml is None:
@@ -1356,12 +1336,7 @@ class Runtime:
             spec = catalog.specs.get(name)
             if spec is None or spec.type is not AgentType.COMPOSITE or not spec.branches:
                 return set()
-            return {
-                step
-                for branch in spec.branches
-                for step in branch
-                if step in remaining
-            }
+            return {step for branch in spec.branches for step in branch if step in remaining}
 
         order: list[str] = []
         while remaining:
@@ -1369,18 +1344,14 @@ class Runtime:
             if not ready:
                 stuck = sorted(remaining)
                 logger.warning("runtime catalog cycle classes=%s", ",".join(stuck))
-                raise RecoverableError(
-                    "dependency cycle among served classes: " + ",".join(stuck)
-                )
+                raise RecoverableError("dependency cycle among served classes: " + ",".join(stuck))
             for name in ready:
                 remaining.remove(name)
                 order.append(name)
         return order
 
     @staticmethod
-    def _resolve_pool(
-        pools: PoolsConfig, spec: AgentSpec, pool_override: int | None
-    ) -> int:
+    def _resolve_pool(pools: PoolsConfig, spec: AgentSpec, pool_override: int | None) -> int:
         """Class-create pool (§4.3/§8): ``pool_override`` > config > 1."""
         if pool_override is not None:
             return pool_override
@@ -1496,9 +1467,7 @@ class Runtime:
                     "class left untouched (gate restored)"
                 )
             await asyncio.sleep(interval)
-        logger.info(
-            "runtime drain_done class=%s waited=%.2fs", name, time.monotonic() - start
-        )
+        logger.info("runtime drain_done class=%s waited=%.2fs", name, time.monotonic() - start)
 
     async def _clear_queue(self, name: str) -> None:
         """Drain-and-discard the class queue (beaver has no queue deletion)."""
@@ -1642,9 +1611,7 @@ class Runtime:
         """
         instance = await self.registry.get_instance(name, instance_id)
         if instance is None:
-            logger.warning(
-                "runtime destroy_instance noop class=%s instance=%s", name, instance_id
-            )
+            logger.warning("runtime destroy_instance noop class=%s instance=%s", name, instance_id)
             return
         task_id = self._instance_tasks.get((name, instance_id))
         if task_id is not None:

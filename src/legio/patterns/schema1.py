@@ -105,7 +105,9 @@ class AgentPolicy(BaseModel):
     @model_validator(mode="after")
     def _validate_timeout(self) -> AgentPolicy:
         if self.timeout is not None and (
-            not isinstance(self.timeout, (int, float)) or not math.isfinite(self.timeout) or self.timeout <= 0
+            not isinstance(self.timeout, (int, float))
+            or not math.isfinite(self.timeout)
+            or self.timeout <= 0
         ):
             raise ValueError(
                 f"pattern policy.timeout must be a finite number of seconds > 0 (got {self.timeout!r})"
@@ -129,15 +131,11 @@ class AgentSpec(BaseModel):
     output: OutputContract
 
     # Interior — ATOMIC only, by kind
-    tool: str | None = Field(
-        default=None, description="available_tools key (kind: tool)"
-    )
+    tool: str | None = Field(default=None, description="available_tools key (kind: tool)")
     parameters: dict[str, str | int | float | bool] | None = Field(
         default=None, description="Terse call: {arg: dotted.path | literal}"
     )
-    prompt: str | None = Field(
-        default=None, description="Prompt template (kind: linguistic)"
-    )
+    prompt: str | None = Field(default=None, description="Prompt template (kind: linguistic)")
 
     # Interior — COMPOSITE only
     branches: list[list[str]] | None = Field(

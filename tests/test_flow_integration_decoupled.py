@@ -61,9 +61,7 @@ async def test_submit_deposits_step_one_in_starting_agent_queue(
     beaver_db: AsyncBeaverDB,
     runtime: Runtime,
 ) -> None:
-    task_id = await runtime.submit(
-        "client-a", (("transform", "transform"),), {"text": "hello"}
-    )
+    task_id = await runtime.submit("client-a", (("transform", "transform"),), {"text": "hello"})
     # The seed task deposits the root message on the node pump (§7.1).
     await runtime.manager.run()
 
@@ -81,9 +79,7 @@ async def test_decoupled_root_flow_writes_result_queue_and_status_completed(
     beaver_db: AsyncBeaverDB,
     runtime: Runtime,
 ) -> None:
-    task_id = await runtime.submit(
-        "client-a", (("transform", "transform"),), {"text": "hello"}
-    )
+    task_id = await runtime.submit("client-a", (("transform", "transform"),), {"text": "hello"})
     # The seed task deposits the root message on the node pump (§7.1).
     await runtime.manager.run()
 

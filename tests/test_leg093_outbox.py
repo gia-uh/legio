@@ -90,9 +90,7 @@ async def _client(app) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=transport, base_url="http://test")
 
 
-async def _deposit_result(
-    db: AsyncBeaverDB, tid: str, *, payload: dict | None = None
-) -> None:
+async def _deposit_result(db: AsyncBeaverDB, tid: str, *, payload: dict | None = None) -> None:
     """Simulate the acceptor's flow having already written the result to the
     agent's shared result queue — the write-before-ack precondition (the
     ``RESULT_DRAIN`` intake still has to collect it into the outbox record)."""

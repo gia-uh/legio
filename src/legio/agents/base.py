@@ -228,9 +228,7 @@ class AgentBase:
             while await self._standing_tick():
                 pass
         finally:
-            logger.info(
-                "agent standing down instance=%s class=%s", instance_id, self._agent_id
-            )
+            logger.info("agent standing down instance=%s class=%s", instance_id, self._agent_id)
 
     async def _standing_tick(self) -> bool:
         """One interior cycle of the standing loop (blocking on the class inbox).
@@ -280,9 +278,7 @@ class AgentBase:
                 len(hold),
             )
 
-    async def _deposit_state_report(
-        self, message: ControlMessage, state: ReportedState
-    ) -> None:
+    async def _deposit_state_report(self, message: ControlMessage, state: ReportedState) -> None:
         """Deposit the instance's statement that one control was honored (LEG-095).
 
         One report per honored control, on the Runtime's node-internal intake
@@ -462,9 +458,7 @@ class AgentBase:
                 # Uniform step bound (every type): one handling of one item
                 # runs under the declared pattern policy; expiry surfaces
                 # through the existing error-result path below, never silent.
-                new_payload = await asyncio.wait_for(
-                    self._handle(request), self._execution_timeout
-                )
+                new_payload = await asyncio.wait_for(self._handle(request), self._execution_timeout)
             if new_payload is not None:
                 self._verify_output_contract(new_payload)
         except asyncio.CancelledError:
