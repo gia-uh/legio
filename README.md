@@ -89,3 +89,14 @@ from Session 108) and the 2 pyright false positives in
 and kept separate from per-issue work. Everything in this repo is English
 (AGENTS.md rule 1); work is per-issue, contract-first, and every turn ends
 with a journal commit.
+
+## Developed By
+
+Legio is a collaborative open-source project co-developed by:
+
+- **GIA-UH** — Grupo de Inteligencia Artificial, Universidad de La Habana
+- **Syalia S.R.L.**
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
