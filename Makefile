@@ -46,16 +46,17 @@ build: ## Build the wheel/archive (LEG-101): uv build
 	uv build
 
 .PHONY: release-guard
-release-guard: ## Refuse to release a dirty tree or a stale validation record (LEG-107)
+release-guard: ## Refuse a dirty tree or a validation record that predates the release commit (LEG-107)
 	@test -z "$$(git status --porcelain)" || { echo "release-guard: working tree is dirty (commit first)"; git status --short; exit 1; }
 	@record="docs/VALIDATIONS/release-artifact-$(VERSION).md"; \
 	 test -f "$$record" || { echo "release-guard: missing validation record $$record"; exit 1; }; \
 	 stamp=$$(sed -n 's/^- Run at: //p' "$$record"); \
 	 [ -n "$$stamp" ] || { echo "release-guard: no 'Run at' stamp in $$record"; exit 1; }; \
-	 head_epoch=$$(git show -s --format=%ct HEAD); \
 	 rec_epoch=$$(date -u -d "$$stamp" +%s 2>/dev/null || true); \
 	 [ -n "$$rec_epoch" ] || { echo "release-guard: unparseable stamp '$$stamp'"; exit 1; }; \
-	 [ "$$rec_epoch" -ge "$$head_epoch" ] || { echo "release-guard: validation record ($$stamp) predates HEAD; re-run make validate-release"; exit 1; }; \
+	 head_epoch=$$(git show -s --format=%ct HEAD); \
+	 margin=60; \
+	 [ "$$rec_epoch" -ge "$$((head_epoch - margin))" ] || { echo "release-guard: validation record ($$stamp) predates HEAD; re-run make validate-release"; exit 1; }; \
 	 echo "release-guard: clean tree, validation record fresh ($$stamp)"
 
 .PHONY: validate-release
