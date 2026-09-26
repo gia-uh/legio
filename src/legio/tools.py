@@ -9,9 +9,14 @@ not declare pydantic schemas — the consuming agent declares `output_as`/
 
 from __future__ import annotations
 
+import hashlib
+import importlib
+import importlib.util
 import inspect
 import logging
+import sys
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from legio.errors import UnrecoverableError
@@ -32,10 +37,21 @@ class Tool(Protocol):
 
 
 class AvailableToolsRegistry:
-    """Registry for Schema 3 `available_tools` declaration."""
+    """Registry for Schema 3 `available_tools` declaration.
 
-    def __init__(self) -> None:
+    ``base_dir`` is the directory of the ``tools.yaml`` that declared the
+    tools (the node directory). It is the fallback root for **node-local**
+    implementations: a dotted path whose module is not normally importable is
+    loaded from ``<base_dir>/<module>.py`` by file location under a unique
+    synthetic module name (no ``sys.path`` mutation, no cross-node collision).
+    A consumer that installs its tools as a normal package keeps the plain
+    dotted path and needs no ``base_dir``.
+    """
+
+    def __init__(self, base_dir: Path | None = None) -> None:
         self._declarations: dict[str, dict[str, Any]] = {}
+        self._base_dir = base_dir
+        self._loaded: dict[str, Tool] = {}
 
     def declare(
         self,
@@ -62,20 +78,65 @@ class AvailableToolsRegistry:
             raise KeyError(f"no tool declared for name {name!r}") from None
 
     def load_tool(self, name: str) -> Tool:
-        """Load and return the tool callable from its dotted path."""
+        """Load and return the tool callable from its dotted path.
+
+        A normal dotted import is tried first; when it fails and a ``base_dir``
+        was given, the implementation is resolved as a **node-local** file
+        ``<base_dir>/<module>.py``. The loaded callable is cached per registry
+        (``load_tool`` runs once per dispatch).
+        """
+        cached = self._loaded.get(name)
+        if cached is not None:
+            return cached
         decl = self.get_declaration(name)
         dotted_path = decl["implementation"]
         try:
             module_path, attr = dotted_path.rsplit(".", 1)
-            module = __import__(module_path, fromlist=[attr])
+            module = self._import_module(module_path)
             tool = getattr(module, attr)
-        except (ImportError, AttributeError, ValueError) as exc:
+        except (ImportError, AttributeError, ValueError, OSError) as exc:
             logger.error("failed to load tool name=%s path=%s error=%s", name, dotted_path, exc)
             raise UnrecoverableError(f"cannot load tool {name!r} from {dotted_path!r}") from exc
         if not callable(tool):
             logger.error("tool non-callable name=%s path=%s", name, dotted_path)
             raise UnrecoverableError(f"tool {name!r} resolved to non-callable: {tool!r}")
+        self._loaded[name] = tool
         return tool
+
+    def _import_module(self, module_path: str) -> Any:
+        """Import ``module_path`` normally, or node-local as a fallback."""
+        try:
+            return importlib.import_module(module_path)
+        except ImportError:
+            local = self._load_local_module(module_path)
+            if local is None:
+                raise
+            return local
+
+    def _load_local_module(self, module_path: str) -> Any:
+        """Load ``<base_dir>/<module_path>.py`` as a synthetic module, or None."""
+        if self._base_dir is None:
+            return None
+        candidate = self._base_dir.joinpath(*module_path.split(".")).with_suffix(".py")
+        if not candidate.is_file():
+            return None
+        digest = hashlib.sha1(str(candidate.resolve()).encode("utf-8")).hexdigest()[:12]
+        synthetic = f"_legio_node_tools_{digest}_{module_path.replace('.', '_')}"
+        existing = sys.modules.get(synthetic)
+        if existing is not None:
+            return existing
+        spec = importlib.util.spec_from_file_location(synthetic, candidate)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[synthetic] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(synthetic, None)
+            raise
+        logger.info("tool local import module=%s file=%s", module_path, candidate)
+        return module
 
     def all_declarations(self) -> Mapping[str, dict[str, Any]]:
         """Return all declared tools (read-only view)."""

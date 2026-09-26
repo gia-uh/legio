@@ -25,15 +25,18 @@ A tool is a plain callable; its signature is its contract. Declare it in a
 ```yaml
 available_tools:
   transform:
-    implementation: "examples.tools.transform"
+    implementation: "tools.transform"
     policy:
       timeout: 30
       retries: 0
 ```
 
-`implementation` is a dotted path resolved at runtime
-(`examples/tools.py` ships reference implementations — copy and swap them).
-`policy` is `timeout`/`retries` (genuine numbers; bools/strings are rejected).
+`implementation` is a dotted path resolved at runtime. Two shapes are
+supported: a normally importable package path (`my_pkg.tools.transform`), or a
+**node-local** module that ships beside the `tools.yaml` (`tools.transform`
+resolves to `tools.py` in the node directory) — the examples use the latter so
+each node is self-contained and copyable. `policy` is `timeout`/`retries`
+(genuine numbers; bools/strings are rejected).
 
 ## 2. Write a pattern (Schema 1)
 
@@ -98,8 +101,9 @@ lifecycle:
 
 Options: `pools` (capacity per pattern), `services.llm` (the LLM endpoint for
 linguistic steps), `api` (host/port/clients), `federation` (peer nodes),
-`logging`. Relative paths resolve against the process working directory — run
-from the node directory.
+`logging`. Relative paths resolve against the **directory of this config
+file**, so the node boots from any working directory with
+`--config <path>/legio.yaml`.
 
 ## 4. Validate (fail fast at boot)
 
@@ -112,8 +116,7 @@ the offender (rule 9). A wrong pattern never half-initializes a node.
 ## 5. Boot the node
 
 ```bash
-cd examples/transform
-legio server --config legio.yaml --host 127.0.0.1 --port 8000
+legio server --config examples/transform/legio.yaml --host 127.0.0.1 --port 8000
 ```
 
 The server materializes the standing agents, runs the §8 bring-up
@@ -142,10 +145,10 @@ outbox record — that is the whole return path; there are no push events.
 ## 7. Operate classes and instances
 
 ```bash
-legio agent list-classes --config legio.yaml
-legio agent class-state --class transform --config legio.yaml
-legio agent create-class --class transform --pool 1 --config legio.yaml
-legio agent destroy-class --class transform --config legio.yaml
+legio agent list-classes --config examples/transform/legio.yaml
+legio agent class-state --class transform --config examples/transform/legio.yaml
+legio agent create-class --class transform --pool 1 --config examples/transform/legio.yaml
+legio agent destroy-class --class transform --config examples/transform/legio.yaml
 ```
 
 Class/instance lifecycle verbs live in `docs/AGENT_LIFECYCLE.md` §4.8; the
@@ -153,11 +156,13 @@ catalog is the operator source of truth, and a `0` pool births a class disabled.
 
 ## 8. Composites and linguistic steps
 
-The other three example nodes show the same skeleton extended:
+The other example nodes show the same skeleton extended:
 
 - `examples/summarize/` — `summ` (linguistic) → `assess` (tool), one branch.
 - `examples/extract-and-summarize/` — `extract` (linguistic) → `assess`, one branch.
 - `examples/distribute-summary/` — `summ` + `cata` (two linguistic branches).
+- `examples/document_processing/` — a real `pdf_extract_text` tool (its own
+  `requirements.txt` installs the example-only `pypdf`).
 
 A composite's **output build is the pattern's model**: the engine has no
 generic build — your composite class implements `build_output_as` and is
@@ -171,4 +176,8 @@ and `tests/test_leg043` run these flows end-to-end against the same files.
 `uv run pytest tests/test_leg100_consumer_guide.py` walks this guide literally:
 every example pattern loads, every composite resolves, every config template
 parses, and the `transform` node boots and serves submit → status over the REST
-surface. Everything the guide shows is the same bytes the suite tests.
+surface. `tests/test_leg104_shipped_examples.py` additionally runs the §5
+command as a **subprocess** (`legio server --config examples/transform/legio.yaml`
+from the repo root, with no `PYTHONPATH`) — the check that proves the documented
+command works as written. Everything the guide shows is the same bytes the
+suite tests.

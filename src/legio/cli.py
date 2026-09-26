@@ -47,7 +47,7 @@ import uvicorn
 import yaml
 
 from legio import logging as legio_logging
-from legio.config import CliOverrides, LoadedConfig, load
+from legio.config import CliOverrides, LoadedConfig, load, resolve_config_paths
 from legio.errors import ConfigError, LegioError
 from legio.manager import TaskStatus
 from legio.materializer import BootedNode, boot_node
@@ -181,11 +181,8 @@ def _collect_spec_yamls(loaded: LoadedConfig) -> dict[str, str]:
     dirs, to feed the runtime YAML cache (§8 step 3, §4.7 recreate-class)."""
     yamls: dict[str, str] = {}
     origins: dict[str, Path] = {}
-    directories = [
-        loaded.config.patterns.tool,
-        loaded.config.patterns.linguistic,
-        loaded.config.patterns.composite,
-    ]
+    cfg = resolve_config_paths(loaded)
+    directories = [cfg.patterns.tool, cfg.patterns.linguistic, cfg.patterns.composite]
     for directory in directories:
         for yaml_file in sorted(Path(directory).rglob("*.yaml")):
             try:
@@ -428,10 +425,11 @@ def _resolve_validate_dirs(loaded: LoadedConfig | None, directory: Path | None) 
             "composite": root / "patterns" / "composite",
         }
     if loaded is not None:
+        cfg = resolve_config_paths(loaded)
         return {
-            "tool": loaded.config.patterns.tool,
-            "linguistic": loaded.config.patterns.linguistic,
-            "composite": loaded.config.patterns.composite,
+            "tool": cfg.patterns.tool,
+            "linguistic": cfg.patterns.linguistic,
+            "composite": cfg.patterns.composite,
         }
     raise LegioError("validate requires --dir DIR (the node patterns tree) or --config path")
 

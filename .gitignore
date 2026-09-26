@@ -16,6 +16,9 @@ dist/
 .env.*
 *.local
 
+# Example node runtime state (created at boot; LEG-104)
+examples/*/db/
+
 # OS
 .DS_Store
 

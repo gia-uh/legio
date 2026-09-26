@@ -14,3 +14,8 @@ async def slow_tool(duration: float = 0.2) -> Mapping[str, Any]:
 def failing_tool() -> Mapping[str, Any]:
     """A tool that always raises an exception. Used to test error handling."""
     raise RuntimeError("intentional failure for testing")
+
+
+def transform(text: str, factor: int = 2) -> Mapping[str, Any]:
+    """A successful tool mirroring the domain-free ``transform`` example."""
+    return {"transformed": str(text).upper() * factor}

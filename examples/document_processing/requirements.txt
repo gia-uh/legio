@@ -1,0 +1,4 @@
+# Example-only dependency: NOT a legio dependency.
+# Install this to actually run the PDF extraction tool of this example:
+#   pip install -r examples/document_processing/requirements.txt
+pypdf>=6.19.0

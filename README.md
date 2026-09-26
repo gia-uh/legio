@@ -13,7 +13,8 @@ uv run legio server --config examples/transform/legio.yaml --host 127.0.0.1 --po
 ```
 
 Then submit and poll status (see `docs/CONSUMER_GUIDE.md` for the full
-walkthrough; the headless `transform` example boots with no LLM needed).
+walkthrough; the headless `transform` example boots with no LLM needed and runs
+from the repo root).
 
 ## Docs surface
 
@@ -32,11 +33,15 @@ walkthrough; the headless `transform` example boots with no LLM needed).
 
 ## Examples
 
-`examples/` ships four self-contained, domain-free example nodes — each with
-its own `patterns/` (Schema 1 YAML), `tools.yaml` (Schema 3) and `legio.yaml`
-(LEG-017): `transform`, `summarize`, `extract-and-summarize` and
-`distribute-summary`. The same files are exercised by the test suite — drift
-breaks the build (LEG-100, no bitrot).
+`examples/` ships five self-contained, domain-free example nodes — each with
+its own `patterns/` (Schema 1 YAML), `tools.yaml` (Schema 3), node-local
+`tools.py` and `legio.yaml` (LEG-017): `transform`, `summarize`,
+`extract-and-summarize`, `distribute-summary` and `document_processing`. Each
+node is copy-and-adapt: its relative paths resolve against its own `legio.yaml`
+and its tools resolve beside it, so the quick-start command runs from the repo
+root unchanged. The same files are exercised by the test suite — drift breaks
+the build (LEG-100, no bitrot; LEG-104 boots the shipped config as a
+subprocess).
 
 ## Engine in one breath
 

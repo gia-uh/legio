@@ -15,7 +15,6 @@ proofs, all against the *same* files the consumer guide documents:
 from __future__ import annotations
 
 import asyncio
-import importlib
 import pathlib
 import time
 
@@ -26,6 +25,7 @@ from legio.cli import _shutdown_pumps, bring_catalog_up, executor_loop, executor
 from legio.config import load, load_tools_file
 from legio.materializer import boot_node
 from legio.patterns import load_pattern_dirs, resolve_composite_branches
+from legio.tools import AvailableToolsRegistry
 
 EXAMPLES = pathlib.Path(__file__).resolve().parents[1] / "examples"
 NODE_FLOWS = (
@@ -85,10 +85,18 @@ def test_guide_every_example_config_template_parses_and_tools_match() -> None:
         assert set(tools.available_tools) == tool_patterns, (
             f"{flow}: tools.yaml does not cover the shipped tool patterns"
         )
+        # Each implementation resolves through the real node-local loader
+        # (base_dir = the node directory), exactly as the node boots it.
+        registry = AvailableToolsRegistry(base_dir=node)
         for name, declaration in tools.available_tools.items():
-            module_path, _, attr = declaration.implementation.rpartition(".")
-            assert importlib.import_module(module_path), f"{flow}: {name} module"
-            assert callable(getattr(importlib.import_module(module_path), attr))
+            registry.declare(
+                name,
+                implementation=declaration.implementation,
+                policy=(
+                    declaration.policy.model_dump() if declaration.policy is not None else None
+                ),
+            )
+            assert callable(registry.load_tool(name)), f"{flow}: {name} tool loads"
 
 
 @pytest.mark.asyncio

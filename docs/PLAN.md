@@ -447,6 +447,37 @@ are red for the yet-unimplemented surface.
   - **Accept**: each approved backlog slice is fixed contract-first (red tests,
     green implementation, full suite + lint + typecheck green, journal entry);
     no consumer-domain, transport/lifecycle, or polling-model regressions.
+- **LEG-104** Shipped examples run exactly as documented (GitHub #52 finding 1).
+  Spec: `docs/CONTRACTS/LEG-104-shipped-examples-run.md`.
+  - **Accept**: `legio server --config examples/transform/legio.yaml` run from
+    the repo root (installed console script, no `PYTHONPATH`, no manual
+    `mkdir`) boots, serves submit → status and returns
+    `{"transform": {"transformed": "HELLOHELLO"}}`, proven by a subprocess
+    contract test; every shipped config resolves and every declared tool loads.
+- **LEG-105** Task state reflects the flow outcome (GitHub #52 finding 2).
+  Spec: `docs/CONTRACTS/LEG-105-task-state-flow-outcome.md`.
+  - **Accept**: a flow whose step raised reports `state == failed` (error still
+    in `output`); a clean flow reports `completed`.
+- **LEG-106** The idle executor does not spin (GitHub #52 finding 3).
+  Spec: `docs/CONTRACTS/LEG-106-idle-executor.md`.
+  - **Accept**: an idle server's executor does not run a tight loop; a
+    deterministic test proves the empty-pass back-off.
+- **LEG-107** Release integrity and dependency hygiene `v0.1.1` (GitHub #52
+  findings 4/7/8). Spec: `docs/CONTRACTS/LEG-107-release-integrity.md`.
+  - **Accept**: `v0.1.1` tags the validated tree; changelog lists everything in
+    the tag; `make release` refuses a dirty tree / stale record; runtime deps
+    bounded; `pypdf` is an example-only dependency.
+- **LEG-108** Peer allowlist enforced and honest default posture (GitHub #52
+  findings 5/6). Spec: `docs/CONTRACTS/LEG-108-peer-allowlist-posture.md`.
+  - **Accept**: an unknown peer is rejected `403` on every federation endpoint
+    through the real app; `api.host` defaults to `127.0.0.1`; docs match the
+    trust model.
+- **LEG-109** Documentation drift and doc-lint (GitHub #52 findings 9/10).
+  Spec: `docs/CONTRACTS/LEG-109-docs-drift-lint.md`.
+  - **Accept**: the README/ARCHITECTURE/guide drifts are fixed; a doc-lint test
+    fails on regressions of the example count, the FlowToken field list and the
+    stale debt paragraph; `fetch_peer_catalogs` raises the promised peer-named
+    `RecoverableError`.
 
 ## Ordering constraints
 

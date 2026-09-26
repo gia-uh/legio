@@ -33,7 +33,8 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -42,7 +43,7 @@ from fastapi import FastAPI
 
 from legio.agents import AgentBase, CompositeAgent, LinguisticAgent, ToolAgent
 from legio.api import create_app
-from legio.config import LlmConfig, LoadedConfig
+from legio.config import LlmConfig, LoadedConfig, resolve_config_paths
 from legio.errors import ConfigError, UnrecoverableError
 from legio.federation import NodeDB, build_routes, fetch_peer_catalogs, roster_steps
 from legio.flow import ControlVerifier, derive_control_key
@@ -303,7 +304,8 @@ def _build_tool_registry(tools: LoadedConfig) -> AvailableToolsRegistry:
     from legio.config import load_tools_file
 
     tools_config = load_tools_file(tools.config.tools.config)
-    registry = AvailableToolsRegistry()
+    # Node-local tool implementations resolve beside the tools.yaml (LEG-104).
+    registry = AvailableToolsRegistry(base_dir=Path(tools.config.tools.config).parent)
     for name, declaration in tools_config.available_tools.items():
         registry.declare(
             name,
@@ -348,10 +350,22 @@ async def boot_node(
     are fetched over HTTP (``fetch_peer_catalogs``, L1) — fail-fast with the
     peer named (rule 9).
     """
+    # A node reads its relative paths against its own config file, not the
+    # process working directory (LEG-104): `legio server --config
+    # examples/transform/legio.yaml` works from the repo root unchanged. When
+    # every path is already absolute the config object is reused unchanged.
+    resolved_config = resolve_config_paths(loaded)
+    if resolved_config is not loaded.config:
+        loaded = replace(loaded, config=resolved_config)
     cfg = loaded.config
 
     if db is None:
-        database = AsyncBeaverDB(str(cfg.database.db_path))
+        db_file = Path(cfg.database.db_path)
+        if not db_file.parent.exists():
+            db_file.parent.mkdir(parents=True, exist_ok=True)
+            logger.info("node db dir created path=%s", db_file.parent)
+        logger.debug("node db resolved path=%s", db_file)
+        database = AsyncBeaverDB(str(db_file))
         await database.connect()
         owns_database = True
     else:

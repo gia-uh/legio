@@ -225,7 +225,7 @@ lifecycle:
       timeout: 10
       retries: 0
   ok_tool:
-    implementation: examples.tools.transform
+    implementation: tests.tools.transform
     policy:
       timeout: 10
       retries: 0
@@ -345,7 +345,7 @@ lifecycle:
         (tmp_path / "tools.yaml").write_text(
             """available_tools:
   ok_tool:
-    implementation: examples.tools.transform
+    implementation: tests.tools.transform
     policy:
       timeout: 10
       retries: 0

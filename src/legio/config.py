@@ -522,6 +522,52 @@ def load(
     return LoadedConfig(config=cfg, secrets=secrets, config_path=path_used)
 
 
+def resolve_config_paths(loaded: LoadedConfig) -> LegioConfig:
+    """Anchor relative node paths to the directory of the config that declares them.
+
+    ``load()`` is a pure parse: it keeps every path exactly as authored so a
+    relative ``legio.yaml`` stays portable. A node, however, must read those
+    paths relative to its own config file, not the process working directory
+    (a consumer running ``legio server --config examples/transform/legio.yaml``
+    from the repo root must not need the ``examples/transform/`` CWD). This
+    returns a copy with relative ``database.db_path``, ``patterns.*`` and
+    ``tools.config`` anchored to ``config_path.parent``; absolute paths are
+    returned untouched. With no config file (built-in defaults) the config is
+    returned unchanged.
+    """
+    if loaded.config_path is None:
+        return loaded.config
+    cfg = loaded.config
+    authored = (
+        cfg.database.db_path,
+        cfg.patterns.tool,
+        cfg.patterns.linguistic,
+        cfg.patterns.composite,
+        cfg.tools.config,
+    )
+    if all(path.is_absolute() for path in authored):
+        # Nothing to anchor: return the same object (identity is observable —
+        # `BootedNode.config is loaded`).
+        return cfg
+    base = loaded.config_path.parent
+
+    def anchored(path: Path) -> Path:
+        return path if path.is_absolute() else base / path
+
+    database = cfg.database.model_copy(update={"db_path": anchored(cfg.database.db_path)})
+    patterns = cfg.patterns.model_copy(
+        update={
+            "tool": anchored(cfg.patterns.tool),
+            "linguistic": anchored(cfg.patterns.linguistic),
+            "composite": anchored(cfg.patterns.composite),
+        }
+    )
+    tools = cfg.tools.model_copy(update={"config": anchored(cfg.tools.config)})
+    resolved = cfg.model_copy(update={"database": database, "patterns": patterns, "tools": tools})
+    logger.debug("config paths resolved base=%s", base)
+    return resolved
+
+
 def load_tools_file(path: Path | str) -> ToolsFileConfig:
     """Load and validate the independent Schema 3 config (LEG-013).
 
@@ -595,4 +641,5 @@ __all__ = [
     "ToolsFileConfig",
     "load",
     "load_tools_file",
+    "resolve_config_paths",
 ]
