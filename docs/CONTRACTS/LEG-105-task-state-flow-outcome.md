@@ -1,6 +1,6 @@
 # LEG-105 — Task state reflects the flow outcome
 
-- **Status:** DRAFT — awaiting maintainer approval.
+- **Status:** APPROVED by maintainer direction on 2026-09-26 (GitHub #54).
 - **Rasante:** R-10.x (hardening of the released `v0.1.0`)
 - **GitHub issue:** #54 (finding 2 of the #52 audit umbrella)
 - **Source:** external audit of `v0.1.0` (`fbd787e`), finding 2
@@ -31,6 +31,11 @@ a consumer writing `if state == "completed": use(output)` ships a bug.
    (rule 9 — the error string stays visible).
 3. Keep polling-only: no new states, no callbacks; `status()` still returns a
    `TaskEntry` for every terminal state (never raises on a failed flow).
+
+**Supersedes** the LEG-063/LEG-064 expectation that an errored flow (e.g. a step
+`policy.timeout` expiry) reports `COMPLETED`: with this slice such a flow is
+`FAILED` (the error still travels in `output`). Those scenarios now assert
+`FAILED`.
 
 ## Non-goals
 

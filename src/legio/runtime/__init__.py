@@ -1187,8 +1187,15 @@ class Runtime:
                     logger.warning("runtime status corrupt record task=%s error=%s", task_id, exc)
                 if result is not None:
                     output = dict(result.payload)
-                    state = TaskState.COMPLETED
                     result_key = outbox_key(task_id)
+                    if output.get("error"):
+                        # The flow outcome carries a top-level error result: the
+                        # step failed, so the task is FAILED even though the seed
+                        # record (root-token dispatch) itself succeeded (LEG-105).
+                        state = TaskState.FAILED
+                        logger.info("runtime status failed task=%s (flow outcome error)", task_id)
+                    else:
+                        state = TaskState.COMPLETED
                 else:
                     state = (
                         TaskState.PENDING

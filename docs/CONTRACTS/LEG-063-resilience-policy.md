@@ -74,4 +74,4 @@ Red-first contract tests in `tests/test_leg063_resilience_policy.py`:
 1. `TaskState.FAILED` exposed and readable via `status()`.
 2. Composite with `fail_fast=false` (default) → tolerant fan-in (all branches deposited, errors in slots).
 3. Composite with `fail_fast=true` → on first branch error, remaining branches not deposited, join with filled slots.
-4. Step timeout (`policy.timeout`) on tool/linguistic/composite → error result routed, task COMPLETED.
+4. Step timeout (`policy.timeout`) on tool/linguistic/composite → error result routed; the task is **FAILED** (amended by LEG-105: the flow outcome carries an error).

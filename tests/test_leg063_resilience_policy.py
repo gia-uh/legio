@@ -442,7 +442,8 @@ class TestStepTimeoutEnforcement:
 
     @pytest.mark.asyncio
     async def test_tool_step_timeout_surfaces_error(self, tmp_path: Path) -> None:
-        """Tool with policy.timeout shorter than its execution → TimeoutError in output."""
+        """Tool with policy.timeout shorter than its execution → TimeoutError in
+        output and the flow outcome is FAILED (LEG-105)."""
         tool_dir = tmp_path / "tool"
         tool_dir.mkdir()
         (tool_dir / "slow.yaml").write_text(
@@ -521,7 +522,7 @@ lifecycle:
                 await asyncio.sleep(0.02)
 
             assert entry is not None
-            assert entry.state == TaskState.COMPLETED
+            assert entry.state == TaskState.FAILED
             assert entry.output is not None
             assert "error" in entry.output
             assert "TimeoutError" in entry.output["error"]

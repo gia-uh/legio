@@ -19,7 +19,7 @@ Four green CI tests exercising the real mounted engine path (headless node boot 
 
 ### Scenario 1: Step timeout (`policy.timeout`)
 - **Setup**: A tool pattern with `policy: { timeout: 0.05 }` whose implementation `await asyncio.sleep(0.2)`.
-- **Expectation**: The step handling hits the timeout, `TimeoutError` is surfaced as an error result. The task completes with `state: completed` and `output: {"error": "TimeoutError: ..."}`. No crash, no silent hang.
+- **Expectation**: The step handling hits the timeout, `TimeoutError` is surfaced as an error result. The task ends with `state: failed` (LEG-105) and `output: {"error": "TimeoutError: ..."}`. No crash, no silent hang.
 
 ### Scenario 2: Provider outage simulation (disabled class at fan-out, tolerant)
 - **Setup**: A composite with two branches; the first branch's first class is `disabled` via lifecycle (or gate closed at fan-out). Composite has `fail_fast: false` (default).
@@ -31,7 +31,7 @@ Four green CI tests exercising the real mounted engine path (headless node boot 
 
 ### Scenario 4: Composite-level timeout
 - **Setup**: A composite with `policy: { timeout: 0.05 }` whose fan-out + gather takes longer (e.g., branches include a slow tool `await asyncio.sleep(0.2)`).
-- **Expectation**: The composite's step handling (fan-out + bounded gather wait) exceeds its declared `policy.timeout`. The `TimeoutError` is surfaced by the runner (`_run_guarded`), routed as an error result. Task completes with `state: completed` and `output: {"error": "TimeoutError: ..."}`.
+- **Expectation**: The composite's step handling (fan-out + bounded gather wait) exceeds its declared `policy.timeout`. The `TimeoutError` is surfaced by the runner (`_run_guarded`), routed as an error result. Task ends with `state: failed` (LEG-105) and `output: {"error": "TimeoutError: ..."}`. (Scenario 4's assertion is the fan-out timeout; the fan-in is a separate cycle.)
 
 ## Test shape
 
