@@ -7,8 +7,8 @@ the `examples/` single source. The gate: `make validate-release`.
 
 - Pinned version: `0.1.1`
 - Artifact: `legio-0.1.1-py3-none-any.whl`
-- Smoke: validate-release: import ok __version__=0.1.1;validate-release: round-trip ok task=validate-release@example:7f299c26-c3cd-47bc-b7bf-540a73340ac4 output={'transform': {'transformed': 'HELLOHELLO'}};validate-release: artifact smoke passed
-- Run at: 2026-09-26T22:57:55Z
+- Smoke: validate-release: import ok __version__=0.1.1;validate-release: round-trip ok task=validate-release@example:1263ff5f-e009-481e-855c-303b7d515b00 output={'transform': {'transformed': 'HELLOHELLO'}};validate-release: artifact smoke passed
+- Run at: 2026-09-26T23:00:23Z
 
 The real external-consumer repository (an own repo pinning the release) is the
 maintainer's follow-up; this record is the in-repo proof of the wheel.
