@@ -84,14 +84,15 @@ logging:
   file: "./data/legio.log"             # empty → stream
 tools:
   config: "./tools.yaml"               # pointer to the independent Schema 3 config
-federation:                            # known peers of THIS node (outbound); admission = shared token only (LEG-017 §5)
-  peers:
-    - id: "prod-b@host-02"             # peer's node.id — whom this node knows / delegates to
+federation:                            # peers of THIS node (LEG-017 §5 / LEG-108)
+  peers:                               # outbound: whom this node knows / delegates to
+    - id: "prod-b@host-02"             # peer's node.id
       url: "http://host-02:8000"
     - id: "prod-c@host-03"
       url: "http://host-03:8000"
     - id: "prod-d@host-04"
       url: "http://host-04:8000"
+  allowlist: ["prod-b@host-02"]        # inbound admission; empty admits any token holder
 ```
 
 Independent Schema 3 config (`tools.yaml`), validated with its own schema

@@ -38,6 +38,9 @@ import re
 from typing import Any
 
 from fastapi import FastAPI, Header, Query
+
+PEER_ID_HEADER = "X-Peer-Id"
+"""Header a federation peer uses to identify itself as the calling node (LEG-108)."""
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -352,6 +355,7 @@ def create_app(
     clients: ClientTokenStore | None = None,
     pattern_catalog: Catalog | None = None,
     federation_token: str | None = None,
+    peer_allowlist: list[str] | None = None,
 ) -> FastAPI:
     """Build the FastAPI application exposing the Runtime's submit/status over REST.
 
@@ -371,7 +375,27 @@ def create_app(
     (LEG-090), ``POST /work-items/{agent}`` (LEG-092) and the outbox verbs
     ``GET``/``DELETE /outbox/{task_id}`` (LEG-093), all guarded by the shared
     token; absent the endpoints are not mounted (no federation surface).
+    ``peer_allowlist`` (LEG-108) rejects an identified peer outside it with 403
+    on every federation endpoint; empty admits any token holder.
     """
+    allowlist = frozenset(peer_allowlist or ())
+
+    def _peer_forbidden(peer_id: str | None, path: str) -> JSONResponse | None:
+        """The inbound peer-allowlist check (LEG-108): ``403`` for an unknown peer.
+
+        The peer allowlist is enforced on the served surface. An empty allowlist
+        admits any caller that holds the shared federation token (the
+        maintainer's trust model: the forwarding peer is trusted). A configured
+        allowlist rejects an identified caller outside it. A missing
+        ``X-Peer-Id`` is **not** rejected — a single-token deployment
+        contributes no identity to check, and rejecting it would break the
+        minimal deployment; identification is opt-in.
+        """
+        if allowlist and peer_id is not None and peer_id not in allowlist:
+            logger.warning("api federation forbidden peer=%s path=%s", peer_id, path)
+            return _forbidden()
+        return None
+
     app = FastAPI(title="legio", version="0.1.0")
 
     @app.post("/submit", response_model=SubmitResponse)
@@ -448,21 +472,29 @@ def create_app(
         @app.get("/health", response_model=HealthResponse)
         async def health(
             authorization: str | None = Header(default=None),
+            x_peer_id: str | None = Header(default=None, alias=PEER_ID_HEADER),
         ) -> HealthResponse | JSONResponse:
             token = _bearer_token(authorization)
             if token is None or not federation_store.is_valid(token):
                 logger.warning("api health unauthorized has_token=%s", token is not None)
                 return _unauthorized()
+            forbidden = _peer_forbidden(x_peer_id, "/health")
+            if forbidden is not None:
+                return forbidden
             return HealthResponse(status="ok")
 
         @app.get("/catalog", response_model=CatalogResponse)
         async def catalog(
             authorization: str | None = Header(default=None),
+            x_peer_id: str | None = Header(default=None, alias=PEER_ID_HEADER),
         ) -> CatalogResponse | JSONResponse:
             token = _bearer_token(authorization)
             if token is None or not federation_store.is_valid(token):
                 logger.warning("api catalog unauthorized has_token=%s", token is not None)
                 return _unauthorized()
+            forbidden = _peer_forbidden(x_peer_id, "/catalog")
+            if forbidden is not None:
+                return forbidden
             if pattern_catalog is None:
                 logger.error("api catalog no_capacity configured=false")
                 return JSONResponse(status_code=503, content={"code": "no_capacity"})
@@ -473,6 +505,7 @@ def create_app(
             agent: str,
             body: WorkItemRequest,
             authorization: str | None = Header(default=None),
+            x_peer_id: str | None = Header(default=None, alias=PEER_ID_HEADER),
         ) -> WorkItemResponse | JSONResponse:
             """Accept a federated work item for a served agent.
 
@@ -486,6 +519,9 @@ def create_app(
             if token is None or not federation_store.is_valid(token):
                 logger.warning("api work_item unauthorized agent=%s", agent)
                 return _unauthorized()
+            forbidden = _peer_forbidden(x_peer_id, f"/work-items/{agent}")
+            if forbidden is not None:
+                return forbidden
             if pattern_catalog is None:
                 logger.error("api work_item no capacity agent=%s", agent)
                 return JSONResponse(status_code=503, content={"code": "no_capacity"})
@@ -531,7 +567,11 @@ def create_app(
         async def outbox_poll(
             task_id: str,
             authorization: str | None = Header(default=None),
+            x_peer_id: str | None = Header(default=None, alias=PEER_ID_HEADER),
         ) -> OutboxPollResponse | JSONResponse:
+            forbidden = _peer_forbidden(x_peer_id, f"/outbox/{task_id}")
+            if forbidden is not None:
+                return forbidden
             auth_data = _guard_outbox(task_id, federation_store, _bearer_token(authorization))
             if isinstance(auth_data, JSONResponse):
                 return auth_data
@@ -544,7 +584,11 @@ def create_app(
         async def outbox_ack(
             task_id: str,
             authorization: str | None = Header(default=None),
+            x_peer_id: str | None = Header(default=None, alias=PEER_ID_HEADER),
         ) -> OutboxAckResponse | JSONResponse:
+            forbidden = _peer_forbidden(x_peer_id, f"/outbox/{task_id}")
+            if forbidden is not None:
+                return forbidden
             auth_data = _guard_outbox(task_id, federation_store, _bearer_token(authorization))
             if isinstance(auth_data, JSONResponse):
                 return auth_data
@@ -556,6 +600,7 @@ def create_app(
         async def deposits(
             body: DepositRequest,
             authorization: str | None = Header(default=None),
+            x_peer_id: str | None = Header(default=None, alias=PEER_ID_HEADER),
         ) -> DepositResponse | JSONResponse:
             """The owner's half of a routed queue deposit (LEG-095 Phase 3).
 
@@ -573,6 +618,9 @@ def create_app(
             if token is None or not federation_store.is_valid(token):
                 logger.warning("api deposits unauthorized queue=%s", body.queue)
                 return _unauthorized()
+            forbidden = _peer_forbidden(x_peer_id, "/deposits")
+            if forbidden is not None:
+                return forbidden
             if pattern_catalog is None:
                 logger.error("api deposits no capacity queue=%s", body.queue)
                 return JSONResponse(status_code=503, content={"code": "no_capacity"})

@@ -265,9 +265,15 @@ class ClientConfig(BaseModel):
 
 
 class ApiConfig(BaseModel):
-    """The HTTP endpoint resource plus the client registry (LEG-017)."""
+    """The HTTP endpoint resource plus the client registry (LEG-017).
 
-    host: str = "0.0.0.0"
+    ``host`` defaults to loopback (LEG-108): binding to all interfaces is an
+    explicit consumer choice, never the accidental default. A node with no
+    ``clients`` accepts any caller and trusts the ``client_id`` it is given —
+    safe for an embedded/local node, never to be exposed.
+    """
+
+    host: str = "127.0.0.1"
     port: int = 8000
     clients: dict[str, ClientConfig] = Field(default_factory=dict)
 
@@ -316,9 +322,18 @@ class PeerConfig(BaseModel):
 
 
 class FederationConfig(BaseModel):
-    """Known peers of this node. Dormant until federation (R-9) lands."""
+    """Known peers of this node (LEG-017 §5, R-9).
+
+    ``peers`` is the outbound address book (whom this node may delegate to).
+    ``allowlist`` is the **inbound admission** set (LEG-108): when non-empty,
+    the receiving node rejects a federation request whose identified caller
+    is not in it (403). Empty means "admit any peer that presents the shared
+    federation token" — the trust model where the peer that forwards a user
+    request is trusted.
+    """
 
     peers: list[PeerConfig] = Field(default_factory=list)
+    allowlist: list[str] = Field(default_factory=list)
 
 
 class LegioConfig(BaseModel):

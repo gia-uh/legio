@@ -100,10 +100,18 @@ lifecycle:
 ```
 
 Options: `pools` (capacity per pattern), `services.llm` (the LLM endpoint for
-linguistic steps), `api` (host/port/clients), `federation` (peer nodes),
-`logging`. Relative paths resolve against the **directory of this config
-file**, so the node boots from any working directory with
-`--config <path>/legio.yaml`.
+linguistic steps), `api` (host/port/clients), `federation` (peer nodes +
+inbound `allowlist`), `logging`. Relative paths resolve against the
+**directory of this config file**, so the node boots from any working
+directory with `--config <path>/legio.yaml`.
+
+**Security posture.** `api.host` defaults to `127.0.0.1` (loopback). When
+`api.clients` is empty the node accepts **any** caller and trusts the
+`client_id` it is given — convenient for a local/embedded node, never expose
+one so configured. Register each consumer under `api.clients` (tokens come from
+`LEGIO_CLIENT_TOKEN_<NAME>`) for ownership enforcement, and set
+`federation.allowlist` to the peers this node admits (empty admits any holder
+of the shared federation token).
 
 ## 4. Validate (fail fast at boot)
 

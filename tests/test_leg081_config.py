@@ -106,7 +106,7 @@ class TestDefaults:
         assert cfg.pools.default is None
         assert cfg.services.llm is None
         assert cfg.services.embedding is None
-        assert cfg.api.host == "0.0.0.0"
+        assert cfg.api.host == "127.0.0.1"
         assert cfg.api.port == 8000
         assert cfg.api.clients == {}
         assert cfg.logging.level == "INFO"
@@ -207,12 +207,14 @@ class TestPrecedence:
         assert cfg.database.db_path == Path("b.db")
         assert cfg.api.port == 9090
         assert cfg.logging.level == "DEBUG"
+        # The full fixture declares host: 0.0.0.0, so the file wins over the default.
         assert cfg.api.host == "0.0.0.0"
 
     def test_partial_overrides_keep_file_rest(self, tmp_path):
         path = write_config(tmp_path, full_config_data())
         loaded = load(config_path=path, overrides=CliOverrides(port=9100), env={})
         assert loaded.config.api.port == 9100
+        # Only the port is overridden; the fixture's host value is kept.
         assert loaded.config.api.host == "0.0.0.0"
 
 

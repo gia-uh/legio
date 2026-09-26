@@ -425,7 +425,10 @@ async def _boot_on_database(
             rosters = {}
         else:
             rosters = await fetch_peer_catalogs(
-                peers, loaded.secrets.federation_token, client=federation_client
+                peers,
+                loaded.secrets.federation_token,
+                client=federation_client,
+                caller_id=cfg.node.id,
             )
     peer_steps = roster_steps(rosters) if rosters else {}
     # LEG-094 §C: the peer map travels through the explicit constructor seam
@@ -514,6 +517,9 @@ class BootedNode:
             clients=self.client_store,
             pattern_catalog=self.catalog,
             federation_token=self.config.secrets.federation_token,
+            peer_allowlist=list(self.config.config.federation.allowlist),
+            # `self.config` is the BootedNode's LoadedConfig; `self.config.config`
+            # is the merged LegioConfig carrying `federation.allowlist`.
         )
 
     @property

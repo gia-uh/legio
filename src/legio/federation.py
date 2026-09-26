@@ -40,6 +40,7 @@ from beaver.dicts import AsyncBeaverDict
 from beaver.locks import AsyncBeaverLock
 from beaver.queues import AsyncBeaverQueue
 
+from legio.api import PEER_ID_HEADER
 from legio.errors import RecoverableError, UnrecoverableError
 from legio.flow import SCHEMA_VERSION
 from legio.naming import QUEUE_NAMESPACE
@@ -258,6 +259,7 @@ async def fetch_peer_catalogs(
     token: str | None,
     *,
     client: httpx.AsyncClient | None = None,
+    caller_id: str | None = None,
 ) -> dict[str, PeerRoster]:
     """Fetch each configured peer's LEG-090 ``GET /catalog`` roster over the L1.
 
@@ -274,6 +276,8 @@ async def fetch_peer_catalogs(
         for peer_id, base_url in peers.items():
             url = f"{base_url.rstrip('/')}/catalog"
             headers = {"Authorization": f"Bearer {token}"} if token else {}
+            if caller_id is not None:
+                headers[PEER_ID_HEADER] = caller_id
             try:
                 response = await active.get(url, headers=headers)
             except httpx.HTTPError as exc:
@@ -493,6 +497,9 @@ class RemoteQueue:
         url = self._deposit_url()
         token = self._proxy._token
         headers = {"Authorization": f"Bearer {token}"} if token else {}
+        # Identify this node as the calling peer (LEG-108): the owner enforces
+        # its inbound allowlist against this header.
+        headers[PEER_ID_HEADER] = self._proxy._node_id
         try:
             response = await self._client().post(
                 url,

@@ -69,7 +69,8 @@ into the task's outbox record that `/status` reads. Errors are typed
   beaver queues with a client token store; `legio server` and `legio agent
   <verb>` CLI.
 - **Federation**: per-node catalogs, roster-based step routing over a beaver
-  routing proxy — peers never widen scope (rule 9).
+  routing proxy, an inbound peer allowlist (`federation.allowlist`, `403` for an
+  unknown peer) — peers never widen scope (rule 9).
 
 ## State
 

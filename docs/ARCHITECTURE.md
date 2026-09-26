@@ -305,9 +305,14 @@ tenants, limits) is the application's layer on top of the node.
 **Level 1 — nodes talking to nodes.** One **federation token**, the same value
 in every node of the federation ("if you know the key, you're in"). Every
 federation endpoint (`/catalog`, `/work-items/{agent}`, `/outbox/*`,
-`/deposits`, `/health`) requires `Authorization: Bearer <federation_token>`. Delegation only
-between explicitly configured peers (`federation.peers` allowlist). Setup is
-configuration, not a handshake.
+`/deposits`, `/health`) requires `Authorization: Bearer <federation_token>`.
+The receiving node also enforces its **inbound peer allowlist** (`federation.allowlist`):
+a peer that identifies itself (`X-Peer-Id: <node_id>`, sent by the federation
+client) and is not listed is rejected `403`. An **empty** allowlist admits any
+token holder — the model where the node that receives a user request
+authenticates the user and the peer forwarding it with the federation token is
+trusted. Outbound delegation is likewise only to explicitly configured peers
+(`federation.peers`). Setup is configuration, not a handshake.
 
 **Level 2 — systems using a node.** Each system registered on a node gets its
 own **client token** (`api.clients`), individually revocable: if one system has
