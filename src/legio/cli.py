@@ -18,9 +18,9 @@ Two typer commands on the installed ``legio`` console script:
   own executor — there is no lifecycle-over-HTTP surface (federation
   transports work, never lifecycle).
 
-The CLI is a host, never the engine: it owns the executor pumps, it never
-sleeps (the pump loop awaits each dispatch with ``asyncio.sleep(0)`` between
-passes), and the bounded clock-waits it performs (operator confirms, server
+The CLI is a host, never the engine: it owns the executor pumps, it parks on a
+bounded ``asyncio.sleep`` between empty passes (LEG-106 — an idle back-off, not
+scheduling), and the bounded clock-waits it performs (operator confirms, server
 shutdown settle) are the host-side equivalents of the engine's own §5.8
 budgets. Domain-free (rule 7): every command speaks the abstract lifecycle
 vocabulary, never consumer-domain names.
@@ -70,7 +70,13 @@ _MIN_EXECUTORS = 3
 #: at shutdown before cancelling the standing-agent pumps (host-side settle,
 #: not an engine timer — rule 8's exception applies to the engine, the host
 #: owns this bounded wait).
-_SHUTDOWN_SETTLE = 0.5
+_SHUTDOWN_SETTLE = 0.7
+#: How long the executor pump sleeps between empty passes when idle (LEG-106).
+#: beaver's ``get(block=True)`` is a 0.1 s polling loop, not a true suspension,
+#: so the park is an explicit bounded ``asyncio.sleep`` — an idle back-off, not
+#: scheduling (rule 8). A dispatch is picked up within one interval; the bound
+#: keeps shutdown prompt.
+_EXECUTOR_IDLE_WAIT = 0.05
 
 app = typer.Typer(
     name="legio",
@@ -141,12 +147,27 @@ def executor_pump_count(booted: BootedNode) -> int:
 
 
 async def executor_loop(runtime: Runtime, should_stop: Callable[[], bool]) -> None:
-    """The node's executor: one-pass `manager.run()` per dispatch (LEG-085),
-    parked at ``asyncio.sleep(0)`` between passes. The host chooses when to
-    stop driving — between dispatches, so an in-flight step completes first."""
+    """The node's executor: one-pass `manager.run()` per dispatch (LEG-085).
+
+    Between passes, when there is nothing to dispatch, the pump parks on a
+    bounded ``asyncio.sleep`` instead of a tight ``asyncio.sleep(0)`` loop
+    (LEG-106). It does **not** use beaver's ``get(block=True)``: that call is a
+    0.1 s *polling* loop, not a true suspension, so it would both spin and, with
+    a short timeout, risk never returning. Rule 8 holds — this is idle back-off,
+    not scheduling; the bound keeps shutdown prompt. The host chooses when to
+    stop driving, between dispatches, so an in-flight step completes first.
+
+    ``manager.run()`` returns the ids of the tasks it **dispatched**; a pass
+    that dispatched work loops again at once, a pass that only skipped parked
+    tasks parks (the parked bring-up is driven by its own loop, not spawned at
+    a checkpoint).
+    """
     while not should_stop():
-        await runtime.manager.run()
-        await asyncio.sleep(0)
+        if await runtime.manager.run():
+            continue
+        if should_stop():
+            break
+        await asyncio.sleep(_EXECUTOR_IDLE_WAIT)
 
 
 async def _shutdown_pumps(
@@ -169,8 +190,13 @@ async def _shutdown_pumps(
         task.cancel()
     if settled:
         logger.info("cli executor shutdown cancelled_pumps=%d (standing agents)", settled)
-    if alive:
-        await asyncio.gather(*alive, return_exceptions=True)
+    for task in alive:
+        # A pump may be parked in a queue await; cancelling it can leave that
+        # await wedged. Bound the wait and never let shutdown hang on it.
+        try:
+            await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), timeout=grace)
+        except TimeoutError:
+            logger.warning("cli executor shutdown pump_unjoined (queue await wedged)")
 
 
 # --- §8 catalog bootstrap ------------------------------------------------------

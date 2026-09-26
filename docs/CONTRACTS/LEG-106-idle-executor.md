@@ -1,6 +1,6 @@
 # LEG-106 — The idle executor does not spin
 
-- **Status:** DRAFT — awaiting maintainer approval.
+- **Status:** APPROVED by maintainer direction on 2026-09-26 (GitHub #55).
 - **Rasante:** R-10.x (hardening of the released `v0.1.0`)
 - **GitHub issue:** #55 (finding 3 of the #52 audit umbrella)
 - **Source:** external audit of `v0.1.0` (`fbd787e`), finding 3
@@ -26,12 +26,17 @@ server with zero tasks burns ~100% of one core (measured: 1,506 CPU ticks over
 1. `Manager.run()` reports whether it did work (e.g. the number of dispatched
    items, already `0` on empty). The executor uses that signal: on an empty
    pass it waits on the pending work instead of re-polling immediately.
-2. Two acceptable waits (implementer picks the one that fits the polling
-   model):
-   - a **bounded blocking wait** on the pending-tasks queue (the sanctioned
-     agent suspension, `get(block=True, timeout=...)`), woken by a deposit; or
-   - a short `asyncio.sleep(backoff)` on an empty pass.
-3. Rule 8 is respected: this is an **idle back-off**, not scheduling by
+2. Chosen wait: a **bounded `asyncio.sleep(backoff)`** on an empty pass. The
+   alternative — beaver's `get(block=True, timeout=...)` — was **rejected
+   during implementation**: it is a 0.1 s *polling* loop, not a true
+   suspension, so it both spins and (with a short timeout) can overshoot
+   indefinitely. `Manager.wait_for_pending()` is a non-blocking pop used only
+   as a wake-up hint; the pump parks on `asyncio.sleep`.
+3. `Manager.run()` returns the count of tasks **dispatched** (a resumed parked
+   generator or a paused skip reports `0` — the pass did no terminal work), and
+   `last_dispatched` names the task of a non-zero pass. The host re-runs at
+   once on `>0` and parks on `0`.
+4. Rule 8 is respected: this is an **idle back-off**, not scheduling by
    sleeping. No work is scheduled via a timer; `next_run_at` semantics are
    untouched.
 
@@ -43,12 +48,15 @@ server with zero tasks burns ~100% of one core (measured: 1,506 CPU ticks over
 ## Contract changes
 
 ### `src/legio/manager/__init__.py` — `Manager.run()`
-Document/return the dispatched count (0 on empty) so the host can distinguish
-an empty pass from work. No behaviour change to dispatch itself.
+Returns the dispatched count (0 on empty **or** on a skip/parked checkpoint) so
+the host can distinguish work from idle; `last_dispatched` holds the task id of
+a non-zero pass. `wait_for_pending(timeout)` is a non-blocking pop used as a
+wake-up hint (documented as not a true suspension).
 
 ### `src/legio/cli.py` — `executor_loop`
-Wait on the pending queue (or bounded sleep) when a pass did no work; resume
-immediately when work was dispatched.
+Park on a bounded `asyncio.sleep` when a pass did no work; resume immediately
+when work was dispatched. `_shutdown_pumps` bounds the join of a cancelled pump
+(a parked queue await must never hang shutdown).
 
 ## Observability (rule 11)
 

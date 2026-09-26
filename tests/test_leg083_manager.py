@@ -256,7 +256,9 @@ async def test_pause_pending_then_resume_keeps_non_terminal(beaver_db) -> None:
     task_id = await manager.submit_task("build")
 
     await manager.pause(task_id)
-    assert await manager.run() == 1
+    # A paused item is skipped, not dispatched: the pass did no work (LEG-106),
+    # so the host would park rather than loop on it.
+    assert await manager.run() == 0
     record = await manager.status(task_id)
     assert record is not None
     assert record.status == TaskStatus.PENDING
@@ -299,7 +301,9 @@ async def test_cancellable_generator_pause_then_resume_mid_run(beaver_db) -> Non
     assert record.finished_at is None
 
     await manager.resume(task_id)
-    assert await manager.run() == 1
+    # The resumed generator is driven by its own parked loop; the checkpoint
+    # pass only nudges it (no terminal work), so it reports 0 (LEG-106).
+    await manager.run()
     record = await manager.status(task_id)
     assert record is not None
     assert record.status == TaskStatus.SUCCESS

@@ -114,6 +114,7 @@ class Manager:
         self._registry: dict[str, Callable[..., Any]] = {}
         self._parked: dict[str, AsyncGenerator[Any, Any]] = {}
         self._last_yields: dict[str, Any] = {}
+        self.last_dispatched: str | None = None
         self._tasks = db.dict(self._TASKS_SCOPE)
         self._pending = db.queue(self._PENDING_SCOPE)
         self._control = db.dict(self._CONTROL_SCOPE)
@@ -207,40 +208,73 @@ class Manager:
     async def run(self) -> int:
         """One polling pass: pop the next pending task and dispatch it.
 
-        Returns the number of tasks dispatched (0 when nothing is due).
-        ``get`` is destructive/atomic, so each task executes exactly once and a
-        crashed executor is surfaced visibly, never silently re-run.
+        Returns the number of tasks **dispatched** (``1`` when a plain callable
+        or stillborn generator produced a terminal fact, ``0`` when nothing was
+        due *or* the pass only skipped/parked an item). The host treats ``>0``
+        as "work happened, re-run at once" and ``0`` as "idle, park" (LEG-106);
+        ``last_dispatched`` names the task of a non-zero pass. ``get`` is
+        destructive/atomic, so each task executes exactly once and a crashed
+        executor is surfaced visibly, never silently re-run.
         """
+        self.last_dispatched: str | None = None
         try:
             item = await self._pending.get(block=False)
         except IndexError:
             return 0
         task_id = item.data
         try:
-            await self._dispatch(task_id)
+            did_work = await self._dispatch(task_id)
         except Exception:
             logger.exception("manager dispatch crashed task=%s", task_id)
             raise
-        return 1
+        if did_work:
+            self.last_dispatched = task_id
+            return 1
+        return 0
 
-    async def _dispatch(self, task_id: str) -> None:
+    async def wait_for_pending(self, timeout: float) -> bool:
+        """Park until a pending task is available or ``timeout`` elapses.
+
+        The host's idle parking for the executor pump (LEG-106). ``timeout`` is
+        honored by the caller with ``asyncio.sleep``: beaver's ``get(block=True)``
+        is a 0.1 s *polling* loop, not a true suspension, so calling it with a
+        small timeout both spins and can overshoot indefinitely. This method
+        therefore performs a **non-blocking** pop and returns immediately; the
+        caller parks on its own bounded sleep. A deposited task is re-read on
+        the next pass. Returns ``True`` when a task was taken.
+        """
+        try:
+            await self._pending.get(block=False)
+        except IndexError:
+            return False
+        return True
+
+    async def _dispatch(self, task_id: str) -> bool:
+        """Dispatch one pending task; ``True`` iff work was actually driven.
+
+        A skipped item (unknown, half-open cancelled, already-running, paused,
+        unregistered name) or a parked generator driven at a checkpoint returns
+        ``False``: the host's idle logic must park on such a pass, never loop on
+        it (LEG-106). A plain callable or a stillborn generator that produced a
+        terminal fact returns ``True`` — the pass did work and should re-run.
+        """
         data = await self._tasks.fetch(task_id)
         if data is None:
             logger.warning("manager dispatch unknown task=%s", task_id)
-            return
+            return False
         record = TaskRecord.model_validate(data)
 
         if record.status == TaskStatus.CANCELLING:
             logger.warning("manager dispatch half-open cancelled task=%s", task_id)
-            return
+            return False
 
         if task_id in self._parked:
             await self._drive_parked(task_id, record)
-            return
+            return False
 
         if record.status == TaskStatus.RUNNING:
             logger.warning("manager skip running task=%s (visible, not re-run)", task_id)
-            return
+            return False
 
         canceling = await self._control_mode(task_id) == "cancel"
         if canceling:
@@ -251,12 +285,12 @@ class Manager:
             record.finished_at = _utc_now_iso()
             await self._tasks.set(task_id, record.model_dump(mode="json"))
             logger.warning("manager cancelled pending task=%s", task_id)
-            return
+            return True
 
         pausing = await self._control_mode(task_id) == "pause"
         if pausing and record.status == TaskStatus.PENDING:
             logger.info("manager paused pending task=%s", task_id)
-            return
+            return False
 
         callable_ = self._registry.get(record.name)
         if callable_ is None:
@@ -265,7 +299,7 @@ class Manager:
             record.finished_at = _utc_now_iso()
             await self._tasks.set(task_id, record.model_dump(mode="json"))
             logger.error("manager unregistered name=%s task=%s", record.name, task_id)
-            return
+            return True
 
         if inspect.isasyncgenfunction(callable_):
             # Parked tasks are marked RUNNING only after their first yield
@@ -276,7 +310,7 @@ class Manager:
             if task_id not in self._parked:
                 self._parked[task_id] = callable_(*record.args, **record.kwargs)
             await self._drive_parked(task_id, record)
-            return
+            return False
 
         record.status = TaskStatus.RUNNING
         record.started_at = _utc_now_iso()
@@ -284,6 +318,7 @@ class Manager:
         logger.info("manager running task=%s name=%s", task_id, record.name)
 
         await self._await_plain(task_id, record, callable_)
+        return True
 
     async def _await_plain(self, task_id: str, record: TaskRecord, callable_) -> None:
         try:
