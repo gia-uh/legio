@@ -52,10 +52,8 @@ release-guard: ## Refuse a dirty tree, a missing record, or a first-parent chang
 	 test -n "$$(sed -n 's/^- Run at: //p' "$$record")" || { echo "release-guard: no 'Run at' stamp in $$record"; exit 1; }; \
 	 head_parents=$$(git rev-list --parents -n 1 HEAD | wc -w); \
 	 test "$$head_parents" -ge 2 || { echo "release-guard: HEAD has no parent; cannot verify record freshness"; exit 1; }; \
-	 line="HEAD~1 $(git rev-parse HEAD^)"; \
-	 test "$$(git log -1 --format=%s HEAD)" = "$$(git log -1 --format=%s HEAD~1)" || { echo "release-guard: HEAD is not a validation-record-only commit (HEAD~1 content changed since validation); re-run make validate-release"; exit 1; }; \
-	 test "$$(git rev-parse HEAD^{tree})" = "$$(git rev-parse HEAD~1^{tree})" || { echo "release-guard: HEAD is not a validation-record-only commit (HEAD~1 content changed since validation); re-run make validate-release"; exit 1; }; \
-	 git diff --quiet HEAD -- "$$record" || { echo "release-guard: validation record has uncommitted changes; commit it first"; exit 1; }; \
+	 changed="$$(git diff --name-only HEAD~1 HEAD)"; \
+	 test "$$changed" = "$$record" || { echo "release-guard: HEAD is not a validation-record-only commit (HEAD~1 changed since validation); re-run make validate-release"; exit 1; }; \
 	 test -z "$$(git status --porcelain)" || { echo "release-guard: working tree is dirty (commit first)"; git status --short; exit 1; }; \
 	 echo "release-guard: record committed with the release commit; tree clean"
 
