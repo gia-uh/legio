@@ -8,8 +8,8 @@ removed before a reviewed PR to this file. Managed with `uv`. Python runtime:
 
 | Package | Role in legio | Notes |
 |---|---|---|
-| `beaver-db` | registries, priority queues, locks (the substrate) | pinned by `uv.lock` at first install |
-| `lingo-ai` | LLM + structured output for linguistic agents | provides `LLM`, `eng.create/decide/choose`, `MockLLM`, native tool-calling |
+| `beaver-db` | registries, priority queues, locks (the substrate) | version-bounded `>=2.4,<3` (compatible release); `uv.lock` pins the exact resolved version for contributors, the bound protects consumers |
+| `lingo-ai` | LLM + structured output for linguistic agents | version-bounded `>=2.1,<3`; provides `LLM`, `eng.create/decide/choose`, `MockLLM`, native tool-calling |
 | `pydantic` (>=2) | types/validation of message, token, patterns, schemas | lingua franca of the system |
 | `pyyaml` | parse patterns YAML | |
 | `fastapi` | API + federation server endpoints | |
@@ -26,6 +26,13 @@ removed before a reviewed PR to this file. Managed with `uv`. Python runtime:
 | `pytest-asyncio` | async tests |
 | `respx` | mock `httpx` (tools, inter-node HTTP) |
 | `pyright` (optional) | type checking (optional; decide at R-0) |
+
+`legio` carries **no example-only dependencies**. An example that needs an
+extra package declares it beside itself (`examples/<node>/requirements.txt`)
+and is installed only to run that example — currently
+`examples/document_processing/` → `pypdf>=6.19.0`. This keeps the library's
+dependency set minimal and domain-free (rule 7); the example's import is lazy,
+so importing the example module never requires it.
 
 ## Excluded on purpose
 

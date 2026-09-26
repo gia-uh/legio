@@ -12,7 +12,7 @@ it in `src/legio/__init__.py` (`__version__`) and the Makefile in `VERSION`.
 A release bumps all three together — a mismatch is a loud, breaking error to
 catch in review.
 
-Current version: `0.1.0`.
+Current version: `0.1.1`.
 
 ## Release process
 
@@ -40,7 +40,9 @@ The whole release is a sequence of already-green gates plus three actions
 
 5. **Tag:** `make tag` — `git tag v<VERSION>` on the release commit (the
    commit that carries the bump, the changelog entry and the validation
-   record).
+   record). `make release` runs `release-guard` first: it refuses a dirty
+   working tree or a validation record whose `Run at` stamp predates `HEAD`,
+   so a tag can never certify an unvalidated tree (LEG-107).
 
 6. **Publish (external, maintainer):** upload the artifacts from `dist/` to
    the package registry and close the GitHub issues (`#45`, `#47`).

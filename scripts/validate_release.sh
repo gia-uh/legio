@@ -9,8 +9,9 @@
 #
 #   - `import legio` from the wheel; `legio.__version__ == the pinned version`;
 #   - boot a node (materializer from the wheel) over the `examples/` single
-#     source (the consumer-side tool implementations ride PYTHONPATH, the same
-#     way a consumer repo provides its own tools);
+#     source. The smoke writes a config with ABSOLUTE paths (a temp file), so
+#     the node-local tool implementations resolve beside that config's paths
+#     without needing the repo root on sys.path or PYTHONPATH;
 #   - submit → status round-trip completes with the documented output.
 #
 # The result is recorded (pinned version + smoke outcome + timestamp) in

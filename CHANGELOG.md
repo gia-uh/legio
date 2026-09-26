@@ -4,6 +4,36 @@ All notable changes to `legio` are listed here per release. Each entry names
 the merged issue (the `LEG-0xx` plan issue and its GitHub issue number where
 the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
+## [0.1.1] - 2026-09-26
+
+Hardening release: fixes the externally-reported regressions in `v0.1.0`
+(audit issue #52, findings 1–3) and cleans up release/dependency hygiene.
+No engine-model change: still the decoupled, polling-only engine on native
+beaver.
+
+### Fixed
+
+- **LEG-104** (#53) The documented example now runs as written: config paths
+  resolve against the `legio.yaml`'s own directory, tool implementations
+  resolve node-locally beside their `tools.yaml`, and the boot provisions a
+  missing database directory — `legio server --config
+  examples/transform/legio.yaml` works from the repo root with no `PYTHONPATH`.
+  A subprocess test boots the shipped config through the installed console
+  script (the check the suite lacked).
+- **LEG-105** (#54) `status` reflects the flow outcome: a task whose step
+  raised reports `failed` (with the error still in `output`) instead of
+  `completed`. Supersedes the LEG-063/064 step-timeout `COMPLETED` expectation.
+- **LEG-106** (#55) An idle `legio server` no longer spins a CPU core: the
+  executor pump parks on a bounded back-off between empty passes instead of a
+  tight `asyncio.sleep(0)` loop.
+
+### Changed
+
+- **LEG-107** (#56) Runtime dependencies are bounded for consumers
+  (`beaver-db>=2.4,<3`, `lingo-ai>=2.1,<3`); `make release` refuses a dirty
+  tree or a stale validation record; `pypdf` is now an example-only dependency
+  (`examples/document_processing/requirements.txt`), removed from the library.
+
 ## [0.1.0] - 2026-09-21
 
 First release. `0.1.0` ships the complete decoupled, polling-only engine on
@@ -12,6 +42,11 @@ native beaver: Schema 1 patterns, the flow token & message model, composites
 authenticated control channel with standing agent loops, pools, federation,
 the CLI (`server`, `agent`, `validate`), the consumer guide, and the audit
 hardening batch — a fully green gate (ruff check + format + pyright + tests).
+
+> Note: the published `v0.1.0` tag points three commits past the `0.1.0`
+> release commit, so LEG-063/LEG-064 (resilience: `TaskState.FAILED` +
+> `fail_fast`, #34/#35) are also inside `0.1.0`; they are listed below under
+> R-10. `0.1.1` supersedes that tag with a consistent tree.
 
 ### R-0 — Foundation
 
@@ -34,7 +69,7 @@ hardening batch — a fully green gate (ruff check + format + pyright + tests).
   consumer contract.
 - **LEG-015** (#9) Federation contract: symmetric catalog, work-item, outbox.
 - **LEG-016** (#10) Naming & error conventions.
-- **LEG-017** Security contract: two levels — shared federation token +
+- **LEG-017** (#11) Security contract: two levels — shared federation token +
   per-request client tokens, HTTP surface protected.
 
 ### R-2 — Walking skeleton
@@ -128,3 +163,10 @@ hardening batch — a fully green gate (ruff check + format + pyright + tests).
   built wheel into a throwaway venv and runs a headless smoke against it.
 - **LEG-103** (#51) Audit hardening batch (sessions 87-88): coupling/polling
   model fixes, format-debt triage, strict concurrency coverage.
+- **LEG-063** (#34) Resilience policy: public `TaskState.FAILED`, `fail_fast`
+  on composites, step `policy.timeout` contract.
+- **LEG-064** (#35) Resilience scenario tests: step timeout, tolerant provider
+  outage, fail-fast wiring, composite timeout.
+- **LEG-100** (#48) Docs & examples hardening: consumer guide, glossary,
+  example tree, walkthrough test.
+- **LEG-104..107** (#53–#56) Hardening of `v0.1.0` (see `[0.1.1]`).

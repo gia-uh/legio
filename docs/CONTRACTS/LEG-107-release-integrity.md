@@ -1,6 +1,6 @@
 # LEG-107 — Release integrity and dependency hygiene (`v0.1.1`)
 
-- **Status:** DRAFT — awaiting maintainer approval (dep pins require rule-6 sign-off).
+- **Status:** APPROVED by maintainer direction on 2026-09-26 (GitHub #56).
 - **Rasante:** R-10.x (hardening of the released `v0.1.0`)
 - **GitHub issue:** #56 (findings 4/7/8 of the #52 audit umbrella)
 - **Source:** external audit of `v0.1.0` (`fbd787e`), findings 4, 7, 8
