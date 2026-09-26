@@ -24,7 +24,9 @@ def pdf_extract_text(file_path: str) -> Mapping[str, Any]:
         FileNotFoundError: If the PDF file does not exist.
         ValueError: If the file is not a valid PDF.
     """
-    from pypdf import PdfReader  # example-only dependency (requirements.txt)
+    # Example-only dependency (requirements.txt), imported lazily so importing
+    # this module never needs it; pyright is told to ignore the optional import.
+    from pypdf import PdfReader  # type: ignore[import-not-found]
 
     path = Path(file_path)
     if not path.exists():
