@@ -66,6 +66,15 @@ def test_architecture_flow_token_fields_match_the_model() -> None:
     assert "message_type" not in listed and "payload" not in listed
 
 
+def test_docs_state_the_one_database_one_node_rule() -> None:
+    """The one-database/one-node constraint is documented (ARCH §0 + guide §3)."""
+    architecture = ARCHITECTURE.lower()
+    guide = (REPO_ROOT / "docs" / "CONSUMER_GUIDE.md").read_text(encoding="utf-8").lower()
+    assert "one database belongs to" in architecture or "one node" in architecture
+    assert "one process at a time" in architecture
+    assert "one process at a time" in guide
+
+
 def test_readme_carries_no_stale_gate_debt_paragraph() -> None:
     """The Session-108 format/typecheck debt paragraph is gone from the README."""
     lowered = README.lower()

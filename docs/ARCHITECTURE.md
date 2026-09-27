@@ -5,7 +5,12 @@
 - **Polling only.** Never callbacks or push, neither inside a node nor between
   nodes.
 - **BeaverDB local per node** is the only shared memory between processes of the
-  same node. No broker, no central database.
+  same node. No broker, no central database. One database belongs to **one node
+  (one process at a time)**: nodes coordinate by federating over HTTP, never by
+  sharing a database file. Two processes on the same `db_path` contend for
+  beaver's single internal lock (`TimeoutError: Cannot acquire lock`); a
+  restart is fine (one process at a time — the dead node's lock expires), but
+  running two nodes on one file is out of contract.
 - **Atomic agents.** Each agent decides using only its message and the flow
   token; there is no central engine driving them.
 - **Composition is a DAG over instances.** Two occurrences of the same pattern

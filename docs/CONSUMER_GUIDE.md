@@ -105,6 +105,11 @@ inbound `allowlist`), `logging`. Relative paths resolve against the
 **directory of this config file**, so the node boots from any working
 directory with `--config <path>/legio.yaml`.
 
+One `db_path` belongs to **one node (one process at a time)**. Stopping and
+restarting the node on the same database is supported; running two nodes on the
+same database file is not — they would contend for beaver's single lock. To run
+several nodes, give each its own database and federate them.
+
 **Security posture.** `api.host` defaults to `127.0.0.1` (loopback). When
 `api.clients` is empty the node accepts **any** caller and trusts the
 `client_id` it is given — convenient for a local/embedded node, never expose
