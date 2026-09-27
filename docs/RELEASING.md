@@ -12,7 +12,7 @@ it in `src/legio/__init__.py` (`__version__`) and the Makefile in `VERSION`.
 A release bumps all three together — a mismatch is a loud, breaking error to
 catch in review.
 
-Current version: `0.1.1`.
+Current version: `0.1.1` (published on PyPI: <https://pypi.org/project/legio/>).
 
 ## Release process
 
@@ -44,8 +44,18 @@ The whole release is a sequence of already-green gates plus three actions
    working tree or a validation record whose `Run at` stamp predates `HEAD`,
    so a tag can never certify an unvalidated tree (LEG-107).
 
-6. **Publish (external, maintainer):** upload the artifacts from `dist/` to
-   the package registry and close the GitHub issues (`#45`, `#47`).
+6. **Publish to PyPI (maintainer):** upload the `dist/` artifacts with a
+   project-scoped API token:
+
+   ```bash
+   UV_PUBLISH_TOKEN=pypi-... uv publish dist/legio-<version>-py3-none-any.whl \
+     dist/legio-<version>.tar.gz
+   ```
+
+   Then verify from a clean environment:
+   `uv pip install legio==<version>` and confirm `legio.__version__` plus a
+   `legio server` round-trip. `legio` publishes as a single package (this repo
+   is its own consumer; there is no separate consumer repository).
 
 ## Definition of done (LEG-101/LEG-102)
 
