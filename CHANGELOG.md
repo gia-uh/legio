@@ -27,6 +27,14 @@ beaver.
   executor pump parks on a bounded back-off between empty passes instead of a
   tight `asyncio.sleep(0)` loop.
 
+### Fixed
+
+- **#59** A node restarted against an existing database serves again: the
+  catalog record persists in beaver while an agent's instance loop is
+  process-bound, so a reseeded class was a no-op with no live consumer and
+  every submit stayed `running`. The boot now revives a recorded class that has
+  no live instance (LEG-087/095 semantics).
+
 ### Changed
 
 - **LEG-107** (#56) Runtime dependencies are bounded for consumers

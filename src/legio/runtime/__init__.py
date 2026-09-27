@@ -1227,6 +1227,12 @@ class Runtime:
         are satisfied; composite dependencies are the flattened branch steps.
         ``spec_yaml`` feeds the runtime YAML cache when provided (§4.7).
 
+        A class already recorded **with at least one live instance** (a bring-up
+        task in this process) is a no-op. A class recorded with **no live
+        instance** — the restart case, where the catalog record survived but the
+        process-bound loops did not (LEG-087/095) — is revived: its pool is
+        brought up again, so a restarted node always has a consumer (#59).
+
         Federation (LEG-094 §C): a composite's dependencies are the *local*
         branch steps only. ``peer_steps`` (step → peer input_as) is the
         roster-derived map the boot passes through the constructor;
@@ -1238,7 +1244,34 @@ class Runtime:
             raise ValueError(f"pool must be a genuine integer >= 0 (got {pool!r})")
         name = spec.name
         if await self.registry.class_state(name) is not None:
-            logger.warning("runtime create_class noop class=%s (already exists)", name)
+            # The class is recorded — but instances are **process-bound**
+            # (LEG-087/095): the catalog record survives a restart while the
+            # instance's standing loop (tracked in-process by ``_instance_tasks``)
+            # does not. A recorded instance with no live bring-up task is dead;
+            # re-bring-up the pool instead of a noop, or the node boots with no
+            # consumer and every submit stays `running` (#59). A class with at
+            # least one live instance is a true noop.
+            live_instances = [
+                record.instance_id
+                for record in await self.registry.list_instances(name)
+                if (name, record.instance_id) in self._instance_tasks
+            ]
+            if live_instances:
+                logger.warning("runtime create_class noop class=%s (already exists)", name)
+                return
+            logger.warning(
+                "runtime create_class revive class=%s (recorded, no live instance)", name
+            )
+            if pool > 0:
+                born_enabled = await self.registry.dependencies_satisfied(name)
+                for _ in range(pool):
+                    await self._bring_up(
+                        name, ActivityState.ENABLED if born_enabled else ActivityState.DISABLED
+                    )
+                if born_enabled:
+                    await self._gates.set(name, {"state": ActivityState.ENABLED.value})
+                    await self.registry.set_class_state(name, ActivityState.ENABLED)
+            logger.info("runtime create_class revived class=%s pool=%d", name, pool)
             return
         dependencies: list[str] = []
         if spec.type is AgentType.COMPOSITE:
