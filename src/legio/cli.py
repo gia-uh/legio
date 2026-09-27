@@ -814,8 +814,9 @@ async def serve_node(
 ) -> int:
     """Boot the node, bring the catalog up, and serve until SIGTERM/SIGINT.
 
-    Configuration wins over option arguments: an explicit CLI ``--host``/
-    ``--port`` override the config's ``api.host``/``api.port``.
+    An explicit CLI ``--host``/``--port`` overrides the config's
+    ``api.host``/``api.port``; otherwise the config value applies (its own
+    default is loopback, LEG-108).
     """
     if federation and loaded.secrets.federation_token is None:
         raise LegioError(

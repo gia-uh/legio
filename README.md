@@ -47,9 +47,11 @@ subprocess).
 
 The public API never pushes (polling only, `next_run_at` scheduling): the host
 drives `runtime.manager.run()` one pass per dispatch; each standing agent polls
-its own beaver queue; the immutable Schema 2 `FlowToken` (`level_route`,
-`current_index`, `end_of_level_queue`, `level`, `launcher_class`,
-`task_id`, `branch_id`, `message_type`, `payload`) travels the routes; the
+its own beaver queue; the immutable Schema 2 `FlowToken` (`schema_version`,
+`level_route`, `current_index`, `end_of_level_queue`, `level`,
+`launcher_class`, `task_id`, `branch_id`, `root`) travels the routes (`payload`
+and `message_type` live on the `ExecutionRequest`/`ExecutionResult` messages,
+not on the token); the
 final result lands on the agent's shared final-result queue and is collected
 into the task's outbox record that `/status` reads. Errors are typed
 (`legio.errors`) and never silent (rule 9); every module logs structured
@@ -85,14 +87,12 @@ await maintainer review; `LEG-101` (semver, packaging, changelog, tags) and
 ## Development
 
 `make ci` mirrors the CI gate exactly: lint (`ruff check`) + format check
-(`ruff format --check`) + typecheck (`pyright`) + full `pytest`. Convenience
-targets: `make sync`, `make lint`, `make format`, `make format-check`,
-`make typecheck`, `make test`, `make build` (LEG-101 wheel/archive), `make
-clean`, `make tag`/`make release` (maintainer only). Two known gates currently
-show the documented baseline debt — `ruff format --check` (56 files, triage
-from Session 108) and the 2 pyright false positives in
-`tests/test_leg103_slice13_hardening.py`; both are tracked in `docs/JOURNALS/`
-and kept separate from per-issue work. Everything in this repo is English
+(`ruff format --check`) + typecheck (`pyright`) + full `pytest`, all green.
+Convenience targets: `make sync`, `make lint`, `make format`, `make
+format-check`, `make typecheck`, `make test`, `make build` (wheel/archive),
+`make validate-release` (release-artifact smoke), `make clean`, `make
+tag`/`make release` (maintainer only; `release` runs `release-guard` first).
+Everything in this repo is English
 (AGENTS.md rule 1); work is per-issue, contract-first, and every turn ends
 with a journal commit.
 

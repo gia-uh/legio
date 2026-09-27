@@ -1,6 +1,6 @@
 # LEG-109 — Documentation drift and doc-lint
 
-- **Status:** DRAFT — awaiting maintainer approval.
+- **Status:** APPROVED by maintainer direction on 2026-09-26 (GitHub #58).
 - **Rasante:** R-10.x (hardening of the released `v0.1.0`)
 - **GitHub issue:** #58 (findings 9/10 of the #52 audit umbrella)
 - **Source:** external audit of `v0.1.0` (`fbd787e`), findings 9, 10

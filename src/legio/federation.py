@@ -296,13 +296,28 @@ async def fetch_peer_catalogs(
                     f"federation catalog fetch refused peer={peer_id} url={base_url} "
                     f"code={response.status_code}"
                 )
-            body = response.json()
-            entries[peer_id] = PeerRoster(
-                agents=[
-                    PeerCatalogEntry(agent=item["agent"], input_as=item.get("input_as"))
-                    for item in body.get("agents", ())
-                ]
-            )
+            try:
+                body = response.json()
+                agents = body.get("agents", ())
+                entries[peer_id] = PeerRoster(
+                    agents=[
+                        PeerCatalogEntry(agent=item["agent"], input_as=item.get("input_as"))
+                        for item in agents
+                    ]
+                )
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
+                # An unparseable roster must name the peer and its URL (rule 9),
+                # never surface as a bare JSON/Key error (LEG-109).
+                logger.warning(
+                    "federation catalog unparseable peer=%s url=%s error=%s",
+                    peer_id,
+                    url,
+                    exc,
+                )
+                raise RecoverableError(
+                    f"federation catalog peer={peer_id} url={base_url} returned an "
+                    f"unparseable roster: {exc}"
+                ) from exc
             missing = [e.agent for e in entries[peer_id].agents if e.input_as is None]
             if missing:
                 logger.warning(
