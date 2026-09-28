@@ -32,6 +32,11 @@ the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
   the construction+re-keying model cannot produce from a single-branch
   sequence. The README now matches the engine (directory, port, the required
   client token, the LLM requirement, the achievable output).
+- **LEG-114** Client tokens now resolve **case-insensitively**: the documented
+  `LEGIO_CLIENT_TOKEN_<NAME>` (uppercase) works for a lowercase client id
+  (`demo` ← `LEGIO_CLIENT_TOKEN_DEMO`). Previously the lookup required the exact
+  case, so the documented env var left the token store empty and every submit
+  answered 401.
 
 ## [0.1.1] - 2026-09-26
 

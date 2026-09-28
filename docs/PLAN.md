@@ -499,6 +499,10 @@ are red for the yet-unimplemented surface.
   - **Accept**: the composite's declared output keys equal its branches' leaf
     `output_as`; its build matches the schema; the README matches the engine
     (directory, port, client token, LLM requirement, output).
+- **LEG-114** Client tokens resolve case-insensitively (defect fix). Spec:
+  `docs/CONTRACTS/LEG-114-client-token-case.md`.
+  - **Accept**: `LEGIO_CLIENT_TOKEN_DEMO` registers the `demo` client; a
+    lowercase env suffix still works; a missing token stays unregistered.
 
 ## Ordering constraints
 

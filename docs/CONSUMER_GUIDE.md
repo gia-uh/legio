@@ -120,7 +120,8 @@ several nodes, give each its own database and federate them.
 `api.clients` is empty the node accepts **any** caller and trusts the
 `client_id` it is given — convenient for a local/embedded node, never expose
 one so configured. Register each consumer under `api.clients` (tokens come from
-`LEGIO_CLIENT_TOKEN_<NAME>`) for ownership enforcement, and set
+`LEGIO_CLIENT_TOKEN_<NAME>`, `<NAME>` the client id uppercased — the lookup is
+case-insensitive) for ownership enforcement, and set
 `federation.allowlist` to the peers this node admits (empty admits any holder
 of the shared federation token).
 

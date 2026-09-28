@@ -284,6 +284,24 @@ def materialize_agents(
     return agents
 
 
+def _client_token_for(client_tokens: Mapping[str, str], consumer_id: str) -> str | None:
+    """Resolve a client's token from the env secrets, case-insensitively (LEG-114).
+
+    The convention is ``LEGIO_CLIENT_TOKEN_<NAME>`` with ``<NAME>`` the client id
+    uppercased (``LEGIO_CLIENT_TOKEN_DEMO`` for the ``demo`` client), but shell
+    environments and a client's id may disagree on case. An exact key wins; then
+    a case-insensitive match. Absent → ``None`` (the caller warns loudly).
+    """
+    exact = client_tokens.get(consumer_id)
+    if exact is not None:
+        return exact
+    wanted = consumer_id.upper()
+    for key, value in client_tokens.items():
+        if key.upper() == wanted:
+            return value
+    return None
+
+
 def _build_client_store(
     loaded: LoadedConfig,
 ) -> ClientTokenStore | None:
@@ -293,7 +311,7 @@ def _build_client_store(
         return None
     store = ClientTokenStore()
     for consumer_id, client_cfg in clients.items():
-        token = loaded.secrets.client_tokens.get(consumer_id)
+        token = _client_token_for(loaded.secrets.client_tokens, consumer_id)
         if token is None:
             logger.warning(
                 "client has no token env=LEGIO_CLIENT_TOKEN_%s consumer=%s",
