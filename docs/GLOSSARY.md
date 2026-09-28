@@ -44,10 +44,10 @@ the code wins — fix this glossary.
   calls the registered tool, or a `linguistic` step that calls the injected LLM
   client. Boot-materialized ("standing").
 - **composite agent** — a `type: composite` agent whose branches reference
-  other agents by name (DAG over the catalog, leaves first). It has **no**
-  generic output build — a concrete composite class implements
-  `build_output_as` (the composite's output construction is the pattern's
-  model). `src/legio/agents/composite_agent.py`.
+  other agents by name (DAG over the catalog, leaves first). Its construction is
+  **internal to legio**: the built-in build merges the branch payloads under the
+  composite's `output_as` (a non-merge composition overrides `build_output_as`).
+  `src/legio/agents/composite_agent.py`.
 - **class / instance** — the lifecycle (Schema 2 and §4.8 of
   `docs/AGENT_LIFECYCLE.md`): `create-class`/`destroy-class` manage classes
   (enabled/disabled; `0` pool ⇒ born disabled); instances are the message queues

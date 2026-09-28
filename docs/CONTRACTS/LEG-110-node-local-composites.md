@@ -1,9 +1,12 @@
 # LEG-110 — Node-local composite classes (a composite node always boots)
 
-- **Status**: APPROVED (maintainer direction 2026-09-28: "los composites se debe
-  poder cargar siempre", "se pasa el config y desde el CLI se puede").
-- **Type**: defect fix (engine).
-- **GitHub issue:** #60
+- **Status**: **SUPERSEDED** by the built-in composite build (2026-09-28). A
+  composite's construction is **internal to legio**: `CompositeAgent.build_output_as`
+  now has a built-in merge default, so no external class and no
+  `composites.config` are required (the node-local mechanism described below was
+  wrong and has been removed). A non-merge composition overrides the seam. The
+  original spec is kept below for the record.
+- **Type**: defect fix (engine) — GitHub issue #60.
 - **Related**: LEG-040 (no generic composite build), LEG-081 (boot), LEG-104
   (node-local tools), LEG-013 (retries — separate slice).
 

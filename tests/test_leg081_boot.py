@@ -363,9 +363,10 @@ async def test_linguistic_without_llm_service_fails_naming_agent(
 
 
 @pytest.mark.asyncio
-async def test_composite_without_concrete_class_fails_naming_composite(
+async def test_composite_builds_without_a_concrete_class(
     beaver_db: AsyncBeaverDB,
 ) -> None:
+    """LEG-110 (amended): no injected class — the built-in composite default applies."""
     catalog = unified_catalog()
     registry = AvailableToolsRegistry()
     registry.declare(
@@ -374,14 +375,14 @@ async def test_composite_without_concrete_class_fails_naming_composite(
         policy={"timeout": 30, "retries": 0},
     )
 
-    with pytest.raises(UnrecoverableError, match="summarize"):
-        materialize_agents(
-            catalog,
-            db=beaver_db,
-            available_tools=registry,
-            lingo_factory=mock_lingo_factory(),
-            composite_classes=None,
-        )
+    agents = materialize_agents(
+        catalog,
+        db=beaver_db,
+        available_tools=registry,
+        lingo_factory=mock_lingo_factory(),
+        composite_classes=None,
+    )
+    assert isinstance(agents["summarize"], CompositeAgent)
 
 
 # --------------------------------------------------------------------------

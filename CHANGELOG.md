@@ -8,6 +8,14 @@ the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
 ### Changed
 
+- **LEG-110 (amended)** Composites now **build themselves**: the engine's
+  `CompositeAgent.build_output_as` has a built-in default that merges the branch
+  payloads under the composite's `output_as`, so a `type: composite` pattern
+  needs **no external class and no `composites.config`** — a composite node
+  boots straight from its `legio.yaml`. A pattern with a non-merge composition
+  overrides the `build_output_as` seam. (Supersedes the node-local composite
+  classes of the earlier LEG-110; `composites.config`, the loader and the CLI
+  `--composites` are gone. Amends LEG-040's "no generic default build".)
 - **LEG-117** (#67) The patterns loader is now **two-phase**: it registers every
   spec from every file/dir, then validates all of them once against the complete
   catalog. Previously it validated each file as it was read, so a composite

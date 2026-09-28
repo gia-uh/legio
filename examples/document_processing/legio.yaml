@@ -8,8 +8,6 @@ patterns:
   composite: "patterns/composite"
 tools:
   config: "tools.yaml"
-composites:
-  config: "composites.py"
 lifecycle:
   default:
     drain_timeout: 30.0

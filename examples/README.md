@@ -20,11 +20,6 @@ Every node ships the same skeleton:
 - `tools.py` — the node-local implementation the declarations point at
   (`tools.transform`, `tools.assess`, …). It resolves beside the `tools.yaml`,
   so the node is self-contained wherever it is copied.
-- `composites.py` — the node-local concrete composite classes
-  (`COMPOSITE_CLASSES = {pattern_name: class}`), declared by `composites.config`
-  in `legio.yaml` (LEG-110). Required only when the node ships composite
-  patterns; it makes `legio server --config …` boot them with no Python
-  boilerplate.
 - `legio.yaml` — the LEG-017 node configuration (`node`, `database`,
   `patterns`, `tools`, `services.llm` where a linguistic step needs an LLM,
   `lifecycle`).

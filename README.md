@@ -63,8 +63,8 @@ into the task's outbox record that `/status` reads. Errors are typed
   S2 the route token; S3 `available_tools` (`implementation` + `policy`).
 - **Standing agents**: atomic `tool` and `linguistic` agents materialized at
   boot, and unified `composite` agents whose branches reference other agents by
-  name (the composite's output build is the pattern's model, injected as a
-  concrete class); nothing is loaded dynamically at submit time.
+  name (the built-in composite build merges the branch payloads under the
+  composite's `output_as`; a non-merge composition overrides the seam).
 - **Dynamic lifecycle**: class/instance verbs (create/enable/disable/destroy),
   pools as capacity intent, bring-up leaves-first over the served catalog.
 - **Runtime surface**: REST submit/status plus class/instance verb classes over

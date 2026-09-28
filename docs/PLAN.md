@@ -480,6 +480,9 @@ are red for the yet-unimplemented surface.
     `RecoverableError`.
 - **LEG-110** Node-local composite classes: a composite node always boots
   (defect fix, GitHub #60). Spec: `docs/CONTRACTS/LEG-110-node-local-composites.md`.
+  - **Amended**: superseded — composites now build themselves (the built-in
+    merge default); no external class or `composites.config` is needed. A
+    non-merge composition overrides the `build_output_as` seam.
   - **Accept**: `legio server --config examples/summarize/legio.yaml` boots to a
     served node; `boot_node` loads the config-declared `composites.config`
     module when no classes are injected; a declared missing module fails loudly;

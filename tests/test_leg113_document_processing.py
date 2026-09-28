@@ -2,7 +2,7 @@
 
 The composite returns the merge of its branches' leaf ``output_as`` values
 (construction + re-keying, no accumulated blackboard). This test pins the
-example's declared output to that merge and exercises the concrete class.
+example's declared output to that merge and exercises the built-in build.
 """
 
 from __future__ import annotations
@@ -10,9 +10,9 @@ from __future__ import annotations
 import pytest
 from beaver import AsyncBeaverDB
 
-from legio.materializer import load_composite_classes
+from legio.agents import CompositeAgent
 from legio.patterns import resolve_composite_branches
-from tests.conftest import EXAMPLES, load_example_node
+from tests.conftest import load_example_node
 
 
 def test_doc_pipeline_output_keys_are_the_branch_leaves() -> None:
@@ -29,9 +29,8 @@ async def test_doc_pipeline_build_matches_the_declared_shape(
 ) -> None:
     catalog = load_example_node("document_processing")
     spec = catalog.specs["doc_pipeline"]
-    classes = load_composite_classes(EXAMPLES / "document_processing" / "composites.py")
     branches = resolve_composite_branches(spec, catalog)
-    composite = classes["doc_pipeline"](
+    composite = CompositeAgent(
         agent_id="doc_pipeline",
         db=beaver_db,
         branches=branches,
