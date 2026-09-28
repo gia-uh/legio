@@ -489,6 +489,16 @@ are red for the yet-unimplemented surface.
   - **Accept**: a tool that fails then succeeds with `retries: N` returns its
     value (attempts = `N + 1`); `retries: 0` is a single attempt; an exhausted
     policy surfaces the last error; a timeout is retried like any call failure.
+- **LEG-112** A configured LLM endpoint with no API key boots (defect fix).
+  Spec: `docs/CONTRACTS/LEG-112-local-llm-without-key.md`.
+  - **Accept**: `default_lingo_factory(..., None)` constructs; a node with
+    `services.llm` boots with no `LEGIO_LLM_API_KEY` (local OpenAI-compatible
+    endpoints work; a cloud endpoint answers 401 visibly).
+- **LEG-113** `document_processing` example coherent and runnable (defect fix).
+  Spec: `docs/CONTRACTS/LEG-113-document-processing-example.md`.
+  - **Accept**: the composite's declared output keys equal its branches' leaf
+    `output_as`; its build matches the schema; the README matches the engine
+    (directory, port, client token, LLM requirement, output).
 
 ## Ordering constraints
 

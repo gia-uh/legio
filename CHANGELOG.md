@@ -21,6 +21,17 @@ the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
   Previously any non-zero `retries` was rejected — a conflation of the forbidden
   dispatch re-queue with the call retry. The dispatch still never re-queues a
   step; a call is retried only within the declared policy.
+- **LEG-112** A node with `services.llm` but no `LEGIO_LLM_API_KEY` now boots:
+  the default lingo factory passes a placeholder key so a local
+  OpenAI-compatible endpoint (ollama, vLLM, LM Studio) works; a cloud endpoint
+  answers 401 at call time, visibly. Previously the OpenAI client refused `None`
+  and every linguistic node failed to boot.
+- **LEG-113** The `document_processing` example is coherent: its two-branch
+  `doc_pipeline` returns both the extracted text (`pdf_output`) and the summary
+  (`summary_output`) — the old schema asked for `{extracted, summary}`, which
+  the construction+re-keying model cannot produce from a single-branch
+  sequence. The README now matches the engine (directory, port, the required
+  client token, the LLM requirement, the achievable output).
 
 ## [0.1.1] - 2026-09-26
 

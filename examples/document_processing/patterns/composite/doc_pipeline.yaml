@@ -19,7 +19,7 @@ output:
   output_schema:
     type: object
     properties:
-      extracted:
+      pdf_output:
         type: object
         properties:
           text:
@@ -28,16 +28,20 @@ output:
             type: integer
           metadata:
             type: object
-        required: [text, pages, metadata]
-      summary:
+        required: [text, pages]
+      summary_output:
         type: object
         properties:
           summary:
             type: string
         required: [summary]
-    required: [extracted, summary]
+    required: [pdf_output, summary_output]
     additionalProperties: false
 branches:
+  # Branch 1 exposes the extracted text; branch 2 chains extraction → summary.
+  # Branches are independent (a branch reads the composite's input, not another
+  # branch's output), so both start from pdf_extract_text.
+  - [pdf_extract_text]
   - [pdf_extract_text, summarize_text]
 policy:
   timeout: 60.0

@@ -73,14 +73,20 @@ def default_lingo_factory(llm: LlmConfig | None, api_key: str | None) -> Any:
     """Default seam: build ``lingo.LLM(model, base_url, api_key)`` (LEG-081).
 
     ``services.llm`` unset → a visible failure (rule 9): no LLM was configured
-    for a node whose catalog asks for one.
+    for a node whose catalog asks for one. When the endpoint is configured but
+    no ``LEGIO_LLM_API_KEY`` is set, a placeholder key is passed: local
+    OpenAI-compatible servers (ollama, vLLM, LM Studio) need no real key, and
+    the OpenAI client refuses ``None``; a cloud endpoint then answers 401 at
+    call time, visibly (rule 9).
     """
     if llm is None:
         logger.error("no services.llm for the lingo factory")
         raise UnrecoverableError("no services.llm configured and no lingo_factory injected")
     from lingo.llm import LLM
 
-    return LLM(model=llm.model, base_url=llm.base_url, api_key=api_key)
+    if api_key is None:
+        logger.debug("no LEGIO_LLM_API_KEY; using a placeholder (local endpoint)")
+    return LLM(model=llm.model, base_url=llm.base_url, api_key=api_key or "not-needed")
 
 
 def _materialize_atom(

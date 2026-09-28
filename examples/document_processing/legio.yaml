@@ -18,9 +18,9 @@ services:
   llm:
     model: "mock"
     base_url: "http://localhost:11434/v1"
-    api_key: "mock-key"
 api:
   clients:
+    # The token value never lives here (secrets are env-only, LEG-017 §2):
+    # provide it as LEGIO_CLIENT_TOKEN_DEMO.
     demo:
-      token: "demo-token"
       agents: ["doc_pipeline"]

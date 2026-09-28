@@ -1,123 +1,125 @@
 # Document Processing Example
 
-A complete, runnable legio example demonstrating a document processing pipeline:
-**PDF text extraction → LLM summarization**.
+A runnable legio example of a document pipeline: **PDF text extraction → LLM
+summarization**, returning both the extracted text and the summary.
 
-## Quick Start
+The composite fans out to two independent branches — one that extracts the
+text and one that extracts and then summarizes it:
 
-### Prerequisites
-
-Install the required Python packages:
-
-```bash
-# From the repo root (legio/)
-uv sync --extra dev
-# Or with pip:
-pip install pypdf
+```yaml
+branches:
+  - [pdf_extract_text]                    # leaf output_as: pdf_output
+  - [pdf_extract_text, summarize_text]    # leaf output_as: summary_output
 ```
 
-The example uses:
-- **pypdf** — PDF text extraction (pure Python, no system deps)
-- **legio** — the framework itself (installed via `uv sync` from repo root)
+A branch reads the composite's input, never another branch's output, so both
+branches start from `pdf_extract_text` (the extraction runs twice).
 
-No external APIs, API keys, or network services required.
+## Prerequisites
 
-### Run the Example
+- **`pypdf`** — PDF text extraction (pure Python, no system deps). It is an
+  **example-only** dependency, not part of `legio`:
+  ```bash
+  uv pip install pypdf   # or: pip install pypdf
+  ```
+- **A running OpenAI-compatible LLM endpoint** for the summarizer. Point
+  `services.llm` in `legio.yaml` at it (`base_url`/`model`). A local server
+  (ollama, vLLM, LM Studio) needs no API key; a cloud endpoint takes
+  `LEGIO_LLM_API_KEY` (secrets are environment-only).
+
+## Run the example
+
+From the repo root:
 
 ```bash
-# From the repo root (legio/)
-cd examples/document-processing
+export LEGIO_CLIENT_TOKEN_DEMO=demo-token     # api.clients.demo token (env-only)
+legio server --config examples/document_processing/legio.yaml   # default port 8000
+```
 
-# 1. Start the node server
-legio server
+Then, in another shell:
 
-# 2. In another terminal, submit a task
-curl -X POST http://localhost:8080/submit \
+```bash
+# 1. Submit (the demo client token is required)
+TASK_ID=$(curl -s -X POST http://localhost:8000/submit \
+  -H "Authorization: Bearer demo-token" \
   -H "Content-Type: application/json" \
   -d '{
     "client_id": "demo",
     "agent": "doc_pipeline",
     "payload": {"file_path": "fixtures/sample.pdf"}
-  }'
+  }' | python -c 'import json,sys; print(json.load(sys.stdin)["task_id"])')
 
-# 3. Poll for the result (use the task_id from submit response)
-curl -X GET "http://localhost:8080/status/<TASK_ID>?client_id=demo"
+# 2. Poll for the result (repeat until "state": "completed")
+curl -s "http://localhost:8000/status/${TASK_ID}?client_id=demo" \
+  -H "Authorization: Bearer demo-token"
 ```
 
-### Expected Output
+## Expected output
 
 ```json
 {
   "state": "completed",
   "output": {
     "pipeline_output": {
-      "extracted": {
-        "text": "Sample PDF for legio document-processing example\nThis PDF contains extractable text for testing.\nLine 3: Numbers 12345 and symbols !@#$%^&*()\nLine 4: Unicode: café, naïve, résumé\n\nEnd of sample document.",
+      "pdf_output": {
+        "text": "Sample PDF for legio document-processing example\n…",
         "pages": 1,
-        "metadata": {
-          "Title": "Sample Document",
-          "Author": "legio examples",
-          "Subject": "document-processing example fixture",
-          "Producer": "pypdf"
-        }
+        "metadata": {"Title": "Sample Document", "Author": "legio examples"}
       },
-      "summary": {
-        "summary": "This document is a sample PDF for testing legio's document processing pipeline. It contains multiple lines of text including numbers, symbols, and Unicode characters to verify extraction works correctly."
+      "summary_output": {
+        "summary": "This document is a sample PDF for testing legio's document processing pipeline."
       }
     }
   }
 }
 ```
 
-## What This Demonstrates
+## What this demonstrates
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **Tool (atomic)** | `patterns/tool/pdf_extract_text.yaml` | Real I/O: reads PDF from disk, extracts text via pypdf |
-| **Linguistic (atomic)** | `patterns/linguistic/summarize_text.yaml` | LLM call (uses MockLLM in tests) |
-| **Composite** | `patterns/composite/doc_pipeline.yaml` | Chains extraction → summarization |
-| **Tool impl** | `tools.py` | Real `pdf_extract_text` using pypdf |
-| **Config** | `legio.yaml` | Node config with all three pattern dirs |
+| **Tool (atomic)** | `patterns/tool/pdf_extract_text.yaml` | Real I/O: reads a PDF from disk via `pypdf` |
+| **Linguistic (atomic)** | `patterns/linguistic/summarize_text.yaml` | LLM call producing the summary |
+| **Composite** | `patterns/composite/doc_pipeline.yaml` | Two branches (extract; extract → summarize), output built by its class |
+| **Composite class** | `composites.py` | `COMPOSITE_CLASSES` (LEG-110): merges the branch payloads |
+| **Tool impl** | `tools.py` | Real `pdf_extract_text` using `pypdf` (lazy import) |
+| **Config** | `legio.yaml` | Node config: patterns, tools, composites, `services.llm`, `api.clients` |
 | **Fixture** | `fixtures/sample.pdf` | Real PDF with extractable text (committed) |
 
 ## Files
 
 ```
-document-processing/
-├── README.md                    # This file
-├── legio.yaml                   # Node configuration
-├── tools.yaml                   # Tool declarations (Schema 3)
-├── tools.py                     # Real tool implementations
+examples/document_processing/
+├── README.md
+├── legio.yaml
+├── tools.yaml
+├── tools.py
+├── composites.py
+├── requirements.txt
 ├── fixtures/
-│   └── sample.pdf               # Test PDF (1 page, extractable text)
+│   └── sample.pdf
 └── patterns/
-    ├── tool/
-    │   └── pdf_extract_text.yaml    # Tool pattern (Schema 1)
-    ├── linguistic/
-    │   └── summarize_text.yaml      # Linguistic pattern (Schema 1)
-    └── composite/
-        └── doc_pipeline.yaml        # Composite pattern (Schema 1)
+    ├── tool/pdf_extract_text.yaml
+    ├── linguistic/summarize_text.yaml
+    └── composite/doc_pipeline.yaml
 ```
 
-## Running Tests
+## Tests
 
-The example is validated by the consumer guide test:
+The example is kept honest by the suite (drift breaks the build):
 
 ```bash
-# From repo root
-uv run pytest tests/test_leg100_consumer_guide.py::test_guide_transform_node_boots_and_serves_submit_status -v
-# Note: this test uses the 'transform' example; the document-processing example
-# is validated by the same mechanisms (pattern loading, config parsing, etc.)
+# From the repo root
+uv run pytest tests/test_leg100_consumer_guide.py   # config parses, patterns load, branches resolve
+uv run pytest tests/test_leg110_node_local_composites.py   # the node boots its composite from config
+uv run pytest tests/test_leg113_document_processing.py     # the composite's output matches its schema
 ```
 
 ## Extending
 
-To add your own document processing steps:
-
-1. **Add a new tool** in `tools.py` (real I/O, libs, validation)
-2. **Declare it** in `tools.yaml` with `policy.timeout`
-3. **Write its pattern** in `patterns/tool/your_tool.yaml` (Schema 1)
-4. **Chain it** in a composite (`patterns/composite/`)
-5. **Add test fixtures** in `fixtures/`
-
-All tools run locally, deterministically, with no external dependencies.
+1. **Add a tool** in `tools.py` and declare it in `tools.yaml` with a
+   `policy.timeout` (and `retries` if the call should be retried).
+2. **Write its pattern** in `patterns/tool/`.
+3. **Chain it** in a composite branch (`patterns/composite/`), or add a new
+   branch; register any new composite class in `composites.py`.
+4. **Add fixtures** under `fixtures/`.
