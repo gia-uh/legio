@@ -8,6 +8,13 @@ the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
 ### Changed
 
+- **LEG-117** (#67) The patterns loader is now **two-phase**: it registers every
+  spec from every file/dir, then validates all of them once against the complete
+  catalog. Previously it validated each file as it was read, so a composite
+  whose branch references another composite failed when the referencing file
+  sorted before the referenced one ("references unknown pattern"). Nested
+  composites now load regardless of file order; the dry-run keeps the same
+  verdict.
 - **LEG-116** (#66) The release validation is `make publish-check`
   (`uv publish --dry-run`) on the `dist/` artifacts. It replaces reaching for a
   globally-installed `twine check`, which falsely reported "missing

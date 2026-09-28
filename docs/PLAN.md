@@ -511,6 +511,11 @@ are red for the yet-unimplemented surface.
   GitHub #66). Spec: `docs/CONTRACTS/LEG-116-publish-check.md`.
   - **Accept**: `make publish-check` validates the `$(VERSION)` artifacts without
     uploading; `RELEASING.md` documents it; no `twine` dependency.
+- **LEG-117** Composite references are not file-order dependent (defect fix,
+  GitHub #67). Spec: `docs/CONTRACTS/LEG-117-composite-load-order.md`.
+  - **Accept**: a tree where a composite references a composite defined in a
+    later-sorted file loads; the dry-run verdict stays equivalent to the boot
+    gate; full suite green.
 
 ## Ordering constraints
 

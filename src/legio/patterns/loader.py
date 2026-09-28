@@ -183,10 +183,8 @@ def resolve_composite_branches(
     return [resolve_branch(branch, catalog, peer_steps=peer_steps) for branch in spec.branches]
 
 
-def _load_specs_from_yaml(
-    data: Any, catalog: Catalog, peer_steps: Mapping[str, str] | None = None
-) -> list[AgentSpec]:
-    """Load one or more specs from parsed YAML data."""
+def _register_specs_from_yaml(data: Any, catalog: Catalog) -> list[AgentSpec]:
+    """Register (not validate) one or more specs from parsed YAML data (LEG-117)."""
     if isinstance(data, dict):
         docs = [data]
     elif isinstance(data, list):
@@ -194,7 +192,7 @@ def _load_specs_from_yaml(
     else:
         _reject("YAML must be a dict or list of dicts")
 
-    specs = []
+    specs: list[AgentSpec] = []
     for doc in docs:
         if not isinstance(doc, dict):
             _reject("each pattern must be a mapping")
@@ -211,11 +209,23 @@ def _load_specs_from_yaml(
         if spec.name in catalog.specs:
             _reject(f"duplicate pattern name: {spec.name}")
         catalog.specs[spec.name] = spec
+    return specs
 
-    # Second pass: validate with full catalog for reuse references
+
+def _validate_specs(
+    specs: list[AgentSpec], catalog: Catalog, peer_steps: Mapping[str, str] | None = None
+) -> None:
+    """Validate registered specs against the complete catalog (LEG-117)."""
     for spec in specs:
         _validate_agent_spec(spec, catalog=catalog.specs, peer_steps=peer_steps)
 
+
+def _load_specs_from_yaml(
+    data: Any, catalog: Catalog, peer_steps: Mapping[str, str] | None = None
+) -> list[AgentSpec]:
+    """Register then validate one or more specs (single-source convenience)."""
+    specs = _register_specs_from_yaml(data, catalog)
+    _validate_specs(specs, catalog, peer_steps=peer_steps)
     return specs
 
 
@@ -235,6 +245,7 @@ def load_pattern_dirs(
     never widens scope beyond a peer that genuinely offers it (rule 9).
     """
     catalog = Catalog()
+    all_specs: list[AgentSpec] = []
     for kind, directory in pattern_dirs.items():
         path = Path(directory)
         if not path.is_dir():
@@ -244,13 +255,11 @@ def load_pattern_dirs(
                 text = yaml_file.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as exc:
                 raise UnrecoverableError(f"cannot read pattern file {yaml_file}: {exc}") from exc
-            _load_all_documents(
-                text,
-                catalog,
-                peer_steps=peer_steps,
-                source_label=str(yaml_file),
-            )
+            all_specs.extend(_register_all_documents(text, catalog, source_label=str(yaml_file)))
         logger.info("patterns loaded kind=%s dir=%s count=%d", kind, path, len(catalog))
+    # Two-phase (LEG-117): validate every spec once, against the complete
+    # catalog, so composite references never depend on file load order.
+    _validate_specs(all_specs, catalog, peer_steps=peer_steps)
     return catalog
 
 
@@ -269,12 +278,13 @@ def load_patterns(source: str | Path | dict[str, Any] | list[dict[str, Any]]) ->
             reuse, encapsulation/cycles).
     """
     catalog = Catalog()
+    all_specs: list[AgentSpec] = []
 
     # Handle YAML string (contains newlines or starts with YAML indicators)
     if isinstance(source, str) and (
         "\n" in source or source.strip().startswith(("{", "[", "-", "name:"))
     ):
-        _load_all_documents(source, catalog, source_label="inline")
+        all_specs.extend(_register_all_documents(source, catalog, source_label="inline"))
     elif isinstance(source, (str, Path)):
         path = Path(source)
         if path.is_dir():
@@ -285,20 +295,43 @@ def load_patterns(source: str | Path | dict[str, Any] | list[dict[str, Any]]) ->
                     raise UnrecoverableError(
                         f"cannot read pattern file {yaml_file}: {exc}"
                     ) from exc
-                _load_all_documents(text, catalog, source_label=str(yaml_file))
+                all_specs.extend(
+                    _register_all_documents(text, catalog, source_label=str(yaml_file))
+                )
         else:
             try:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError) as exc:
                 raise UnrecoverableError(f"cannot read pattern file {path}: {exc}") from exc
-            _load_all_documents(text, catalog, source_label=str(path))
+            all_specs.extend(_register_all_documents(text, catalog, source_label=str(path)))
     elif isinstance(source, (dict, list)):
-        _load_specs_from_yaml(source, catalog)
+        all_specs.extend(_register_specs_from_yaml(source, catalog))
     else:
         _reject(f"unsupported source type: {type(source)}")
 
+    # Two-phase (LEG-117): validate once, against the complete catalog.
+    _validate_specs(all_specs, catalog)
     logger.info("patterns loaded count=%d", len(catalog))
     return catalog
+
+
+def _register_all_documents(
+    text: str,
+    catalog: Catalog,
+    source_label: str | None = None,
+) -> list[AgentSpec]:
+    """Register (not validate) every YAML document in a stream (LEG-117)."""
+    try:
+        documents = list(yaml.safe_load_all(text))
+    except yaml.YAMLError as exc:
+        where = f" in {source_label}" if source_label else ""
+        logger.warning("patterns reject cannot parse patterns%s", where)
+        raise UnrecoverableError(f"cannot parse patterns{where}: {exc}") from exc
+    specs: list[AgentSpec] = []
+    for document in documents:
+        if document is not None:
+            specs.extend(_register_specs_from_yaml(document, catalog))
+    return specs
 
 
 def _load_all_documents(
@@ -307,20 +340,9 @@ def _load_all_documents(
     peer_steps: Mapping[str, str] | None = None,
     source_label: str | None = None,
 ) -> None:
-    """Load every YAML document in a stream (multi-doc ``---`` supported).
-
-    A malformed stream fails as `UnrecoverableError` naming the source —
-    never a raw `YAMLError` (the loader's documented contract).
-    """
-    try:
-        documents = list(yaml.safe_load_all(text))
-    except yaml.YAMLError as exc:
-        where = f" in {source_label}" if source_label else ""
-        logger.warning("patterns reject cannot parse patterns%s", where)
-        raise UnrecoverableError(f"cannot parse patterns{where}: {exc}") from exc
-    for document in documents:
-        if document is not None:
-            _load_specs_from_yaml(document, catalog, peer_steps=peer_steps)
+    """Register then validate every YAML document in a stream (LEG-117)."""
+    specs = _register_all_documents(text, catalog, source_label=source_label)
+    _validate_specs(specs, catalog, peer_steps=peer_steps)
 
 
 def _strip_separator_lines(segment: str) -> str:
@@ -445,10 +467,11 @@ def validate_pattern_dirs(
             for segment in segments:
                 ordered.append((yaml_file, segment))
 
+    registered: list[tuple[Path, AgentSpec]] = []
     for yaml_file, segment in ordered:
         try:
             data = yaml.safe_load(segment)
-            _load_specs_from_yaml(data, catalog, peer_steps=peer_steps)
+            specs = _register_specs_from_yaml(data, catalog)
         except (UnrecoverableError, yaml.YAMLError) as exc:
             issues.append(
                 ValidationIssue(
@@ -457,6 +480,16 @@ def validate_pattern_dirs(
                     detail=str(exc),
                 )
             )
+            continue
+        registered.extend((yaml_file, spec) for spec in specs)
+
+    # Two-phase (LEG-117): validate every registered spec against the complete
+    # catalog, attributing each finding to its source file.
+    for yaml_file, spec in registered:
+        try:
+            _validate_agent_spec(spec, catalog=catalog.specs, peer_steps=peer_steps)
+        except UnrecoverableError as exc:
+            issues.append(ValidationIssue(pattern=spec.name, file=str(yaml_file), detail=str(exc)))
     return issues
 
 
