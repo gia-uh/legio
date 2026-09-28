@@ -6,7 +6,7 @@
 # rules 1 and 7). The release track is `make build` → `make validate-release`
 # (LEG-101/LEG-102) → `make publish-check` (LEG-116) → `make tag`.
 
-VERSION := 0.1.3
+VERSION := 0.1.4
 
 .DEFAULT_GOAL := help
 

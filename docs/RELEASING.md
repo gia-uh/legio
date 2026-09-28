@@ -12,7 +12,7 @@ it in `src/legio/__init__.py` (`__version__`) and the Makefile in `VERSION`.
 A release bumps all three together — a mismatch is a loud, breaking error to
 catch in review.
 
-Current version: `0.1.3` (published on PyPI: <https://pypi.org/project/legio/>).
+Current version: `0.1.4` (published on PyPI: <https://pypi.org/project/legio/>).
 
 ## Release process
 
