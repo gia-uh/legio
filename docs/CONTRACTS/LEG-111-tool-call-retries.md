@@ -2,7 +2,8 @@
 
 - **Status**: APPROVED (maintainer direction 2026-09-28: retries "se decidió
   ponerlos de manera general").
-- **Type**: defect fix (engine) — GitHub issue to be opened by the maintainer.
+- **Type**: defect fix (engine).
+- **GitHub issue:** #61
 - **Related**: LEG-013 (approved contract: `policy.retries` = call retries),
   LEG-103 Slice 1 (wrote the contradictory "retries stays 0" clause).
 

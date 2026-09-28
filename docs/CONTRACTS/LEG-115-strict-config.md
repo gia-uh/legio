@@ -3,6 +3,7 @@
 - **Status**: APPROVED (maintainer direction 2026-09-28: "si se pasa una llave
   desconocida … debe dar error").
 - **Type**: defect fix (engine) — rule 9 (errors are never silent).
+- **GitHub issue:** #65
 - **Related**: LEG-017 (config), LEG-081 (boot), LEG-013 (Schema 3 tools),
   LEG-010 (Schema 1 patterns — already strict).
 

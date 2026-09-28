@@ -3,6 +3,7 @@
 - **Status**: APPROVED (maintainer direction 2026-09-28: "soluciona todo en
   legio").
 - **Type**: defect fix (example correctness + docs).
+- **GitHub issue:** #63
 - **Related**: LEG-040/044 (construction + re-keying), LEG-110 (composite
   loading), LEG-100/104 (examples run as documented).
 

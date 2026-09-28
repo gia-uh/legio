@@ -479,32 +479,32 @@ are red for the yet-unimplemented surface.
     stale debt paragraph; `fetch_peer_catalogs` raises the promised peer-named
     `RecoverableError`.
 - **LEG-110** Node-local composite classes: a composite node always boots
-  (defect fix). Spec: `docs/CONTRACTS/LEG-110-node-local-composites.md`.
+  (defect fix, GitHub #60). Spec: `docs/CONTRACTS/LEG-110-node-local-composites.md`.
   - **Accept**: `legio server --config examples/summarize/legio.yaml` boots to a
     served node; `boot_node` loads the config-declared `composites.config`
     module when no classes are injected; a declared missing module fails loudly;
     every shipped composite example boots through the documented command.
-- **LEG-111** `policy.retries` retries the tool call (defect fix). Spec:
-  `docs/CONTRACTS/LEG-111-tool-call-retries.md`.
+- **LEG-111** `policy.retries` retries the tool call (defect fix, GitHub #61).
+  Spec: `docs/CONTRACTS/LEG-111-tool-call-retries.md`.
   - **Accept**: a tool that fails then succeeds with `retries: N` returns its
     value (attempts = `N + 1`); `retries: 0` is a single attempt; an exhausted
     policy surfaces the last error; a timeout is retried like any call failure.
-- **LEG-112** A configured LLM endpoint with no API key boots (defect fix).
-  Spec: `docs/CONTRACTS/LEG-112-local-llm-without-key.md`.
+- **LEG-112** A configured LLM endpoint with no API key boots (defect fix,
+  GitHub #62). Spec: `docs/CONTRACTS/LEG-112-local-llm-without-key.md`.
   - **Accept**: `default_lingo_factory(..., None)` constructs; a node with
     `services.llm` boots with no `LEGIO_LLM_API_KEY` (local OpenAI-compatible
     endpoints work; a cloud endpoint answers 401 visibly).
-- **LEG-113** `document_processing` example coherent and runnable (defect fix).
-  Spec: `docs/CONTRACTS/LEG-113-document-processing-example.md`.
+- **LEG-113** `document_processing` example coherent and runnable (defect fix,
+  GitHub #63). Spec: `docs/CONTRACTS/LEG-113-document-processing-example.md`.
   - **Accept**: the composite's declared output keys equal its branches' leaf
     `output_as`; its build matches the schema; the README matches the engine
     (directory, port, client token, LLM requirement, output).
-- **LEG-114** Client tokens resolve case-insensitively (defect fix). Spec:
-  `docs/CONTRACTS/LEG-114-client-token-case.md`.
+- **LEG-114** Client tokens resolve case-insensitively (defect fix, GitHub #64).
+  Spec: `docs/CONTRACTS/LEG-114-client-token-case.md`.
   - **Accept**: `LEGIO_CLIENT_TOKEN_DEMO` registers the `demo` client; a
     lowercase env suffix still works; a missing token stays unregistered.
-- **LEG-115** Node config is strict: an unknown key fails the load (defect fix).
-  Spec: `docs/CONTRACTS/LEG-115-strict-config.md`.
+- **LEG-115** Node config is strict: an unknown key fails the load (defect fix,
+  GitHub #65). Spec: `docs/CONTRACTS/LEG-115-strict-config.md`.
   - **Accept**: an unknown key in `legio.yaml` or `tools.yaml` raises a
     `ConfigError` naming it; every shipped example still loads.
 

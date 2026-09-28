@@ -3,6 +3,7 @@
 - **Status**: APPROVED (maintainer direction 2026-09-28: "soluciona todo en
   legio").
 - **Type**: defect fix (engine).
+- **GitHub issue:** #64
 - **Related**: LEG-017 §2/§4 (client tokens, env-only), LEG-108 (served surface).
 
 ## Problem

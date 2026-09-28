@@ -3,6 +3,7 @@
 - **Status**: APPROVED (maintainer direction 2026-09-28: "soluciona todo en
   legio").
 - **Type**: defect fix (engine).
+- **GitHub issue:** #62
 - **Related**: LEG-081 (boot / lingo factory), LEG-017 §2 (secrets are env-only),
   LEG-100 (consumer guide / examples).
 

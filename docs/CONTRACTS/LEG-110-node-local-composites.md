@@ -2,7 +2,8 @@
 
 - **Status**: APPROVED (maintainer direction 2026-09-28: "los composites se debe
   poder cargar siempre", "se pasa el config y desde el CLI se puede").
-- **Type**: defect fix (engine) — GitHub issue to be opened by the maintainer.
+- **Type**: defect fix (engine).
+- **GitHub issue:** #60
 - **Related**: LEG-040 (no generic composite build), LEG-081 (boot), LEG-104
   (node-local tools), LEG-013 (retries — separate slice).
 
