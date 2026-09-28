@@ -4,7 +4,7 @@
 # exactly: lint (ruff check) + format check (ruff format --check) + typecheck
 # (pyright) + full pytest. Everything is English and domain-free (AGENTS.md
 # rules 1 and 7). The release track is `make build` → `make validate-release`
-# (LEG-101/LEG-102) → `make tag`.
+# (LEG-101/LEG-102) → `make publish-check` (LEG-116) → `make tag`.
 
 VERSION := 0.1.2
 
@@ -60,6 +60,10 @@ release-guard: ## Refuse a dirty tree, a missing record, or a first-parent chang
 .PHONY: validate-release
 validate-release: ## Validate the release artifact (LEG-102): build, install into a throwaway venv, headless consumer smoke
 	chmod +x scripts/validate_release.sh && scripts/validate_release.sh ${VERSION}
+
+.PHONY: publish-check
+publish-check: ## Validate the $(VERSION) artifacts against PyPI without uploading (LEG-116: uv publish --dry-run, not a global twine check)
+	uv publish --dry-run dist/legio-${VERSION}-py3-none-any.whl dist/legio-${VERSION}.tar.gz
 
 .PHONY: clean
 clean: ## Remove build/test artifacts (never the venv or user data)

@@ -4,6 +4,16 @@ All notable changes to `legio` are listed here per release. Each entry names
 the merged issue (the `LEG-0xx` plan issue and its GitHub issue number where
 the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
+## [Unreleased]
+
+### Changed
+
+- **LEG-116** (#66) The release validation is `make publish-check`
+  (`uv publish --dry-run`) on the `dist/` artifacts. It replaces reaching for a
+  globally-installed `twine check`, which falsely reported "missing
+  Name/Version" against the `Metadata-Version: 2.4` (PEP 639) wheel because its
+  bundled `pkginfo` 1.10 does not understand 2.4. No `twine` dependency added.
+
 ## [0.1.2] - 2026-09-28
 
 ### Fixed

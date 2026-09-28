@@ -38,13 +38,19 @@ The whole release is a sequence of already-green gates plus three actions
    repo pinning the release) remains a maintainer follow-up; the in-repo
    harness is the executable proof of the artifact.
 
-5. **Tag:** `make tag` — `git tag v<VERSION>` on the release commit (the
+5. **Validate against PyPI (no upload):** `make publish-check` runs
+   `uv publish --dry-run` on the `dist/` artifacts — the real validator for the
+   release. Do **not** rely on a globally-installed `twine check`: a stale
+   `pkginfo` mis-parses the `Metadata-Version: 2.4` (PEP 639) wheel and reports
+   a false "missing Name/Version" (LEG-116).
+
+6. **Tag:** `make tag` — `git tag v<VERSION>` on the release commit (the
    commit that carries the bump, the changelog entry and the validation
    record). `make release` runs `release-guard` first: it refuses a dirty
    working tree or a validation record whose `Run at` stamp predates `HEAD`,
    so a tag can never certify an unvalidated tree (LEG-107).
 
-6. **Publish to PyPI (maintainer):** upload the `dist/` artifacts with a
+7. **Publish to PyPI (maintainer):** upload the `dist/` artifacts with a
    project-scoped API token:
 
    ```bash

@@ -507,6 +507,10 @@ are red for the yet-unimplemented surface.
   GitHub #65). Spec: `docs/CONTRACTS/LEG-115-strict-config.md`.
   - **Accept**: an unknown key in `legio.yaml` or `tools.yaml` raises a
     `ConfigError` naming it; every shipped example still loads.
+- **LEG-116** Release validation is `make publish-check` (`uv publish --dry-run`;
+  GitHub #66). Spec: `docs/CONTRACTS/LEG-116-publish-check.md`.
+  - **Accept**: `make publish-check` validates the `$(VERSION)` artifacts without
+    uploading; `RELEASING.md` documents it; no `twine` dependency.
 
 ## Ordering constraints
 
