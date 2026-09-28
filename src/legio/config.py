@@ -305,6 +305,17 @@ class ToolsConfig(BaseModel):
     config: Path = DEFAULT_TOOLS_PATH
 
 
+class CompositesConfig(BaseModel):
+    """Pointer to the node-local concrete composite classes module (LEG-110).
+
+    The module exposes ``COMPOSITE_CLASSES: dict[str, type[CompositeAgent]]``.
+    Optional: a node without composites omits it; a node with composites
+    declares the module (conventionally ``./composites.py`` beside the config).
+    """
+
+    config: Path | None = None
+
+
 class PeerConfig(BaseModel):
     """A known peer of THIS node (outbound address book, LEG-017 §5).
 
@@ -348,6 +359,7 @@ class LegioConfig(BaseModel):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     lifecycle: LifecycleConfig = Field(default_factory=LifecycleConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    composites: CompositesConfig = Field(default_factory=CompositesConfig)
     federation: FederationConfig = Field(default_factory=FederationConfig)
 
 
@@ -405,6 +417,7 @@ class CliOverrides:
     linguistic_dir: Path | None = None
     composite_dir: Path | None = None
     tools_config: Path | None = None
+    composites_config: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -476,6 +489,11 @@ def _merge_overrides(cfg: LegioConfig, overrides: CliOverrides) -> dict[str, Any
         merged["patterns"] = patterns
     if overrides.tools_config is not None:
         merged["tools"] = {**merged.get("tools", {}), "config": str(overrides.tools_config)}
+    if overrides.composites_config is not None:
+        merged["composites"] = {
+            **merged.get("composites", {}),
+            "config": str(overrides.composites_config),
+        }
     return merged
 
 
@@ -560,6 +578,8 @@ def resolve_config_paths(loaded: LoadedConfig) -> LegioConfig:
         cfg.patterns.composite,
         cfg.tools.config,
     )
+    if cfg.composites.config is not None:
+        authored = (*authored, cfg.composites.config)
     if all(path.is_absolute() for path in authored):
         # Nothing to anchor: return the same object (identity is observable —
         # `BootedNode.config is loaded`).
@@ -578,7 +598,17 @@ def resolve_config_paths(loaded: LoadedConfig) -> LegioConfig:
         }
     )
     tools = cfg.tools.model_copy(update={"config": anchored(cfg.tools.config)})
-    resolved = cfg.model_copy(update={"database": database, "patterns": patterns, "tools": tools})
+    composites = cfg.composites
+    if cfg.composites.config is not None:
+        composites = cfg.composites.model_copy(update={"config": anchored(cfg.composites.config)})
+    resolved = cfg.model_copy(
+        update={
+            "database": database,
+            "patterns": patterns,
+            "tools": tools,
+            "composites": composites,
+        }
+    )
     logger.debug("config paths resolved base=%s", base)
     return resolved
 
@@ -634,6 +664,7 @@ __all__ = [
     "ApiConfig",
     "CliOverrides",
     "ClientConfig",
+    "CompositesConfig",
     "ConfigError",
     "DatabaseConfig",
     "EmbeddingConfig",

@@ -106,6 +106,7 @@ def _apply_overrides(
     linguistic_dir: Path | None,
     composite_dir: Path | None,
     tools: Path | None,
+    composites: Path | None,
 ) -> CliOverrides:
     """Assemble the CLI override layer (LEG-081 config precedence, session 58)."""
     return CliOverrides(
@@ -116,6 +117,7 @@ def _apply_overrides(
         linguistic_dir=linguistic_dir,
         composite_dir=composite_dir,
         tools_config=tools,
+        composites_config=composites,
     )
 
 
@@ -536,6 +538,13 @@ def server_command(
     tools: Annotated[
         Path | None, typer.Option("--tools", help="Override the Schema 3 tools file.")
     ] = None,
+    composites: Annotated[
+        Path | None,
+        typer.Option(
+            "--composites",
+            help="Override the node-local composites class module (LEG-110).",
+        ),
+    ] = None,
     federation: Annotated[
         bool,
         typer.Option(
@@ -550,7 +559,7 @@ def server_command(
     loaded = load(
         config,
         overrides=_apply_overrides(
-            node, db_path, log_level, tool_dir, linguistic_dir, composite_dir, tools
+            node, db_path, log_level, tool_dir, linguistic_dir, composite_dir, tools, composites
         ),
     )
     _configure_logging(loaded)
@@ -611,10 +620,17 @@ def agent_options(
     tools: Annotated[
         Path | None, typer.Option("--tools", help="Override the Schema 3 tools file.")
     ] = None,
+    composites: Annotated[
+        Path | None,
+        typer.Option(
+            "--composites",
+            help="Override the node-local composites class module (LEG-110).",
+        ),
+    ] = None,
 ) -> None:
     """Shared node options (`legio agent <verb>`)."""
     ctx.obj = _apply_overrides(
-        node, db_path, log_level, tool_dir, linguistic_dir, composite_dir, tools
+        node, db_path, log_level, tool_dir, linguistic_dir, composite_dir, tools, composites
     )
     ctx.meta["legio_config"] = config
 

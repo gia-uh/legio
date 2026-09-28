@@ -93,6 +93,8 @@ patterns:
   composite: "./patterns/composite"
 tools:
   config: "./tools.yaml"
+composites:
+  config: "./composites.py"        # only when the node ships composite patterns
 lifecycle:
   default:
     drain_timeout: 10.0
@@ -101,9 +103,10 @@ lifecycle:
 
 Options: `pools` (capacity per pattern), `services.llm` (the LLM endpoint for
 linguistic steps), `api` (host/port/clients), `federation` (peer nodes +
-inbound `allowlist`), `logging`. Relative paths resolve against the
-**directory of this config file**, so the node boots from any working
-directory with `--config <path>/legio.yaml`.
+inbound `allowlist`), `logging`, `composites.config` (the node's concrete
+composite classes, §8). Relative paths resolve against the **directory of this
+config file**, so the node boots from any working directory with
+`--config <path>/legio.yaml`.
 
 One `db_path` belongs to **one node (one process at a time)**. Stopping and
 restarting the node on the same database is supported; running two nodes on the
@@ -178,11 +181,17 @@ The other example nodes show the same skeleton extended:
   `requirements.txt` installs the example-only `pypdf`).
 
 A composite's **output build is the pattern's model**: the engine has no
-generic build — your composite class implements `build_output_as` and is
-injected at boot (a composite without one refuses the boot, naming the agent).
-Linguistic agents need `services.llm` in the node config. The example nodes
-ship their own `legio.yaml`, `tools.yaml` and `patterns/`; `tests/test_leg032`
-and `tests/test_leg043` run these flows end-to-end against the same files.
+generic build. Each composite pattern has a concrete class that implements
+`build_output_as`; the node ships those classes in its **node-local composites
+module** (`composites.py` beside the config, `composites.config` in the node
+config) exposing `COMPOSITE_CLASSES = {pattern_name: class}`. `boot_node` loads
+and injects it, so `legio server --config <node>/legio.yaml` boots a composite
+node with no Python boilerplate at the command. A composite pattern with no
+class in the module still refuses the boot, naming the agent (rule 9). Linguistic
+agents need `services.llm` in the node config. The example nodes ship their own
+`legio.yaml`, `tools.yaml`, `composites.py` and `patterns/`; `tests/test_leg032`,
+`tests/test_leg043` and `tests/test_leg110` run these flows end-to-end against
+the same files.
 
 ## 9. Proving the guide
 

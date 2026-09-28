@@ -30,8 +30,11 @@ client without its token is warned and left unregistered (visible, rule 9).
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import logging
 import os
+import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -320,6 +323,86 @@ def available_tools_from_config(loaded: LoadedConfig) -> AvailableToolsRegistry:
     return _build_tool_registry(loaded)
 
 
+def _validate_composite_classes(mapping: Any, module_path: Path) -> dict[str, type[CompositeAgent]]:
+    """Validate ``COMPOSITE_CLASSES``: ``str -> CompositeAgent`` subclass (rule 9)."""
+    if not isinstance(mapping, Mapping):
+        logger.error("composites module bad mapping file=%s value=%r", module_path, mapping)
+        raise ConfigError(
+            f"composites module {module_path} must define COMPOSITE_CLASSES as a mapping"
+        )
+    classes: dict[str, type[CompositeAgent]] = {}
+    for name, composite_type in mapping.items():
+        if not isinstance(name, str) or not name:
+            logger.error("composites module bad key file=%s key=%r", module_path, name)
+            raise ConfigError(
+                f"composites module {module_path} has a non-string COMPOSITE_CLASSES key"
+            )
+        if not (isinstance(composite_type, type) and issubclass(composite_type, CompositeAgent)):
+            logger.error(
+                "composites module bad class file=%s name=%s value=%r",
+                module_path,
+                name,
+                composite_type,
+            )
+            raise ConfigError(
+                f"composites module {module_path} maps {name!r} to a non-CompositeAgent class"
+            )
+        classes[name] = composite_type
+    return classes
+
+
+def load_composite_classes(path: Path | str) -> CompositeClasses:
+    """Load a node-local composites module and return its ``COMPOSITE_CLASSES``.
+
+    The module is loaded by **file location** under a unique synthetic module
+    name (no ``sys.path`` mutation, no collision between nodes in one process),
+    mirroring the node-local tool loader (LEG-104). It must expose a mapping
+    ``COMPOSITE_CLASSES: dict[str, type[CompositeAgent]]``; anything else fails
+    loudly, naming the file (rule 9).
+    """
+    module_path = Path(path)
+    if not module_path.is_file():
+        logger.error("composites module not found path=%s", module_path)
+        raise ConfigError(f"composites module not found: {module_path}")
+    digest = hashlib.sha1(str(module_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    synthetic = f"_legio_node_composites_{digest}"
+    module = sys.modules.get(synthetic)
+    if module is None:
+        spec = importlib.util.spec_from_file_location(synthetic, module_path)
+        if spec is None or spec.loader is None:
+            logger.error("composites module not importable path=%s", module_path)
+            raise ConfigError(f"cannot import composites module: {module_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[synthetic] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(synthetic, None)
+            raise
+        logger.info("composites local import file=%s", module_path)
+    classes = _validate_composite_classes(getattr(module, "COMPOSITE_CLASSES", None), module_path)
+    logger.info("composites loaded file=%s count=%d", module_path, len(classes))
+    return classes
+
+
+def composite_classes_from_config(loaded: LoadedConfig) -> CompositeClasses:
+    """Resolve the config-declared composites module (LEG-110).
+
+    No ``composites.config`` declared → an empty mapping (a node with no
+    composites module); a composite pattern with no loaded class still fails
+    loudly at materialization, naming the agent. A declared path that does not
+    exist is a loud error (rule 9).
+    """
+    path = loaded.config.composites.config
+    if path is None:
+        logger.debug("no composites module declared (node may have no composites)")
+        return {}
+    if not path.is_file():
+        logger.error("composites module declared but missing path=%s", path)
+        raise ConfigError(f"composites module not found: {path}")
+    return load_composite_classes(path)
+
+
 async def boot_node(
     loaded: LoadedConfig,
     *,
@@ -358,6 +441,13 @@ async def boot_node(
     if resolved_config is not loaded.config:
         loaded = replace(loaded, config=resolved_config)
     cfg = loaded.config
+
+    # A programmatic ``composite_classes`` argument wins (tests/embedders);
+    # otherwise the concrete composite classes come from the node config's
+    # composites module (LEG-110), so `legio server --config …` boots a
+    # composite node with no Python boilerplate at the call site.
+    if composite_classes is None:
+        composite_classes = composite_classes_from_config(loaded)
 
     if db is None:
         db_file = Path(cfg.database.db_path)
@@ -534,6 +624,8 @@ __all__ = [
     "LingoFactory",
     "available_tools_from_config",
     "boot_node",
+    "composite_classes_from_config",
     "default_lingo_factory",
+    "load_composite_classes",
     "materialize_agents",
 ]

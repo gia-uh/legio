@@ -4,6 +4,19 @@ All notable changes to `legio` are listed here per release. Each entry names
 the merged issue (the `LEG-0xx` plan issue and its GitHub issue number where
 the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
+## [Unreleased]
+
+### Fixed
+
+- **LEG-110** A node containing composite patterns now boots through the CLI.
+  The node config declares its node-local concrete composite classes
+  (`composites.config` → a `composites.py` exposing
+  `COMPOSITE_CLASSES = {pattern_name: class}`) and `boot_node` loads and injects
+  them, so `legio server --config examples/summarize/legio.yaml` works
+  (previously it refused with "no concrete composite class injected"). The four
+  shipped composite examples now boot as documented, proven by a subprocess
+  test.
+
 ## [0.1.1] - 2026-09-26
 
 Hardening release: fixes the externally-reported regressions in `v0.1.0`

@@ -478,6 +478,12 @@ are red for the yet-unimplemented surface.
     fails on regressions of the example count, the FlowToken field list and the
     stale debt paragraph; `fetch_peer_catalogs` raises the promised peer-named
     `RecoverableError`.
+- **LEG-110** Node-local composite classes: a composite node always boots
+  (defect fix). Spec: `docs/CONTRACTS/LEG-110-node-local-composites.md`.
+  - **Accept**: `legio server --config examples/summarize/legio.yaml` boots to a
+    served node; `boot_node` loads the config-declared `composites.config`
+    module when no classes are injected; a declared missing module fails loudly;
+    every shipped composite example boots through the documented command.
 
 ## Ordering constraints
 

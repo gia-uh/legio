@@ -10,6 +10,8 @@ patterns:
   composite: "./patterns/composite"
 tools:
   config: "./tools.yaml"
+composites:
+  config: "./composites.py"
 services:
   llm:
     base_url: "http://localhost:11434/v1"
