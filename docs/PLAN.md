@@ -520,6 +520,13 @@ are red for the yet-unimplemented surface.
     later-sorted file loads; the dry-run verdict stays equivalent to the boot
     gate; full suite green.
 
+- **LEG-119** A composite may declare its own implementation (declarative
+  escape hatch; GitHub to be opened). Spec:
+  `docs/CONTRACTS/LEG-119-composite-implementation.md`.
+  - **Accept**: a composite declaring `implementation:` materializes its class
+    (dotted or node-local); a broken one fails loudly; an atomic with
+    `implementation` fails at load; composites without it keep the default.
+
 ## Ordering constraints
 
 - LEG-0xx before LEG-1xx..., except documentation (LEG-003) can be updated

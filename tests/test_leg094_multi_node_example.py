@@ -188,7 +188,7 @@ def lingo_factory(record: dict):
 class MergeComposite(CompositeAgent):
     """Concrete composite: fold the branch's single leaf under ``result``."""
 
-    async def build_output_as(self, info):
+    async def build_output_as(self, info, own=None):
         slot = next(iter(info.values()))
         leaf = next(iter(slot.values()))
         return {"result": {"raw": leaf["raw"]}}

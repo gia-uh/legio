@@ -147,7 +147,7 @@ class GatherComposite(CompositeAgent):
     """A concrete composite pattern (fictitious domain): transcribes each
     branch's built payload (slot order) into its own ``output_as``."""
 
-    async def build_output_as(self, info):
+    async def build_output_as(self, info, own=None):
         gathered: dict = {}
 
         for branch_payload in info.values():

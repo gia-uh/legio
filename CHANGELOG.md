@@ -4,6 +4,24 @@ All notable changes to `legio` are listed here per release. Each entry names
 the merged issue (the `LEG-0xx` plan issue and its GitHub issue number where
 the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
+## [Unreleased]
+
+### Added
+
+- **LEG-119** A `type: composite` agent may declare `implementation:` — a dotted
+  path to a `CompositeAgent` subclass for a **particular** composition (the
+  spec's "the composition is the agent's implementation"). It resolves normally
+  or **node-local** beside the config (a `composites.py`, LEG-104 mechanism); a
+  broken/foreign class fails the boot naming the agent. Absent → the built-in
+  default build; the programmatic `composite_classes` map still wins.
+- **LEG-118 (build)** The composite default build now **resolves the declared
+  `output_schema` from the composite's own `input_as` and its branches**: a
+  declared field is taken from the composite's incoming payload (e.g. a
+  transcription it holds) or from a branch's output; undeclared keys are not
+  emitted. Pattern YAML therefore expresses `{transcript, analysis}` with no
+  extra class and no re-transcription. A particular composition overrides the
+  `build_output_as` seam (see LEG-119).
+
 ## [0.1.3] - 2026-09-28
 
 ### Changed

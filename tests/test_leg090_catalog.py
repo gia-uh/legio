@@ -256,7 +256,7 @@ def mock_lingo_factory(**record: str | int):
 class CarveComposite(CompositeAgent):
     """Concrete composite: concatenate each branch's built payload."""
 
-    async def build_output_as(self, info):
+    async def build_output_as(self, info, own=None):
         gathered: dict = {}
         for branch_payload in info.values():
             gathered.update(branch_payload)

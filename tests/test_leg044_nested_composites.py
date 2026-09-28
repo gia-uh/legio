@@ -171,7 +171,7 @@ class GatherComposite(CompositeAgent):
     ``output_schema``); each concrete composite inherits and implements it.
     """
 
-    async def build_output_as(self, info):
+    async def build_output_as(self, info, own=None):
         gathered: dict = {}
         for payload in info.values():
             gathered.update(payload)

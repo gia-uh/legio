@@ -30,6 +30,7 @@ client without its token is warned and left unregistered (visible, rule 9).
 
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 from collections.abc import Callable, Mapping
@@ -58,7 +59,7 @@ from legio.patterns import (
 from legio.patterns.compile import compile_schema
 from legio.runtime import Runtime
 from legio.security import ClientTokenStore
-from legio.tools import AvailableToolsRegistry
+from legio.tools import AvailableToolsRegistry, load_local_module
 
 logger = logging.getLogger(__name__)
 
@@ -171,12 +172,20 @@ def _materialize_composite(
     composite_classes: CompositeClasses,
     control_verifier: ControlVerifier | None,
     peer_steps: Mapping[str, str] | None = None,
+    base_dir: Path | None = None,
 ) -> AgentBase:
-    """Materialize one composite (its concrete class, or the built-in default)."""
-    # A composite's construction is internal to legio: when a pattern does not
-    # provide its own concrete class, the built-in CompositeAgent default build
-    # (merge the branch payloads under output_as) applies — no external config.
-    composite_type = composite_classes.get(spec.name, CompositeAgent)
+    """Materialize one composite (its concrete class, or the built-in default).
+
+    Precedence: the programmatic ``composite_classes`` map (tests/embedders) wins;
+    else the pattern's declared ``implementation`` (LEG-119, dotted or node-local
+    beside the config); else the engine's built-in ``CompositeAgent`` default
+    build (no external class).
+    """
+    composite_type = composite_classes.get(spec.name)
+    if composite_type is None and spec.implementation:
+        composite_type = load_composite_class(spec.implementation, base_dir=base_dir)
+    if composite_type is None:
+        composite_type = CompositeAgent
     branches = resolve_composite_branches(spec, catalog, peer_steps=peer_steps)
     fail_fast = bool(spec.policy and spec.policy.fail_fast)
     return composite_type(
@@ -205,6 +214,7 @@ def materialize_agents(
     control_verifiers: Mapping[str, ControlVerifier] | None = None,
     on_built: Callable[[str], None] | None = None,
     peer_steps: Mapping[str, str] | None = None,
+    composite_base_dir: Path | None = None,
 ) -> dict[str, AgentBase]:
     """Build the standing agent map from a validated catalog, in DAG order.
 
@@ -213,7 +223,9 @@ def materialize_agents(
     LEG-070 DAG order). Every spec is validated at load, so an unmaterializable
     spec here is a *boot-time* failure — visible and naming the agent (rule 9).
     ``control_verifiers`` (name → verify-only handle, LEG-082/LEG-087) is the
-    boot's injection seam: absent, the agents hold no verifier.
+    boot's injection seam: absent, the agents hold no verifier. A composite with
+    a declared ``implementation`` loads it node-locally beside
+    ``composite_base_dir`` (LEG-119).
     """
     classes = composite_classes or {}
     lingo_client: Any | None = None
@@ -269,6 +281,7 @@ def materialize_agents(
             composite_classes=classes,
             control_verifier=verifiers.get(spec.name),
             peer_steps=peer_steps,
+            base_dir=composite_base_dir,
         )
         agents[spec.name] = agent
         if on_built is not None:
@@ -339,6 +352,35 @@ def _build_tool_registry(tools: LoadedConfig) -> AvailableToolsRegistry:
 def available_tools_from_config(loaded: LoadedConfig) -> AvailableToolsRegistry:
     """Public alias: the node's Schema 3 tool registry from its tools config."""
     return _build_tool_registry(loaded)
+
+
+def load_composite_class(dotted_path: str, *, base_dir: Path | None = None) -> type[CompositeAgent]:
+    """Load a composite's declared implementation class (LEG-119).
+
+    ``dotted_path`` is ``module.Class``; the module is imported normally, or —
+    when that fails and ``base_dir`` is given — loaded as a **node-local** file
+    ``<base_dir>/<module>.py`` (a ``composites.py`` beside the config), mirroring
+    Schema 3 node-local tools (LEG-104). The resolved attribute must be a
+    ``CompositeAgent`` subclass; anything else fails loudly (rule 9).
+    """
+    module_path, _, attr = dotted_path.rpartition(".")
+    if not module_path or not attr:
+        raise ConfigError(f"composite implementation {dotted_path!r} is not a dotted path")
+    try:
+        module = importlib.import_module(module_path)
+    except ImportError:
+        module = load_local_module(module_path, base_dir)
+        if module is None:
+            logger.error("cannot import composite implementation path=%s", dotted_path)
+            raise ConfigError(f"cannot import composite implementation {dotted_path!r}") from None
+    candidate = getattr(module, attr, None)
+    if not (isinstance(candidate, type) and issubclass(candidate, CompositeAgent)):
+        logger.error("composite implementation not a CompositeAgent path=%s", dotted_path)
+        raise ConfigError(
+            f"composite implementation {dotted_path!r} is not a CompositeAgent subclass"
+        )
+    logger.info("composite implementation loaded path=%s", dotted_path)
+    return candidate
 
 
 async def boot_node(
@@ -485,6 +527,7 @@ async def _boot_on_database(
         control_verifiers=verifiers,
         on_built=on_built,
         peer_steps=peer_steps,
+        composite_base_dir=(loaded.config_path.parent if loaded.config_path is not None else None),
     )
     engine.mount_agents(agents)
     for agent in agents.values():

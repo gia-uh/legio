@@ -143,6 +143,20 @@ class AvailableToolsRegistry:
         return self._declarations
 
 
+def load_local_module(module_path: str, base_dir: Path | str | None) -> Any | None:
+    """Load ``<base_dir>/<module_path>.py`` as a synthetic module, or None (LEG-104).
+
+    Module-level counterpart of ``AvailableToolsRegistry._load_local_module`` so
+    other node-local loaders (LEG-119 composite implementations) reuse the exact
+    same mechanism: file-location import under a unique synthetic name, no
+    ``sys.path`` mutation.
+    """
+    if base_dir is None:
+        return None
+    registry = AvailableToolsRegistry(base_dir=Path(base_dir))
+    return registry._load_local_module(module_path)
+
+
 def resolve_parameters(
     parameters: Mapping[str, Any],
     payload: Mapping[str, Any],

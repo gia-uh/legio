@@ -64,7 +64,7 @@ class GatherComposite(CompositeAgent):
     transcription composition for its declared shape.
     """
 
-    async def build_output_as(self, info):
+    async def build_output_as(self, info, own=None):
         gathered: dict = {}
         for payload in info.values():
             gathered.update(payload)
@@ -79,7 +79,7 @@ class SlottedComposite(CompositeAgent):
     sharing the same ``output_as`` are both visible, never colliding.
     """
 
-    async def build_output_as(self, info):
+    async def build_output_as(self, info, own=None):
         slotted = {str(index): dict(payload) for index, payload in enumerate(info.values())}
         return build_payload(slotted, output_as=self._output_as)
 
@@ -89,7 +89,7 @@ class BreakingComposite(CompositeAgent):
     pattern) — the failure must surface visibly through the composite's own
     context, never as a silent loop."""
 
-    async def build_output_as(self, info):
+    async def build_output_as(self, info, own=None):
         raise ValueError("boom build")
 
 

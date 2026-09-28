@@ -123,6 +123,7 @@ class AgentBase:
         self._agent_id = agent_id
         self._db = db
         self._output_as = output_as
+        self._output_schema = output_schema
         if execution_timeout is not None and (
             isinstance(execution_timeout, bool)
             or not isinstance(execution_timeout, (int, float))

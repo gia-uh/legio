@@ -146,6 +146,14 @@ class AgentSpec(BaseModel):
         default=None,
         description="List of branches; each branch an ordered list of bare pattern names",
     )
+    implementation: str | None = Field(
+        default=None,
+        description=(
+            "Composite only: a dotted path to a CompositeAgent subclass whose "
+            "build_output_as composes the branch results (the pattern's own model). "
+            "Absent → the engine's default build."
+        ),
+    )
 
     # Execution policy — EVERY type (uniform step bound, enforced by the
     # common runner; distinct from Schema 3 tool policy)
@@ -161,6 +169,11 @@ class AgentSpec(BaseModel):
                 raise ValueError("atomic requires kind (tool | linguistic)")
             if self.branches is not None:
                 raise ValueError("atomic must not have branches")
+            if self.implementation is not None:
+                raise ValueError(
+                    "atomic must not have implementation "
+                    "(atomic interior is tool/prompt, not a class)"
+                )
             if self.kind is AgentKind.TOOL:
                 if self.tool is None:
                     raise ValueError("kind: tool requires tool (available_tools key)")

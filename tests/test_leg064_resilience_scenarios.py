@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 class SimpleComposite(CompositeAgent):
     """Simple composite that merges branch results for testing."""
 
-    async def build_output_as(self, info: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    async def build_output_as(
+        self, info: Mapping[str, Mapping[str, Any]], own=None
+    ) -> dict[str, Any]:
         return {"out": info}
 
 

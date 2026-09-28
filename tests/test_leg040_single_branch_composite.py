@@ -61,7 +61,7 @@ class GatherComposite(CompositeAgent):
     transcription composition for its declared shape.
     """
 
-    async def build_output_as(self, info):
+    async def build_output_as(self, info, own=None):
         gathered: dict = {}
         for payload in info.values():
             gathered.update(payload)
