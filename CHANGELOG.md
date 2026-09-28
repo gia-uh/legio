@@ -4,7 +4,7 @@ All notable changes to `legio` are listed here per release. Each entry names
 the merged issue (the `LEG-0xx` plan issue and its GitHub issue number where
 the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
-## [Unreleased]
+## [0.1.3] - 2026-09-28
 
 ### Changed
 
