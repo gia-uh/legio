@@ -28,13 +28,27 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from legio import naming
 from legio.errors import ConfigError, InvalidNameError
 from legio.patterns.schema1 import AgentKind
 
 logger = logging.getLogger(__name__)
+
+
+class _StrictConfig(BaseModel):
+    """Base for the node/tools config models: an unknown key is an error (LEG-115).
+
+    pydantic's default is ``extra="ignore"``, which silently dropped a typo or a
+    misplaced secret (``services.llm.api_key``, ``api.clients.<n>.token``) — the
+    opposite of rule 9. ``extra="forbid"`` makes ``load()`` raise a
+    ``ConfigError`` naming the offending key. Each model must inherit it: a
+    nested model does not inherit its parent's extra policy.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
 
 DEFAULT_CONFIG_PATH = Path("legio.yaml")
 DEFAULT_TOOLS_PATH = Path("tools.yaml")
@@ -52,7 +66,7 @@ def default_node_id() -> str:
     return f"local@{socket.gethostname()}"
 
 
-class NodeConfig(BaseModel):
+class NodeConfig(_StrictConfig):
     """Node identity (LEG-016): ``<name>@<host>`` with exactly one ``@``."""
 
     id: str = Field(default_factory=default_node_id)
@@ -63,13 +77,13 @@ class NodeConfig(BaseModel):
         return self
 
 
-class DatabaseConfig(BaseModel):
+class DatabaseConfig(_StrictConfig):
     """The beaver database file resource."""
 
     db_path: Path = Path("legio.db")
 
 
-class PatternsConfig(BaseModel):
+class PatternsConfig(_StrictConfig):
     """One directory per S1 pattern type; recursive ``*.yaml`` scan."""
 
     tool: Path = Path("./patterns/tool")
@@ -77,7 +91,7 @@ class PatternsConfig(BaseModel):
     composite: Path = Path("./patterns/composite")
 
 
-class PoolsConfig(BaseModel):
+class PoolsConfig(_StrictConfig):
     """Horizontal capacity per pattern (LEG-080) — deployment, not functionality.
 
     Resolution at class creation (highest wins):
@@ -143,7 +157,7 @@ _BUILTIN_DRAIN_TIMEOUT = 300.0
 _BUILTIN_DRAIN_INTERVAL = 0.05
 
 
-class LifecycleParams(BaseModel):
+class LifecycleParams(_StrictConfig):
     """One level of clock-wait budgets for the runtime's bounded waits (LEG-085).
 
     ``drain_timeout`` / ``drain_interval`` are the *only* scheduled waits in the
@@ -175,7 +189,7 @@ class LifecycleParams(BaseModel):
         return self
 
 
-class LifecycleConfig(BaseModel):
+class LifecycleConfig(_StrictConfig):
     """Bounded clock-wait budgets per pattern (LEG-085) — the ``lifecycle`` section.
 
     Resolution per class at verb time (highest wins, partial-field overlay):
@@ -218,14 +232,14 @@ def _overlay_lifecycle(base: LifecycleParams, layer: LifecycleParams) -> Lifecyc
     )
 
 
-class LlmConfig(BaseModel):
+class LlmConfig(_StrictConfig):
     """`services.llm` — the real `lingo.LLM` constructor args (base_url/model)."""
 
     base_url: str
     model: str
 
 
-class EmbeddingConfig(BaseModel):
+class EmbeddingConfig(_StrictConfig):
     """`services.embedding` — sibling service (``lingo.Embedder``).
 
     ``max_tokens_per_batch`` is optional; absent → lingo's built-in default.
@@ -246,14 +260,14 @@ class EmbeddingConfig(BaseModel):
         return value
 
 
-class ServicesConfig(BaseModel):
+class ServicesConfig(_StrictConfig):
     """The two sibling inference services. Absent → not configured."""
 
     llm: LlmConfig | None = None
     embedding: EmbeddingConfig | None = None
 
 
-class ClientConfig(BaseModel):
+class ClientConfig(_StrictConfig):
     """A registered system in ``api.clients`` (LEG-017 §4).
 
     ``agents`` is Optional: ``null``/absent → access to all starting agents.
@@ -264,7 +278,7 @@ class ClientConfig(BaseModel):
     agents: list[str] | None = None
 
 
-class ApiConfig(BaseModel):
+class ApiConfig(_StrictConfig):
     """The HTTP endpoint resource plus the client registry (LEG-017).
 
     ``host`` defaults to loopback (LEG-108): binding to all interfaces is an
@@ -285,7 +299,7 @@ class ApiConfig(BaseModel):
         return value
 
 
-class LoggingConfig(BaseModel):
+class LoggingConfig(_StrictConfig):
     """General node log configuration. Absent ``file`` → stream only."""
 
     level: str = "INFO"
@@ -299,13 +313,13 @@ class LoggingConfig(BaseModel):
         return self
 
 
-class ToolsConfig(BaseModel):
+class ToolsConfig(_StrictConfig):
     """Pointer to the independent Schema 3 config file."""
 
     config: Path = DEFAULT_TOOLS_PATH
 
 
-class CompositesConfig(BaseModel):
+class CompositesConfig(_StrictConfig):
     """Pointer to the node-local concrete composite classes module (LEG-110).
 
     The module exposes ``COMPOSITE_CLASSES: dict[str, type[CompositeAgent]]``.
@@ -316,7 +330,7 @@ class CompositesConfig(BaseModel):
     config: Path | None = None
 
 
-class PeerConfig(BaseModel):
+class PeerConfig(_StrictConfig):
     """A known peer of THIS node (outbound address book, LEG-017 §5).
 
     Admission is decided by the shared federation token alone; this list is
@@ -332,7 +346,7 @@ class PeerConfig(BaseModel):
         return self
 
 
-class FederationConfig(BaseModel):
+class FederationConfig(_StrictConfig):
     """Known peers of this node (LEG-017 §5, R-9).
 
     ``peers`` is the outbound address book (whom this node may delegate to).
@@ -347,7 +361,7 @@ class FederationConfig(BaseModel):
     allowlist: list[str] = Field(default_factory=list)
 
 
-class LegioConfig(BaseModel):
+class LegioConfig(_StrictConfig):
     """The full general node configuration (``legio.yaml``)."""
 
     node: NodeConfig = Field(default_factory=NodeConfig)
@@ -363,7 +377,7 @@ class LegioConfig(BaseModel):
     federation: FederationConfig = Field(default_factory=FederationConfig)
 
 
-class ToolPolicy(BaseModel):
+class ToolPolicy(_StrictConfig):
     """``policy`` map of a Schema 3 tool declaration (LEG-013)."""
 
     timeout: int | float | None = None
@@ -391,14 +405,14 @@ class ToolPolicy(BaseModel):
         return self
 
 
-class ToolDeclaration(BaseModel):
+class ToolDeclaration(_StrictConfig):
     """A Schema 3 tool declaration (LEG-013)."""
 
     implementation: str
     policy: ToolPolicy = Field(default_factory=ToolPolicy)
 
 
-class ToolsFileConfig(BaseModel):
+class ToolsFileConfig(_StrictConfig):
     """The independent Schema 3 config file (``tools.yaml``)."""
 
     available_tools: dict[str, ToolDeclaration] = Field(default_factory=dict)

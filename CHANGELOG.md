@@ -37,6 +37,11 @@ the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
   (`demo` ← `LEGIO_CLIENT_TOKEN_DEMO`). Previously the lookup required the exact
   case, so the documented env var left the token store empty and every submit
   answered 401.
+- **LEG-115** The node config and the tools file are now **strict**: an unknown
+  key (a typo, or a secret misplaced in YAML such as `services.llm.api_key` /
+  `api.clients.<name>.token`) fails the load with a `ConfigError` naming it,
+  instead of being silently ignored (rule 9). Schema 1 patterns were already
+  strict.
 
 ## [0.1.1] - 2026-09-26
 

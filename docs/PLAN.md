@@ -503,6 +503,10 @@ are red for the yet-unimplemented surface.
   `docs/CONTRACTS/LEG-114-client-token-case.md`.
   - **Accept**: `LEGIO_CLIENT_TOKEN_DEMO` registers the `demo` client; a
     lowercase env suffix still works; a missing token stays unregistered.
+- **LEG-115** Node config is strict: an unknown key fails the load (defect fix).
+  Spec: `docs/CONTRACTS/LEG-115-strict-config.md`.
+  - **Accept**: an unknown key in `legio.yaml` or `tools.yaml` raises a
+    `ConfigError` naming it; every shipped example still loads.
 
 ## Ordering constraints
 

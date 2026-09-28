@@ -116,6 +116,10 @@ restarting the node on the same database is supported; running two nodes on the
 same database file is not — they would contend for beaver's single lock. To run
 several nodes, give each its own database and federate them.
 
+The config is **strict**: an unknown key (a typo, or a secret written into YAML)
+fails the load with a `ConfigError` naming it, never a silent default (LEG-115).
+Secrets are environment-only (`LEGIO_*`).
+
 **Security posture.** `api.host` defaults to `127.0.0.1` (loopback). When
 `api.clients` is empty the node accepts **any** caller and trusts the
 `client_id` it is given — convenient for a local/embedded node, never expose

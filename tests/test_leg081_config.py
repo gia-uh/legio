@@ -362,20 +362,25 @@ class TestSecrets:
             "api": {
                 "host": "0.0.0.0",
                 "port": 8000,
-                "clients": {
-                    "consumer-a": {
-                        "agents": ["flow_a"],
-                        "token": "ignore-me-in-yaml",
-                    }
-                },
+                "clients": {"consumer-a": {"agents": ["flow_a"]}},
             }
         }
         path = write_config(tmp_path, data)
         loaded = load(config_path=path, env={})
         assert loaded.secrets.client_tokens == {}
         assert loaded.secrets.llm_api_key is None
-        dump = loaded.config.api.clients["consumer-a"].model_dump()
-        assert "token" not in dump
+        assert loaded.config.api.clients["consumer-a"].agents == ["flow_a"]
+
+    def test_yaml_token_is_rejected_not_ignored(self, tmp_path):
+        """LEG-115: a token in YAML is a config error, never silently dropped."""
+        data = full_config_data() | {
+            "api": {
+                "clients": {"consumer-a": {"agents": ["flow_a"], "token": "secret"}},
+            }
+        }
+        path = write_config(tmp_path, data)
+        with pytest.raises(ConfigError, match="token"):
+            load(config_path=path, env={})
 
     def test_all_secret_env_vars_are_collected(self, tmp_path):
         path = write_config(tmp_path, full_config_data())
