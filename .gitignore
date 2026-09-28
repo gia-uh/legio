@@ -18,6 +18,9 @@ dist/
 
 # Example node runtime state (created at boot; LEG-104)
 examples/*/db/
+examples/*/*.db
+examples/*/*.db-shm
+examples/*/*.db-wal
 
 # OS
 .DS_Store
