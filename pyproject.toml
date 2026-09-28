@@ -1,6 +1,6 @@
 [project]
 name = "legio"
-version = "0.1.1"
+version = "0.1.2"
 description = "Queue-based agentic orchestration engine (domain-free library)."
 readme = "README.md"
 requires-python = ">=3.13"

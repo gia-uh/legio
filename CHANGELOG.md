@@ -4,11 +4,11 @@ All notable changes to `legio` are listed here per release. Each entry names
 the merged issue (the `LEG-0xx` plan issue and its GitHub issue number where
 the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
-## [Unreleased]
+## [0.1.2] - 2026-09-28
 
 ### Fixed
 
-- **LEG-110** A node containing composite patterns now boots through the CLI.
+- **LEG-110** (#60) A node containing composite patterns now boots through the CLI.
   The node config declares its node-local concrete composite classes
   (`composites.config` → a `composites.py` exposing
   `COMPOSITE_CLASSES = {pattern_name: class}`) and `boot_node` loads and injects
@@ -16,28 +16,28 @@ the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
   (previously it refused with "no concrete composite class injected"). The four
   shipped composite examples now boot as documented, proven by a subprocess
   test.
-- **LEG-111** `policy.retries` now retries the tool **call** as Schema 3/LEG-013
+- **LEG-111** (#61) `policy.retries` now retries the tool **call** as Schema 3/LEG-013
   specify (up to `retries` times, immediate, each attempt under `policy.timeout`).
   Previously any non-zero `retries` was rejected — a conflation of the forbidden
   dispatch re-queue with the call retry. The dispatch still never re-queues a
   step; a call is retried only within the declared policy.
-- **LEG-112** A node with `services.llm` but no `LEGIO_LLM_API_KEY` now boots:
+- **LEG-112** (#62) A node with `services.llm` but no `LEGIO_LLM_API_KEY` now boots:
   the default lingo factory passes a placeholder key so a local
   OpenAI-compatible endpoint (ollama, vLLM, LM Studio) works; a cloud endpoint
   answers 401 at call time, visibly. Previously the OpenAI client refused `None`
   and every linguistic node failed to boot.
-- **LEG-113** The `document_processing` example is coherent: its two-branch
+- **LEG-113** (#63) The `document_processing` example is coherent: its two-branch
   `doc_pipeline` returns both the extracted text (`pdf_output`) and the summary
   (`summary_output`) — the old schema asked for `{extracted, summary}`, which
   the construction+re-keying model cannot produce from a single-branch
   sequence. The README now matches the engine (directory, port, the required
   client token, the LLM requirement, the achievable output).
-- **LEG-114** Client tokens now resolve **case-insensitively**: the documented
+- **LEG-114** (#64) Client tokens now resolve **case-insensitively**: the documented
   `LEGIO_CLIENT_TOKEN_<NAME>` (uppercase) works for a lowercase client id
   (`demo` ← `LEGIO_CLIENT_TOKEN_DEMO`). Previously the lookup required the exact
   case, so the documented env var left the token store empty and every submit
   answered 401.
-- **LEG-115** The node config and the tools file are now **strict**: an unknown
+- **LEG-115** (#65) The node config and the tools file are now **strict**: an unknown
   key (a typo, or a secret misplaced in YAML such as `services.llm.api_key` /
   `api.clients.<name>.token`) fails the load with a `ConfigError` naming it,
   instead of being silently ignored (rule 9). Schema 1 patterns were already
