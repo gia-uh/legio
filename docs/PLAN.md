@@ -484,6 +484,11 @@ are red for the yet-unimplemented surface.
     served node; `boot_node` loads the config-declared `composites.config`
     module when no classes are injected; a declared missing module fails loudly;
     every shipped composite example boots through the documented command.
+- **LEG-111** `policy.retries` retries the tool call (defect fix). Spec:
+  `docs/CONTRACTS/LEG-111-tool-call-retries.md`.
+  - **Accept**: a tool that fails then succeeds with `retries: N` returns its
+    value (attempts = `N + 1`); `retries: 0` is a single attempt; an exhausted
+    policy surfaces the last error; a timeout is retried like any call failure.
 
 ## Ordering constraints
 

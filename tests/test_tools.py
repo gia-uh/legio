@@ -80,3 +80,24 @@ def fake_thread_probe() -> dict:
     import threading
 
     return {"thread": threading.current_thread().name}
+
+
+class _FlakyTransform:
+    """Domain-free flaky tool: fails the first ``fail_times`` calls, then succeeds.
+
+    Counts calls in ``calls`` so a test can assert the retry policy's attempt
+    count. Reused across tests in the process — reset ``calls``/``fail_times``.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.fail_times = 2
+
+    def __call__(self, text: str) -> dict:
+        self.calls += 1
+        if self.calls <= self.fail_times:
+            raise RuntimeError("transient failure")
+        return {"transformed": str(text).upper()}
+
+
+flaky_transform = _FlakyTransform()

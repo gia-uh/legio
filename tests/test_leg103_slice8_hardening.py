@@ -76,7 +76,7 @@ def test_nan_tool_timeout_rejected_at_load(tmp_path) -> None:
 
 def test_negative_retries_rejected_at_load_but_nonzero_passes(tmp_path) -> None:
     """Slice 8 (m7): negative retries are meaningless (load error); a positive
-    value still passes load so Slice 1 can fail it loudly at execution."""
+    value passes load and is honored as call retries at execution (LEG-111)."""
     negative = write_tools_yaml(
         tmp_path,
         "available_tools:\n"

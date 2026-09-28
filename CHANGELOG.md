@@ -16,6 +16,11 @@ the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
   (previously it refused with "no concrete composite class injected"). The four
   shipped composite examples now boot as documented, proven by a subprocess
   test.
+- **LEG-111** `policy.retries` now retries the tool **call** as Schema 3/LEG-013
+  specify (up to `retries` times, immediate, each attempt under `policy.timeout`).
+  Previously any non-zero `retries` was rejected — a conflation of the forbidden
+  dispatch re-queue with the call retry. The dispatch still never re-queues a
+  step; a call is retried only within the declared policy.
 
 ## [0.1.1] - 2026-09-26
 

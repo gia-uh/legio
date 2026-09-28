@@ -69,15 +69,21 @@ execution mechanism … decided at implementation”):
 - The declared per-call **`timeout` is enforced** for both shapes via
   `asyncio.wait_for`; expiry surfaces as a visible `TimeoutError` result
   (rule 9), never silent.
-- **`retries` stays 0**: any nonzero declared value fails loudly without
-  retrying (the engine never retries a step).
+- **`retries` amended by LEG-111 (supersedes this clause).** The original
+  Slice 1 rule ("`retries` stays 0: any nonzero declared value fails loudly
+  without retrying") conflated the forbidden **dispatch** retry/re-queue with
+  the **tool call**; it contradicted LEG-013. Per LEG-111 the tool **call** is
+  retried up to `retries` times (immediate, each attempt under the timeout);
+  the dispatch still never re-queues a step.
 
 ## Acceptance criteria (Slice 1)
 
 - An async tool executes and its value (not a coroutine) lands under `output_as`.
 - A slow sync tool and a slow async tool each exceed a small policy timeout and
   surface `TimeoutError` visibly.
-- A nonzero `retries` declaration fails loudly without any retry.
+- ~~A nonzero `retries` declaration fails loudly without any retry.~~
+  *(Superseded by LEG-111: a nonzero `retries` retries the call, then surfaces
+  the last error when exhausted.)*
 - An async-generator tool fails loudly.
 - Full suite + ruff + pyright green; no other behavior changed.
 

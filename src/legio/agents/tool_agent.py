@@ -5,8 +5,9 @@ payload from the request's single `payload` container (Schema 2), resolves the
 terse `parameters` (`{arg: dotted.path | literal}`) against it, loads the bound
 `tool: <name>` from `available_tools` (Schema 3), invokes it with the resolved
 kwargs (sync tools run off the loop, async tools are awaited, both under the
-declared per-call `timeout`; `retries` stays 0), validates the call against
-the tool's signature at execution time,
+declared per-call `timeout`; a raised call is retried up to `retries` times —
+LEG-013/LEG-111), validates the call against the tool's signature at execution
+time,
 and builds the new payload with `build_payload` (AGENT_LIFECYCLE §12.1: the
 state travels in the messages — nothing staged out-of-message). The base routes
 by position. How the tool's raw output becomes the agent's `output_as` value is
@@ -76,16 +77,11 @@ class ToolAgent(AgentBase):
             tool = self._available_tools.load_tool(self._tool_name)
             # Validate against tool's signature at execution time
             validate_callable_signature(tool, resolved_kwargs)
-            # Enforce the declared Schema 3 policy: retries stay 0 (the engine
-            # never retries a step), timeout bounds one call for both sync
-            # (run off the loop) and async tools.
+            # Enforce the declared Schema 3 policy: the per-call timeout bounds
+            # every attempt; the call is retried up to `retries` times (LEG-013/
+            # LEG-111 — a *call* retry, never a dispatch re-queue).
             timeout, retries = self._tool_policy()
-            if retries is not None and retries != 0:
-                raise ValueError(
-                    f"tool {self._tool_name!r} declares retries={retries!r}: "
-                    "only retries=0 is supported (steps are never retried)"
-                )
-            raw_output = await self._invoke_tool(tool, resolved_kwargs, timeout)
+            raw_output = await self._invoke_with_policy(tool, resolved_kwargs, timeout, retries)
             logger.debug(
                 "tool executed ok agent=%s task=%s tool=%s",
                 self._agent_id,
@@ -116,9 +112,9 @@ class ToolAgent(AgentBase):
         """Read the tool's declared ``(timeout, retries)`` policy.
 
         ``timeout`` bounds one call in seconds (``None`` = unbounded);
-        ``retries`` must stay ``0``/``None`` — the engine never retries.
-        The file path is validated at load (`ToolPolicy`); this guards the
-        direct-registry path just as loudly (rule 9).
+        ``retries`` is how many times a raised call is retried (``0``/``None`` =
+        a single attempt). The file path is validated at load (`ToolPolicy`);
+        this guards the direct-registry path just as loudly (rule 9).
         """
         declaration = self._available_tools.get_declaration(self._tool_name)
         policy = declaration.get("policy") or {}
@@ -154,6 +150,38 @@ class ToolAgent(AgentBase):
                 "policy.timeout must be a finite number of seconds > 0"
             )
         return (timeout_value, retries)
+
+    async def _invoke_with_policy(
+        self,
+        tool: Any,
+        kwargs: dict[str, Any],
+        timeout: float | None,
+        retries: int | None,
+    ) -> Any:
+        """Invoke the tool, retrying a raised call up to ``retries`` times.
+
+        Total attempts = ``retries + 1``. A retry logs a WARNING naming the
+        agent, tool, attempt and cause (rule 9/11); retries are immediate (no
+        back-off — rule 8: nothing sleeps). The last error is re-raised and
+        surfaces as the step's error result. Only the *call* is retried: load,
+        parameter resolution and the signature check happen once, before here.
+        """
+        attempts = 1 + (retries or 0)
+        for attempt in range(1, attempts + 1):
+            try:
+                return await self._invoke_tool(tool, kwargs, timeout)
+            except Exception as exc:  # retried, then surfaced
+                if attempt >= attempts:
+                    raise
+                logger.warning(
+                    "tool call retry agent=%s tool=%s attempt=%d/%d error=%s",
+                    self._agent_id,
+                    self._tool_name,
+                    attempt,
+                    attempts,
+                    f"{type(exc).__name__}: {exc}",
+                )
+        raise RuntimeError("unreachable: retry loop returned or raised")  # pragma: no cover
 
     async def _invoke_tool(self, tool: Any, kwargs: dict[str, Any], timeout: float | None) -> Any:
         """Invoke a sync or async tool under the policy timeout.

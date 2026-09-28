@@ -343,16 +343,57 @@ async def test_slow_async_tool_hits_policy_timeout(beaver_db: AsyncBeaverDB) -> 
 
 
 @pytest.mark.asyncio
-async def test_nonzero_retries_fail_loudly_without_retry(beaver_db: AsyncBeaverDB) -> None:
+async def test_retries_retry_the_call_then_succeed(beaver_db: AsyncBeaverDB) -> None:
+    from tests.test_tools import flaky_transform
+
+    flaky_transform.calls = 0
+    flaky_transform.fail_times = 2
     agent, request = _tool_agent(
         beaver_db,
-        task_id="T-retries",
-        tool_name="transform",
-        implementation="tests.test_tools.fake_transform",
-        policy={"timeout": 30, "retries": 1},
+        task_id="T-retry-ok",
+        tool_name="flaky",
+        implementation="tests.test_tools.flaky_transform",
+        policy={"timeout": 30, "retries": 2},
     )
     payload = await _run_tool_case(beaver_db, agent, request)
-    assert "retries" in payload["error"]
+    assert payload["summ"]["transformed"] == "HELLO"
+    assert flaky_transform.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_retries_zero_is_a_single_attempt(beaver_db: AsyncBeaverDB) -> None:
+    from tests.test_tools import flaky_transform
+
+    flaky_transform.calls = 0
+    flaky_transform.fail_times = 1
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-retry-zero",
+        tool_name="flaky",
+        implementation="tests.test_tools.flaky_transform",
+        policy={"timeout": 30, "retries": 0},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert "transient failure" in payload["error"]
+    assert flaky_transform.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_exhausted_retries_surface_the_last_error(beaver_db: AsyncBeaverDB) -> None:
+    from tests.test_tools import flaky_transform
+
+    flaky_transform.calls = 0
+    flaky_transform.fail_times = 5
+    agent, request = _tool_agent(
+        beaver_db,
+        task_id="T-retry-exhausted",
+        tool_name="flaky",
+        implementation="tests.test_tools.flaky_transform",
+        policy={"timeout": 30, "retries": 2},
+    )
+    payload = await _run_tool_case(beaver_db, agent, request)
+    assert "transient failure" in payload["error"]
+    assert flaky_transform.calls == 3
 
 
 @pytest.mark.asyncio

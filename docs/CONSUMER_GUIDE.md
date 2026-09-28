@@ -36,7 +36,10 @@ supported: a normally importable package path (`my_pkg.tools.transform`), or a
 **node-local** module that ships beside the `tools.yaml` (`tools.transform`
 resolves to `tools.py` in the node directory) — the examples use the latter so
 each node is self-contained and copyable. `policy` is `timeout`/`retries`
-(genuine numbers; bools/strings are rejected).
+(genuine numbers; bools/strings are rejected): `timeout` bounds each call, and
+`retries` retries a raised **call** up to that many times (immediate; `0` = a
+single attempt). The engine never re-queues a step — a tool call retry is not a
+dispatch retry (LEG-013/LEG-111).
 
 ## 2. Write a pattern (Schema 1)
 

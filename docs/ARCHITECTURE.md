@@ -247,7 +247,8 @@ composite:
 
 - **Errors are never silent** (AGENTS.md rule 9): a step that raises is routed
   to a visible `error` result; the task ends in a known terminal state. There is
-  no retry policy and no re-queue — a raised step is surfaced, not re-run.
+  no dispatch re-queue and no retry of a step; a **tool call** may be retried up
+  to its declared `policy.retries` (LEG-013/LEG-111) before it surfaces.
 - **Polling only** (rule 8): nothing sleeps and nothing is leased; resilience is
   idempotency (an item deposited again produces the same outcome) and visibility,
   not at-least-once execution guards. The single sanctioned exception is the
