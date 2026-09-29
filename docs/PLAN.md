@@ -519,6 +519,12 @@ are red for the yet-unimplemented surface.
   - **Accept**: a tree where a composite references a composite defined in a
     later-sorted file loads; the dry-run verdict stays equivalent to the boot
     gate; full suite green.
+- **LEG-118** A composite's default build resolves its declared output from its
+  own `input_as` + branches (defect fix, GitHub #68). Spec:
+  `docs/CONTRACTS/LEG-118-composite-emits-input.md`.
+  - **Accept**: a composite fed `{transcript}` with branches producing
+    `{summary}` yields `{<output_as>: {transcript, summary}}`; existing
+    composites unchanged; full suite green.
 
 - **LEG-119** A composite may declare its own implementation (declarative
   escape hatch; GitHub to be opened). Spec:

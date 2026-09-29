@@ -14,7 +14,7 @@ the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
   or **node-local** beside the config (a `composites.py`, LEG-104 mechanism); a
   broken/foreign class fails the boot naming the agent. Absent → the built-in
   default build; the programmatic `composite_classes` map still wins.
-- **LEG-118 (build)** The composite default build now **resolves the declared
+- **LEG-118** (#68) The composite default build now **resolves the declared
   `output_schema` from the composite's own `input_as` and its branches**: a
   declared field is taken from the composite's incoming payload (e.g. a
   transcription it holds) or from a branch's output; undeclared keys are not
