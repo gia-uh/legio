@@ -4,20 +4,28 @@ All notable changes to `legio` are listed here per release. Each entry names
 the merged issue (the `LEG-0xx` plan issue and its GitHub issue number where
 the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
-## [0.1.5] - 2026-09-29
+## [0.1.6] - 2026-09-29
+
+### Changed
+
+- **LEG-118 (reverted)** `CompositeAgent.build_output_as` is restored to its
+  `0.1.4` implementation: the composite's merged payload (its own `input_as`
+  payload plus every branch payload) is **resolved against the declared
+  `output_schema` properties** before it is built under `output_as`. The `0.1.5`
+  change — emitting the merged payload **without** that resolution — was shipped
+  without contract tests and was not needed: the full suite (including the
+  composite scenarios) passes against the `0.1.4` behaviour, and the `0.1.5`
+  behaviour masked a real failure (a branch that produced nothing) instead of
+  reporting it, contrary to the errors-are-never-silent rule. No behaviour other
+  than this build path changes.
+
+## [0.1.5] - 2026-09-29 (superseded by 0.1.6)
 
 ### Fixed
 
-- **LEG-118 (fix)** The composite default build no longer **filters** its output
-  to the declared `output_schema` properties. `0.1.4` filtered the built payload
-  to the schema's `properties`, so a declared branch that produced nothing (a
-  failed/absent branch) was **omitted** and the strict `required` check then
-  rejected the whole composite (`analysis:missing`, `email_draft:missing`, …),
-  failing the task. The default build now **merges the composite's own incoming
-  payload (`own`) with the branch payloads** under `output_as` (extras are
-  irrelevant per the superset contract), so a missing branch is a **gap**, never
-  a failure of the whole composite. This is the historical merge behaviour plus
-  the composite's own input (the LEG-118 intent), without the filtering defect.
+- **LEG-118 (fix, reverted in 0.1.6)** The composite default build no longer
+  **filters** its output to the declared `output_schema` properties. This change
+  is **withdrawn** — see `[0.1.6]`.
 
 ## [0.1.4] - 2026-09-28
 
