@@ -15,16 +15,16 @@ produce `{transcript, analysis}` without re-transcribing (or a bespoke class).
 
 ## Contract
 
-- The **composite default build** resolves the pattern's **declared**
-  `output_schema` from two sources: the composite's **own incoming payload**
-  (keyed by its `input_as`) and its **branches' payloads** (keyed by each
-  branch leaf's `output_as`). A declared property takes its value from the input
-  or from a branch; **undeclared keys are not emitted**.
+- The **composite default build** merges the composite's **own incoming payload**
+  (its `input_as`) **with its branches' payloads** (each branch's built payload
+  `{output_as: value}` or an `error` result) under the composite's `output_as`.
+- The declared `output_schema` is verified **superset** afterwards (extras are
+  irrelevant): a missing branch is a **gap**, never a failure of the composite.
+  The build does **not** filter to the declared properties (that would turn a
+  missing branch into a hard `required` failure).
 - The composite's incoming payload is passed to the build seam
   (`build_output_as(info, own=...)`); `AgentBase` keeps `_output_schema`.
-- With **no declared** `output_schema`, the default merges `own` + branches
-  (previous behaviour). A pattern needing a different composition overrides the
-  seam (LEG-119 declares it in YAML).
+- A pattern needing a different composition overrides the seam (LEG-119).
 
 ## Acceptance
 

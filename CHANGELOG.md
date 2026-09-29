@@ -4,6 +4,21 @@ All notable changes to `legio` are listed here per release. Each entry names
 the merged issue (the `LEG-0xx` plan issue and its GitHub issue number where
 the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
+## [0.1.5] - 2026-09-29
+
+### Fixed
+
+- **LEG-118 (fix)** The composite default build no longer **filters** its output
+  to the declared `output_schema` properties. `0.1.4` filtered the built payload
+  to the schema's `properties`, so a declared branch that produced nothing (a
+  failed/absent branch) was **omitted** and the strict `required` check then
+  rejected the whole composite (`analysis:missing`, `email_draft:missing`, …),
+  failing the task. The default build now **merges the composite's own incoming
+  payload (`own`) with the branch payloads** under `output_as` (extras are
+  irrelevant per the superset contract), so a missing branch is a **gap**, never
+  a failure of the whole composite. This is the historical merge behaviour plus
+  the composite's own input (the LEG-118 intent), without the filtering defect.
+
 ## [0.1.4] - 2026-09-28
 
 ### Added
