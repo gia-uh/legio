@@ -86,7 +86,7 @@ async def test_linguistic_agent_returns_structured_output_through_lingo(
     assert handled is True
 
     sent_messages = lingo_client.history[-1]
-    assert sent_messages and sent_messages[0].content == ("Summarize hello and en.")
+    assert sent_messages and sent_messages[1].content == ("Summarize hello and en.")
 
     result_item = await pop_one(beaver_db, "main_a")
     assert result_item is not None
@@ -112,7 +112,7 @@ async def test_linguistic_agent_templates_input_from_request_payload(
     await agent.process_next()
 
     sent_messages = lingo_client.history[-1]
-    assert sent_messages[0].content == "Summarize request payload and en."
+    assert sent_messages[1].content == "Summarize request payload and en."
 
 
 @pytest.mark.asyncio

@@ -140,6 +140,14 @@ class AgentSpec(BaseModel):
         default=None, description="Terse call: {arg: dotted.path | literal}"
     )
     prompt: str | None = Field(default=None, description="Prompt template (kind: linguistic)")
+    system_prompt: str | None = Field(
+        default=None,
+        description=(
+            "Linguistic only: the system-turn template (the agent's role), resolved "
+            "against the payload like `prompt`. Overrides the node's general "
+            "`system_prompt` (LEG-121)."
+        ),
+    )
 
     # Interior — COMPOSITE only
     branches: list[list[str]] | None = Field(

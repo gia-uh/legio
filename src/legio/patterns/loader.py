@@ -82,10 +82,13 @@ def _validate_agent_spec(
         # so its contract is not verifiable at load.
 
     elif spec.kind is not None and spec.kind.value == "linguistic" and spec.prompt:
-        # prompt variables ↔ input_schema
+        # Template variables ↔ input_schema: both the `prompt` (the user turn)
+        # and the pattern's `system_prompt` (the system turn) are templates over
+        # the payload, so their variables are checked together (LEG-031/LEG-121).
         import re
 
-        vars_in_prompt = set(re.findall(r"\{([a-zA-Z_][\w.]*)\}", spec.prompt))
+        templates = spec.prompt + "\n" + (spec.system_prompt or "")
+        vars_in_prompt = set(re.findall(r"\{([a-zA-Z_][\w.]*)\}", templates))
         input_schema_props = (
             spec.input.input_schema.get("properties", {}) if spec.input.input_schema else {}
         )

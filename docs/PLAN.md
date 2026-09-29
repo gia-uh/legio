@@ -533,6 +533,15 @@ are red for the yet-unimplemented surface.
     (dotted or node-local); a broken one fails loudly; an atomic with
     `implementation` fails at load; composites without it keep the default.
 
+- **LEG-121** A linguistic step is sent to the LLM as `system` + `user` turns
+  (defect fix; GitHub to be opened). Spec:
+  `docs/CONTRACTS/LEG-121-system-and-user-turns.md`.
+  - **Accept**: a linguistic step sends a `system` turn with the instructions and
+    a `user` turn with the resolved content; a legacy `prompt:`-only pattern
+    keeps working (its resolved prompt is sent in both turns); a pattern may
+    declare `instructions:` + `input:` for the split form; the loader validates
+    variables across `instructions` + `input`; full suite green.
+
 ## Ordering constraints
 
 - LEG-0xx before LEG-1xx..., except documentation (LEG-003) can be updated

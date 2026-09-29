@@ -4,7 +4,27 @@ All notable changes to `legio` are listed here per release. Each entry names
 the merged issue (the `LEG-0xx` plan issue and its GitHub issue number where
 the record is unambiguous), grouped by rasante (`docs/PLAN.md`).
 
-## [0.1.6] - 2026-09-29
+## [0.1.7] - 2026-09-29
+
+### Fixed
+
+- **LEG-121** A linguistic step is sent to the LLM as a **two-turn chat**
+  (`system` + `user`) instead of a single `system` turn, and the agent's **role**
+  is now declarable. The `system` turn is the pattern's `system_prompt` (a
+  template resolved against the payload, variable-checked like `prompt`); else
+  the node config's general `system_prompt` (a new top-level field,
+  `system_prompt:`, static text); else empty. The `user` turn is the resolved
+  `prompt` (task + data), which is **never** copied into the `system` turn.
+  Chat templates that require a `user` turn (verified: `qwen/qwen3.8-27b` on
+  Groq) failed consistently before this change; measured `blog_post_draft`
+  0/5 → 5/5 with it.
+
+### Added
+
+- **LEG-121** Schema 1 gains an optional `system_prompt` for `kind: linguistic`
+  patterns (the per-step role override), and the node config gains a general
+  `system_prompt` (the default role for every linguistic call).
+
 
 ### Changed
 

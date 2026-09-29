@@ -94,6 +94,7 @@ def _materialize_atom(
     available_tools: AvailableToolsRegistry,
     lingo_client: Any,
     control_verifier: ControlVerifier | None,
+    general_system_prompt: str | None = None,
 ) -> AgentBase:
     """Materialize a single atomic agent (tool or linguistic) or raise."""
     if spec.kind is AgentKind.TOOL:
@@ -128,11 +129,17 @@ def _materialize_atom(
                 f"linguistic agent {spec.name!r} has no lingo client (None factory result)"
             )
         output_model = compile_schema(spec.output.output_schema)
+        # Precedence (LEG-121): the pattern's system_prompt wins; else the node's
+        # general system_prompt; else none (an empty system turn).
+        system_prompt = (
+            spec.system_prompt if spec.system_prompt is not None else general_system_prompt
+        )
         return LinguisticAgent(
             agent_id=spec.name,
             db=db,
             lingo_client=lingo_client,
             prompt_template=spec.prompt or "",
+            system_prompt_template=system_prompt,
             output_model=output_model,
             input_as=spec.input.input_as,
             output_as=spec.output.output_as,
@@ -215,6 +222,7 @@ def materialize_agents(
     on_built: Callable[[str], None] | None = None,
     peer_steps: Mapping[str, str] | None = None,
     composite_base_dir: Path | None = None,
+    general_system_prompt: str | None = None,
 ) -> dict[str, AgentBase]:
     """Build the standing agent map from a validated catalog, in DAG order.
 
@@ -255,6 +263,7 @@ def materialize_agents(
                     available_tools=available_tools,
                     lingo_client=_lingo(),
                     control_verifier=verifiers.get(spec.name),
+                    general_system_prompt=general_system_prompt,
                 )
             except UnrecoverableError as exc:
                 raise UnrecoverableError(f"linguistic agent {spec.name!r}: {exc.message}") from exc
@@ -265,6 +274,7 @@ def materialize_agents(
                 available_tools=available_tools,
                 lingo_client=None,
                 control_verifier=verifiers.get(spec.name),
+                general_system_prompt=general_system_prompt,
             )
         agents[spec.name] = agent
         if on_built is not None:
@@ -528,6 +538,7 @@ async def _boot_on_database(
         on_built=on_built,
         peer_steps=peer_steps,
         composite_base_dir=(loaded.config_path.parent if loaded.config_path is not None else None),
+        general_system_prompt=cfg.system_prompt,
     )
     engine.mount_agents(agents)
     for agent in agents.values():

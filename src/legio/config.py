@@ -363,6 +363,14 @@ class LegioConfig(_StrictConfig):
     lifecycle: LifecycleConfig = Field(default_factory=LifecycleConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     federation: FederationConfig = Field(default_factory=FederationConfig)
+    system_prompt: str | None = Field(
+        default=None,
+        description=(
+            "General default for the system turn of every linguistic call: the "
+            "agent's role. A pattern may override it with its own `system_prompt` "
+            "(LEG-121). Static text — no template variables."
+        ),
+    )
 
 
 class ToolPolicy(_StrictConfig):

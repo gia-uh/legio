@@ -10,9 +10,11 @@ wraps the record's dump under ``output_as``; a pattern may inherit
 (finality by position + ``level``, Schema 2). The step's state travels in the
 messages (AGENT_LIFECYCLE §12.1): nothing is staged out-of-message.
 
-The call is a single ``create(model, [system prompt])`` round-trip (LEG-030 v1
-call contract). Failures from lingo are never silent (AGENTS.md rule 9): a
-raised step error is routed by the base to an error result.
+The call is a two-turn chat ``create(model, [system, user])`` (LEG-121): the
+``system`` turn is the agent's role (the pattern's ``system_prompt`` template, or
+empty), the ``user`` turn is the resolved ``prompt`` (task + data). Failures from
+lingo are never silent (AGENTS.md rule 9): a raised step error is routed by the
+base to an error result.
 """
 
 from __future__ import annotations
@@ -41,8 +43,9 @@ class LinguisticAgent(AgentBase):
         agent_id: str,
         db: Any,
         lingo_client: Any,
-        prompt_template: str,
         output_model: type[BaseModel],
+        prompt_template: str,
+        system_prompt_template: str | None = None,
         system_vars: Mapping[str, Any] | None = None,
         input_as: str = "",
         output_as: str = "",
@@ -62,6 +65,7 @@ class LinguisticAgent(AgentBase):
         )
         self._lingo = lingo_client
         self._prompt = prompt_template
+        self._system_prompt = system_prompt_template
         self._output_model = output_model
         self._input_as = input_as
         ready_vars = dict(system_vars or {})
@@ -81,12 +85,13 @@ class LinguisticAgent(AgentBase):
             ",".join(scoped),
         )
         prompt = resolve_template(self._prompt, scoped, self._system_vars)
+        system_turn = self._system_turn(scoped)
         logger.info(
             "linguistic call agent=%s task=%s",
             self._agent_id,
             request.task_id,
         )
-        messages = [Message.system(prompt)]
+        messages = [Message.system(system_turn), Message.user(prompt)]
         result = await self._lingo.create(self._output_model, messages)
         logger.info(
             "linguistic result agent=%s task=%s",
@@ -94,6 +99,17 @@ class LinguisticAgent(AgentBase):
             request.task_id,
         )
         return await self.build_output_as(result.model_dump())
+
+    def _system_turn(self, scoped: Mapping[str, Any]) -> str:
+        """The ``system`` turn text for this step (LEG-121).
+
+        The pattern's ``system_prompt`` (a template, resolved against the payload)
+        wins; else the empty string. The ``prompt`` is never copied here — the
+        role belongs to ``system``, the task to ``user``.
+        """
+        if self._system_prompt is None:
+            return ""
+        return resolve_template(self._system_prompt, scoped, self._system_vars)
 
     async def build_output_as(self, info: Any) -> dict[str, Any]:
         """Basic linguistic-output model: the record's dump is the value.
