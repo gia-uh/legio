@@ -1,0 +1,48 @@
+name: Legio
+accent: "#B7322A"
+tagline:
+  es: Orquestación de agentes sobre colas
+  en: Agent orchestration on queues
+intro:
+  es: Los flujos de agentes se escriben como patrones en YAML y cada aplicación registra sus herramientas; Legio los ejecuta sobre colas, con una API REST, una CLI y federación entre nodos. Ya mueve un producto de transcripción en producción.
+  en: Agent workflows are written as YAML patterns and each application registers its own tools; Legio runs them on queues, with a REST API, a CLI and federation between nodes. It already drives a transcription product in production.
+install: pip install legio
+links:
+  code: https://github.com/gia-uh/legio
+  pypi: https://pypi.org/project/legio/
+features:
+  - es: Sin dominio propio. Lo que sabe del problema vive en los patrones y en las herramientas de quien lo usa.
+    en: No domain of its own. What it knows about the problem lives in the patterns and the user's tools.
+  - es: Agentes que esperan en colas y se reparten el trabajo; una API REST para enviar tareas y consultar su estado.
+    en: Agents that wait on queues and share the work; a REST API to submit tasks and check their status.
+  - es: Contratos de entrada y salida obligatorios en cada paso, y errores con tipo que nunca se pierden.
+    en: Mandatory input and output contracts on every step, and typed errors that are never swallowed.
+example:
+  lang: yaml
+  code: |
+    # patterns/tool/transform.yaml: one step, with its contracts
+    name: transform
+    type: atomic
+    kind: tool
+    input:
+      input_as: transform
+      input_type: json
+      input_schema:
+        type: object
+        properties:
+          text: {type: string}
+          factor: {type: integer}
+    output:
+      output_as: transform
+      output_type: json
+      output_schema:
+        type: object
+        properties:
+          transformed: {type: string}
+    tool: transform
+    parameters:
+      text: "{transform.text}"
+      factor: "{transform.factor}"
+status:
+  es: v0.1.7 · PyPI · licencia MIT
+  en: v0.1.7 · PyPI · MIT licence
